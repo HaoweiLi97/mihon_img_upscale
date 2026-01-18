@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.navigation.KindlishNavigation
 import eu.kanade.tachiyomi.ui.reader.viewer.navigation.LNavigation
 import eu.kanade.tachiyomi.ui.reader.viewer.navigation.RightAndLeftNavigation
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -106,6 +107,65 @@ class PagerConfig(
                 { dualPageRotateToFitInvert = it },
                 { imagePropertyChangedListener?.invoke() },
             )
+
+        // Real-CUGAN settings - refresh pages when changed
+        readerPreferences.realCuganEnabled().changes()
+            .drop(1)
+            .onEach { 
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
+                imagePropertyChangedListener?.invoke() 
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganModel().changes()
+            .drop(1)
+            .onEach { 
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
+                imagePropertyChangedListener?.invoke() 
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganNoiseLevel().changes()
+            .drop(1)
+            .debounce(500)
+            .onEach { 
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
+                imagePropertyChangedListener?.invoke() 
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganScale().changes()
+            .drop(1)
+            .debounce(500)
+            .onEach { 
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
+                imagePropertyChangedListener?.invoke() 
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganInputScale().changes()
+            .drop(1)
+            .debounce(500)
+            .onEach { 
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart(resetModel = false)
+                imagePropertyChangedListener?.invoke() 
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganPreloadSize().changes()
+            .drop(1)
+            .onEach { 
+                // No need to clear cache for preload size change, just restart queue
+                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart(resetModel = false)
+                imagePropertyChangedListener?.invoke() 
+            }
+            .launchIn(scope)
+
     }
 
     private fun zoomTypeFromPreference(value: Int) {

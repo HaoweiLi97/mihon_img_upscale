@@ -210,6 +210,9 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         logcat { "onPageSelected: ${page.number}/${pages.size}" }
         activity.onPageSelected(page)
 
+        // Notify enhancement queue of page change for priority processing
+        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.onPageChanged(page.index)
+
         // Preload next chapter once we're within the last 5 pages of the current chapter
         val inPreloadRange = pages.size - page.number < 5
         if (inPreloadRange && allowPreload && page.chapter == adapter.currentChapter) {

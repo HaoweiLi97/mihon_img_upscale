@@ -63,6 +63,9 @@ class PagerPageHolder(
     private var loadJob: Job? = null
 
     init {
+        // Set page index for enhancement priority tracking
+        pageIndex = page.index
+        mangaId = viewer.activity.viewModel.manga?.id ?: -1L
         loadJob = scope.launch { loadPageAndProcessStatus() }
     }
 

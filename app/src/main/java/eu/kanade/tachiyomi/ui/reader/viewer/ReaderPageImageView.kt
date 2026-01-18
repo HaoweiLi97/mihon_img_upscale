@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.drawable.Animatable
@@ -12,6 +13,12 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
+import android.view.Gravity
+import android.graphics.Color
+import android.util.TypedValue
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import androidx.annotation.AttrRes
 import androidx.annotation.CallSuper
 import androidx.annotation.StyleRes
@@ -39,10 +46,23 @@ import eu.kanade.tachiyomi.data.coil.customDecoder
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
+import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import okio.BufferedSource
 import tachiyomi.core.common.util.system.ImageUtil
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withUIContext
+import uy.kohesive.injekt.injectLazy
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import tachiyomi.core.common.util.lang.launchUI
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
 
 /**
  * A wrapper view for showing page image.
@@ -60,18 +80,85 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private val isWebtoon: Boolean = false,
 ) : FrameLayout(context, attrs, defStyleAttrs, defStyleRes) {
 
+    private var isSettingProcessedImage = false // Flag to prevent recursive processing
     private val alwaysDecodeLongStripWithSSIV by lazy {
         Injekt.get<BasePreferences>().alwaysDecodeLongStripWithSSIV().get()
     }
 
+    private val preferences: ReaderPreferences by injectLazy()
+
+    private val realCuganEnabled: Boolean
+        get() = preferences.realCuganEnabled().get()
+
+    private val realCuganNoiseLevel: Int
+        get() = preferences.realCuganNoiseLevel().get()
+
+    private val realCuganScale: Int
+        get() = preferences.realCuganScale().get()
+
+    private val preloadSize: Int
+        get() = if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 4
+    private val realCuganInputScale: Int
+        get() = preferences.realCuganInputScale().get()
+
+    private val realCuganModel: Int
+        get() = preferences.realCuganModel().get()
+
+    private val realCuganMaxSizeWidth: Int
+        get() = preferences.realCuganMaxSizeWidth().get()
+
+    private val realCuganMaxSizeHeight: Int
+        get() = preferences.realCuganMaxSizeHeight().get()
+
+    private val realCuganShowStatus: Boolean
+        get() = preferences.realCuganShowStatus().get()
+
     private var pageView: View? = null
 
     private var config: Config? = null
+    
+    private var processingJob: Job? = null
+    private var enhancedBitmap: Bitmap? = null
 
     var onImageLoaded: (() -> Unit)? = null
     var onImageLoadError: ((Throwable?) -> Unit)? = null
     var onScaleChanged: ((newScale: Float) -> Unit)? = null
     var onViewClicked: (() -> Unit)? = null
+
+    private val statusView: TextView by lazy {
+        TextView(context).apply {
+            layoutParams = LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM or Gravity.START
+                setMargins(20, 0, 0, 20)
+            }
+            setTextColor(Color.WHITE)
+            setShadowLayer(5f, 0f, 0f, Color.BLACK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setBackgroundColor(Color.TRANSPARENT)
+            setPadding(0, 0, 0, 0)
+            isVisible = false
+            this@ReaderPageImageView.addView(this)
+        }
+    }
+
+    private val enhancedOverlay: AppCompatImageView by lazy {
+        AppCompatImageView(context).apply {
+            layoutParams = LayoutParams(MATCH_PARENT, MATCH_PARENT)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            isVisible = false
+            this@ReaderPageImageView.addView(this)
+        }
+    }
+
+    private fun updateStatus(text: String?) {
+        if (!realCuganShowStatus || text == null) {
+            statusView.isVisible = false
+            return
+        }
+        statusView.text = text
+        statusView.isVisible = true
+        statusView.bringToFront()
+    }
 
     /**
      * For automatic background. Will be set as background color when [onImageLoaded] is called.
@@ -82,11 +169,29 @@ open class ReaderPageImageView @JvmOverloads constructor(
     open fun onImageLoaded() {
         onImageLoaded?.invoke()
         background = pageBackground
+        
+        // Hide overlay and recycle temporary bitmap once main view is ready with the new image
+        if (isSettingProcessedImage) {
+            enhancedOverlay.setImageBitmap(null)
+            enhancedOverlay.isVisible = false
+            enhancedBitmap?.recycle()
+            enhancedBitmap = null
+            isSettingProcessedImage = false
+        }
     }
 
     @CallSuper
     open fun onImageLoadError(error: Throwable?) {
         onImageLoadError?.invoke(error)
+        
+        // Hide overlay and recycle temporary bitmap if enhanced image load failed
+        if (isSettingProcessedImage) {
+            enhancedOverlay.setImageBitmap(null)
+            enhancedOverlay.isVisible = false
+            enhancedBitmap?.recycle()
+            enhancedBitmap = null
+            isSettingProcessedImage = false
+        }
     }
 
     @CallSuper
@@ -297,11 +402,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
         when (data) {
             is BitmapDrawable -> {
-                setImage(ImageSource.bitmap(data.bitmap))
-                isVisible = true
+                val bitmapSource = data.bitmap
+                processImageHelper(bitmapSource)
             }
             is BufferedSource -> {
-                if (!isWebtoon || alwaysDecodeLongStripWithSSIV) {
+                // If enhancement is enabled, we MUST skip this optimization and go through the ImageRequest flow below,
+                // because we need the Bitmap to process it.
+                if (!realCuganEnabled && (!isWebtoon || alwaysDecodeLongStripWithSSIV)) {
                     setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
                     setImage(ImageSource.inputStream(data.inputStream()))
                     isVisible = true
@@ -315,8 +422,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     .target(
                         onSuccess = { result ->
                             val image = result as BitmapImage
-                            setImage(ImageSource.bitmap(image.bitmap))
-                            isVisible = true
+                            processImageHelper(image.bitmap)
                         },
                     )
                     .listener(
@@ -335,6 +441,195 @@ open class ReaderPageImageView @JvmOverloads constructor(
             else -> {
                 throw IllegalArgumentException("Not implemented for class ${data::class.simpleName}")
             }
+        }
+    }
+
+    // Current page index for priority processing
+    var pageIndex: Int = -1
+    var mangaId: Long = -1L
+
+    private fun SubsamplingScaleImageView.processImageHelper(bitmap: Bitmap) {
+        android.util.Log.d("ReaderPageImageView", "processImageHelper called. realCugan=$realCuganEnabled, pageIndex=$pageIndex")
+        
+        if (isSettingProcessedImage) {
+            android.util.Log.d("ReaderPageImageView", "Skipping processImageHelper - setting processed image")
+            isSettingProcessedImage = false
+            return
+        }
+
+        setImage(ImageSource.bitmap(bitmap))
+        isVisible = true
+        updateStatus("RAW")
+
+        if (!realCuganEnabled) {
+            android.util.Log.d("ReaderPageImageView", "Real-CUGAN not enabled, skipping enhancement")
+            return
+        }
+
+        // Check if this page should be processed based on current reading position
+        if (pageIndex >= 0 && !eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.shouldProcess(pageIndex)) {
+            android.util.Log.d("ReaderPageImageView", "Skipping page $pageIndex - behind reading progress")
+            return
+        }
+
+        // Initialize cache
+        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.init(context)
+        // Include model type and max size in hash
+        val configHash = eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getConfigHash(realCuganNoiseLevel, realCuganScale, realCuganInputScale) + "_m${realCuganModel}_w${realCuganMaxSizeWidth}_h${realCuganMaxSizeHeight}"
+
+        // Check cache first
+        if (pageIndex >= 0 && mangaId != -1L) {
+            val cachedFile = eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getCachedImage(mangaId, pageIndex, configHash)
+            if (cachedFile != null) {
+                android.util.Log.d("ReaderPageImageView", "Cache hit for page $pageIndex (manga $mangaId)")
+                isSettingProcessedImage = true
+                // Compiler insists on Context as first argument
+                setImage(ImageSource.uri(context, android.net.Uri.fromFile(cachedFile)))
+                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCompleted(pageIndex)
+                updateStatus("PROCESSED")
+                
+                // Periodic cleanup of old cache for this manga
+                if (pageIndex % 5 == 0) {
+                    eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clearOldCache(mangaId, pageIndex)
+                }
+                return
+            }
+        }
+
+        processingJob?.cancel()
+        processingJob = launchIO {
+            try {
+                // Lower thread priority to avoid blocking UI
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                
+                // Double-check before heavy processing
+                if (pageIndex >= 0 && !eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.shouldProcess(pageIndex)) {
+                    android.util.Log.d("ReaderPageImageView", "Cancelled page $pageIndex - behind reading progress")
+                    return@launchIO
+                }
+
+                android.util.Log.d("ReaderPageImageView", "Real-CUGAN starting processing page $pageIndex (inputScale=$realCuganInputScale%)...")
+                
+                // First copy HARDWARE bitmap to software bitmap AND ensure we own it (copy) 
+                // because EnhancementQueue might outlive this View/Bitmap
+                var inputBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+
+                // Apply max size limit if enabled - SKIP processing if too large
+                if (inputBitmap.width > realCuganMaxSizeWidth || inputBitmap.height > realCuganMaxSizeHeight) {
+                    android.util.Log.d("ReaderPageImageView", "Skipping processing: Image too large (${inputBitmap.width}x${inputBitmap.height} > max ${realCuganMaxSizeWidth}x${realCuganMaxSizeHeight})")
+                    if (inputBitmap != bitmap) {
+                         inputBitmap.recycle()
+                    }
+                    return@launchIO
+                }
+
+                // Pre-scale image if inputScale < 100 for faster processing
+                if (realCuganInputScale < 100) {
+                    val scale = realCuganInputScale / 100f
+                    val newWidth = (inputBitmap.width * scale).toInt()
+                    val newHeight = (inputBitmap.height * scale).toInt()
+                    android.util.Log.d("ReaderPageImageView", "Pre-scaling (InputScale): ${inputBitmap.width}x${inputBitmap.height} -> ${newWidth}x${newHeight}")
+                    val scaled = Bitmap.createScaledBitmap(inputBitmap, newWidth, newHeight, true)
+                    if (inputBitmap != bitmap) {
+                        inputBitmap.recycle()
+                    }
+                    inputBitmap = scaled
+                }
+                
+                val initialized = when (realCuganModel) {
+                    1 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initRealESRGAN(context, realCuganScale)
+                    2 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initNose(context)
+                    3 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initWaifu2x(context, realCuganNoiseLevel - 1, 2)
+                    else -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initRealCugan(context, realCuganNoiseLevel, realCuganScale)
+                }
+
+                val progressJob = launchUI {
+                    while (isActive) {
+                        val packed = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgress()
+                        val id = (packed shr 32).toInt()
+                        val p = (packed and 0xFFFFFFFF).toInt()
+                        
+                        if (id == pageIndex) {
+                            updateStatus("PROCESSING: $p%")
+                        } else {
+                            updateStatus("QUEUED")
+                        }
+                        delay(100)
+                    }
+                }
+
+                val processed: Bitmap? = try {
+                    if (initialized) {
+                        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.process(
+                            pageIndex, 
+                            inputBitmap, 
+                            realCuganModel, 
+                            realCuganNoiseLevel, 
+                            if (realCuganModel == 3) 2 else realCuganScale,
+                            mangaId,
+                            configHash
+                        )
+                    } else {
+                        android.util.Log.e("ReaderPageImageView", "Waifu2x not initialized!")
+                        null
+                    }
+                } finally {
+                    progressJob.cancelAndJoin()
+                }
+                
+                // Ownership of inputBitmap is now transferred to EnhancementQueue.
+                // It will be recycled by the worker once processing is done.
+
+                if (processed != null) {
+                    android.util.Log.d("ReaderPageImageView", "Real-CUGAN processing complete for page $pageIndex, applying...")
+                    
+                    if (pageIndex >= 0) {
+                        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCompleted(pageIndex)
+                    }
+
+                    // Get the file from cache (EnhancementQueue already saved it)
+                    val savedFile = if (pageIndex >= 0 && mangaId != -1L) {
+                        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getCachedImage(mangaId, pageIndex, configHash)
+                    } else null
+
+                    withUIContext {
+                        // 1. Show overlay immediately to prevent flicker
+                        enhancedBitmap = processed
+                        enhancedOverlay.setImageBitmap(processed)
+                        enhancedOverlay.isVisible = true
+                        enhancedOverlay.bringToFront()
+                        statusView.bringToFront()
+                        
+                        // 2. Update background view
+                        android.util.Log.d("ReaderPageImageView", "Switching main view to enhanced source for page $pageIndex")
+                        isSettingProcessedImage = true
+                        if (savedFile != null) {
+                            setImage(ImageSource.uri(context, android.net.Uri.fromFile(savedFile)))
+                        } else {
+                            // If not in cache, we MUST NOT recycle processed yet
+                            // but usually it is in cache.
+                            setImage(ImageSource.bitmap(processed))
+                            // In this case, we won't recycle in onImageLoaded 
+                            // because isSettingProcessedImage will stay true 
+                            // or we'll need to handle it.
+                            // But usually savedFile != null here.
+                        }
+                        
+                        updateStatus("PROCESSED")
+                        android.util.Log.d("ReaderPageImageView", "Processed update complete for page $pageIndex!")
+                    }
+                }
+ else {
+                    android.util.Log.e("ReaderPageImageView", "Real-CUGAN process returned null for page $pageIndex")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ReaderPageImageView", "Enhancement error for page $pageIndex", e)
+            }
+        }
+
+        // Register job for potential cancellation
+        if (pageIndex >= 0) {
+            eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.registerJob(pageIndex, processingJob!!)
         }
     }
 
@@ -428,6 +723,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
         CENTER,
         RIGHT,
     }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        if (pageIndex >= 0) {
+            eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.removePage(pageIndex)
+        }
+        enhancedOverlay.setImageBitmap(null)
+        enhancedBitmap?.recycle()
+        enhancedBitmap = null
+        isSettingProcessedImage = false
+    }
 }
 
 private const val MAX_ZOOM_SCALE = 5F
+
