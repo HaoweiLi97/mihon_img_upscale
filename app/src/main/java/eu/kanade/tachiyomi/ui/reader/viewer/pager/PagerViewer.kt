@@ -97,7 +97,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.isVisible = false // Don't layout the pager yet
         pager.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         pager.isFocusable = false
-        pager.offscreenPageLimit = 1
+        val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
+        pager.offscreenPageLimit = if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
         pager.id = R.id.reader_pager
         pager.adapter = adapter
         pager.addOnPageChangeListener(pagerListener)
@@ -227,6 +228,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         logcat { "onReaderPageSelected: ${page.number}/${pages.size}" }
         activity.onPageSelected(page)
 
+        // Notify enhancement queue of page change for priority processing
+        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.onPageChanged(page.index)
+
         // Notify holder of page change
         getPageHolder(page)?.onPageSelected(forward)
 
@@ -277,6 +281,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun setChaptersInternal(chapters: ViewerChapters) {
         // Remove listener so the change in item doesn't trigger it
         pager.removeOnPageChangeListener(pagerListener)
+
+        // Reset enhancement queue when chapter changes
+        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.reset()
 
         val forceTransition = config.alwaysShowChapterTransition ||
             adapter.items.getOrNull(pager.currentItem) is ChapterTransition
@@ -374,6 +381,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private fun refreshAdapter() {
         val currentItem = pager.currentItem
+        val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
+        pager.offscreenPageLimit = if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
         adapter.refresh()
         pager.adapter = adapter
         pager.setCurrentItem(currentItem, false)

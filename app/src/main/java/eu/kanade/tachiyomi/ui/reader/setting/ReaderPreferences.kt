@@ -77,6 +77,46 @@ class ReaderPreferences(
 
     fun webtoonDisableZoomOut() = preferenceStore.getBoolean("webtoon_disable_zoom_out", false)
 
+    fun waifu2xEnabled() = preferenceStore.getBoolean("pref_waifu2x_enabled", false)
+
+    fun waifu2xNoiseLevel() = preferenceStore.getInt("pref_waifu2x_noise_level", 2)
+
+    fun anime4kEnabled() = preferenceStore.getBoolean("pref_anime4k_enabled", false)
+
+    fun anime4kMode() = preferenceStore.getInt("pref_anime4k_mode", 0) // 0: Fast, 1: High, 2: Ultra
+    
+    fun realCuganEnabled() = preferenceStore.getBoolean("pref_realcugan_enabled", false)
+
+    fun realCuganNoiseLevel() = preferenceStore.getInt("pref_realcugan_noise_level", 0) // 0: No Denoise, 1: Denoise 1x, 2: Denoise 2x, 3: Denoise 3x, 4: Conservative
+
+    fun realCuganScale() = preferenceStore.getInt("pref_realcugan_scale", 2) // 2x, 3x, 4x
+
+    fun realCuganInputScale() = preferenceStore.getInt("pref_realcugan_input_scale", 100) // 100 = 1.0x, 75 = 0.75x, 50 = 0.5x
+
+    fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", 0) // 0: Real-CUGAN, 1: Real-ESRGAN, 2: Waifu2x-Nose
+
+    fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 3)
+
+    fun realCuganProEnabled() = preferenceStore.getBoolean("pref_realcugan_pro_enabled", false)
+
+    fun realCuganPerformanceMode() = preferenceStore.getInt("pref_realcugan_performance_mode", 0) // 0: 90%, 1: 50%, 2: 30%
+
+    fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 2048)
+
+    fun realCuganMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_max_size_height", 2048)
+    
+    fun realCuganResizeLargeImage() = preferenceStore.getBoolean("pref_realcugan_resize_large_image", false)
+
+    fun realCuganShowStatus() = preferenceStore.getBoolean("pref_realcugan_show_status", false)
+
+    fun inkFilter() = preferenceStore.getBoolean("ink_filter", false)
+
+    fun inkBleedingIntensity() = preferenceStore.getInt("ink_bleeding_intensity", 0)
+
+    fun inkBumpIntensity() = preferenceStore.getInt("ink_bump_intensity", 0)
+
+    fun inkOriginalIntensity() = preferenceStore.getInt("ink_original_intensity", 0)
+
     // endregion
 
     // region Split two page spread
@@ -114,10 +154,6 @@ class ReaderPreferences(
     fun grayscale() = preferenceStore.getBoolean("pref_grayscale", false)
 
     fun invertedColors() = preferenceStore.getBoolean("pref_inverted_colors", false)
-
-    fun anime4k() = preferenceStore.getBoolean("pref_anime4k", false)
-
-    fun waifu2x() = preferenceStore.getBoolean("pref_waifu2x", false)
 
     // endregion
 

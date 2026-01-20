@@ -10,8 +10,6 @@ import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -84,6 +82,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -92,6 +91,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.Constants
@@ -141,6 +141,8 @@ class ReaderActivity : BaseActivity() {
 
     var isScrollingThroughPages = false
         private set
+
+    private var uiBusyJob: kotlinx.coroutines.Job? = null
 
     /**
      * Called when the activity is created. Initializes the presenter and configuration.
@@ -246,6 +248,16 @@ class ReaderActivity : BaseActivity() {
                 }
             }
             .launchIn(lifecycleScope)
+
+        viewModel.state
+            .map { it.menuVisible }
+            .distinctUntilChanged()
+            .onEach { Waifu2x.setUiBusy(it) }
+            .launchIn(lifecycleScope)
+
+        if (readerPreferences.waifu2xEnabled().get()) {
+            Waifu2x.init(this, readerPreferences.waifu2xNoiseLevel().get())
+        }
     }
 
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
@@ -338,11 +350,14 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
-        super.onDestroy()
         viewModel.state.value.viewer?.destroy()
+        
+        
+        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.reset()
         config = null
         menuToggleToast?.cancel()
         readingModeToast?.cancel()
+        super.onDestroy()
     }
 
     override fun onPause() {
@@ -422,7 +437,24 @@ class ReaderActivity : BaseActivity() {
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         val handled = viewModel.state.value.viewer?.handleGenericMotionEvent(event) ?: false
+        if (handled) onUiInteracted()
         return handled || super.dispatchGenericMotionEvent(event)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        onUiInteracted()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun onUiInteracted() {
+        Waifu2x.setUiBusy(true)
+        uiBusyJob?.cancel()
+        uiBusyJob = lifecycleScope.launch {
+            delay(500)
+            if (!viewModel.state.value.menuVisible) {
+                Waifu2x.setUiBusy(false)
+            }
+        }
     }
 
     @Composable
@@ -876,15 +908,6 @@ class ReaderActivity : BaseActivity() {
                 .launchIn(lifecycleScope)
 
             combine(
-                readerPreferences.anime4k().changes(),
-                readerPreferences.waifu2x().changes(),
-            ) { anime4k, waifu2x -> anime4k to waifu2x }
-                .onEach { (anime4k, waifu2x) ->
-                    setShaderLayer(anime4k, waifu2x)
-                }
-                .launchIn(lifecycleScope)
-
-            combine(
                 readerPreferences.fullscreen().changes(),
                 readerPreferences.drawUnderCutout().changes(),
             ) { fullscreen, drawUnderCutout -> fullscreen to drawUnderCutout }
@@ -973,17 +996,6 @@ class ReaderActivity : BaseActivity() {
         private fun setLayerPaint(grayscale: Boolean, invertedColors: Boolean) {
             val paint = if (grayscale || invertedColors) getCombinedPaint(grayscale, invertedColors) else null
             binding.viewerContainer.setLayerType(LAYER_TYPE_HARDWARE, paint)
-        }
-
-        private fun setShaderLayer(anime4k: Boolean, waifu2x: Boolean) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val effect = when {
-                    anime4k -> RenderEffect.createRuntimeShaderEffect(RuntimeShader(MihonShaders.ANIME4K_AGSL), "content")
-                    waifu2x -> RenderEffect.createRuntimeShaderEffect(RuntimeShader(MihonShaders.WAIFU2X_AGSL), "content")
-                    else -> null
-                }
-                binding.viewerContainer.setRenderEffect(effect)
-            }
         }
     }
 }

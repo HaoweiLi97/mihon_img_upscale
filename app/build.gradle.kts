@@ -145,6 +145,16 @@ android {
         shaders = false
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    ndkVersion = "28.2.13676358"
+
+
     lint {
         abortOnError = false
         checkReleaseBuilds = false
