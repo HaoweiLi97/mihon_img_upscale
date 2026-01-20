@@ -1,0 +1,38 @@
+{
+  "buildFiles": [
+    "/Users/haoweili/Downloads/mihon-main/app/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/haoweili/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/40714hy1/armeabi-v7a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/haoweili/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/40714hy1/armeabi-v7a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "waifu2x-jni::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "armeabi-v7a",
+      "artifactName": "waifu2x-jni",
+      "output": "/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/Debug/40714hy1/obj/armeabi-v7a/libwaifu2x-jni.so",
+      "runtimeFiles": []
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "/Users/haoweili/Library/Android/sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang.lld",
+      "cppCompilerExecutable": "/Users/haoweili/Library/Android/sdk/ndk/25.2.9519653/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++.lld"
+    }
+  },
+  "cFileExtensions": [],
+  "cppFileExtensions": [
+    "cpp"
+  ]
+}

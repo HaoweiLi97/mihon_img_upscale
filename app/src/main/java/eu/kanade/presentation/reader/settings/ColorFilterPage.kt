@@ -151,7 +151,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         val realCuganInputScale by screenModel.preferences.realCuganInputScale().collectAsState()
 
         SettingsChipRow("模型") {
-            listOf("Real-CUGAN", "Real-ESRGAN", "Real-CUGAN Nose", "Waifu2x").mapIndexed { index, name ->
+            listOf("Real-CUGAN SE", "Real-CUGAN Pro", "Real-ESRGAN", "Real-CUGAN Nose", "Waifu2x").mapIndexed { index, name ->
                 FilterChip(
                     selected = realCuganModel == index,
                     onClick = { screenModel.preferences.realCuganModel().set(index) },
@@ -160,9 +160,17 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        if (realCuganModel == 0 || realCuganModel == 3) {
+        if (realCuganModel == 0 || realCuganModel == 1 || realCuganModel == 4) {
+            val levels = if (realCuganModel == 1) { // Pro only has no-denoise, denoise3x, conservative
+                listOf(0 to "无", 3 to "3x", 4 to "保守")
+            } else if (realCuganModel == 4) { // Waifu2x
+                listOf(0 to "1x", 1 to "2x", 2 to "3x") 
+            } else { // SE
+                listOf(0 to "无", 1 to "1x", 2 to "2x", 3 to "3x", 4 to "保守")
+            }
+            
             SettingsChipRow("降噪等级") {
-                listOf("无", "1x", "2x", "3x", "保守").mapIndexed { index, name ->
+                levels.map { (index, name) ->
                     FilterChip(
                         selected = realCuganNoiseLevel == index,
                         onClick = { screenModel.preferences.realCuganNoiseLevel().set(index) },
@@ -172,7 +180,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        if (realCuganModel == 2 || realCuganModel == 3) {
+        if (realCuganModel == 3 || realCuganModel == 4) {
              SettingsChipRow("放大倍率") {
                   FilterChip(
                       selected = true,
@@ -180,6 +188,16 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                       label = { Text("2x (固定)") }
                   )
              }
+        } else if (realCuganModel == 1) { // Pro only supports 2x, 3x
+            SettingsChipRow("放大倍率") {
+                listOf(2, 3).map { scale ->
+                    FilterChip(
+                        selected = realCuganScale == scale,
+                        onClick = { screenModel.preferences.realCuganScale().set(scale) },
+                        label = { Text("${scale}x") },
+                    )
+                }
+            }
         } else {
             SettingsChipRow("放大倍率") {
                 listOf(2, 3, 4).map { scale ->
@@ -193,7 +211,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
 
         SettingsChipRow("处理预加载量") {
-            listOf(6, 7, 8, 9, 10).map { size ->
+            listOf(1, 2, 3, 5, 8).map { size ->
                 val realCuganPreloadSize by screenModel.preferences.realCuganPreloadSize().collectAsState()
                 FilterChip(
                     selected = realCuganPreloadSize == size,
@@ -213,8 +231,19 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
+        SettingsChipRow("GPU 性能档位") {
+            val performanceMode by screenModel.preferences.realCuganPerformanceMode().collectAsState()
+            listOf(0 to "性能 90%", 1 to "平衡 50%", 2 to "节能 30%").map { (value, name) ->
+                FilterChip(
+                    selected = performanceMode == value,
+                    onClick = { screenModel.preferences.realCuganPerformanceMode().set(value) },
+                    label = { Text(name) },
+                )
+            }
+        }
+
         Column {
-            HeadingItem("最大处理分辨率 (2K = 2048)")
+            HeadingItem("最大处理分辨率 (2048 = 2K)")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -244,6 +273,10 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                     singleLine = true,
                 )
             }
+            CheckboxItem(
+                label = "超过限制时自动缩放到最大分辨率",
+                pref = screenModel.preferences.realCuganResizeLargeImage(),
+            )
         }
 
         CheckboxItem(

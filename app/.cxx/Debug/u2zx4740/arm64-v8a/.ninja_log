@@ -1,0 +1,12 @@
+# ninja log v5
+0	1140	1768612873239657568	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	3c398b4fd5fd9def
+0	23	0	clean	bdea5eb211accd8e
+1	1113	1768612873207625193	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	e8e448bb4342ac2b
+2	682	1768613129812739455	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	e014ab17e7baeae3
+1	701	1768613129833293619	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	30b82c1eb56c1e5e
+0	18	0	clean	bdea5eb211accd8e
+1	857	1768613204069343392	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	e014ab17e7baeae3
+1	879	1768613204093896321	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	30b82c1eb56c1e5e
+0	30	0	clean	bdea5eb211accd8e
+2	1432	1768613377835008058	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	30b82c1eb56c1e5e
+2	1629	1768613378095455741	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	e014ab17e7baeae3

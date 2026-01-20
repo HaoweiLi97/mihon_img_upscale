@@ -1,0 +1,18 @@
+                        -H/Users/haoweili/Downloads/mihon-main/app/src/main/cpp
+-DCMAKE_SYSTEM_NAME=Android
+-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+-DCMAKE_SYSTEM_VERSION=26
+-DANDROID_PLATFORM=android-26
+-DANDROID_ABI=x86
+-DCMAKE_ANDROID_ARCH_ABI=x86
+-DANDROID_NDK=/Users/haoweili/Library/Android/sdk/ndk/25.2.9519653
+-DCMAKE_ANDROID_NDK=/Users/haoweili/Library/Android/sdk/ndk/25.2.9519653
+-DCMAKE_TOOLCHAIN_FILE=/Users/haoweili/Library/Android/sdk/ndk/25.2.9519653/build/cmake/android.toolchain.cmake
+-DCMAKE_MAKE_PROGRAM=/Users/haoweili/Library/Android/sdk/cmake/3.22.1/bin/ninja
+-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/Debug/40714hy1/obj/x86
+-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/Debug/40714hy1/obj/x86
+-DCMAKE_BUILD_TYPE=Debug
+-B/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/40714hy1/x86
+-GNinja
+                        Build command args: []
+                        Version: 2

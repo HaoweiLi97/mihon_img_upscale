@@ -1,0 +1,5 @@
+# ninja log v5
+0	543	1768619677587242046	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	70cf3ae1b4c7b192
+1	559	1768619677602319809	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	a43c2be4a9d1d92a
+1	664	1768619677707146313	CMakeFiles/waifu2x-jni.dir/anime4k.cpp.o	739e344ef3472ba
+664	1113	1768619678055377654	/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/Debug/40714hy1/obj/x86_64/libwaifu2x-jni.so	a391706390fddf1a

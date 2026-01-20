@@ -91,6 +91,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.Constants
@@ -140,6 +141,8 @@ class ReaderActivity : BaseActivity() {
 
     var isScrollingThroughPages = false
         private set
+
+    private var uiBusyJob: kotlinx.coroutines.Job? = null
 
     /**
      * Called when the activity is created. Initializes the presenter and configuration.
@@ -246,6 +249,12 @@ class ReaderActivity : BaseActivity() {
             }
             .launchIn(lifecycleScope)
 
+        viewModel.state
+            .map { it.menuVisible }
+            .distinctUntilChanged()
+            .onEach { Waifu2x.setUiBusy(it) }
+            .launchIn(lifecycleScope)
+
         if (readerPreferences.waifu2xEnabled().get()) {
             Waifu2x.init(this, readerPreferences.waifu2xNoiseLevel().get())
         }
@@ -342,6 +351,8 @@ class ReaderActivity : BaseActivity() {
      */
     override fun onDestroy() {
         viewModel.state.value.viewer?.destroy()
+        
+        
         eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.reset()
         config = null
         menuToggleToast?.cancel()
@@ -426,7 +437,24 @@ class ReaderActivity : BaseActivity() {
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         val handled = viewModel.state.value.viewer?.handleGenericMotionEvent(event) ?: false
+        if (handled) onUiInteracted()
         return handled || super.dispatchGenericMotionEvent(event)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        onUiInteracted()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun onUiInteracted() {
+        Waifu2x.setUiBusy(true)
+        uiBusyJob?.cancel()
+        uiBusyJob = lifecycleScope.launch {
+            delay(500)
+            if (!viewModel.state.value.menuVisible) {
+                Waifu2x.setUiBusy(false)
+            }
+        }
     }
 
     @Composable

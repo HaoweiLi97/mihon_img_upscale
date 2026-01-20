@@ -9,6 +9,10 @@ build
 !.idea/icon.svg
 /captures
 
+
+#Build files
+*.apk
+
 # Configuration files
 local.properties
 

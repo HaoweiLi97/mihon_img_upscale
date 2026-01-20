@@ -95,13 +95,27 @@ class ReaderPreferences(
 
     fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", 0) // 0: Real-CUGAN, 1: Real-ESRGAN, 2: Waifu2x-Nose
 
-    fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 6)
+    fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 3)
+
+    fun realCuganProEnabled() = preferenceStore.getBoolean("pref_realcugan_pro_enabled", false)
+
+    fun realCuganPerformanceMode() = preferenceStore.getInt("pref_realcugan_performance_mode", 0) // 0: 90%, 1: 50%, 2: 30%
 
     fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 2048)
 
     fun realCuganMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_max_size_height", 2048)
+    
+    fun realCuganResizeLargeImage() = preferenceStore.getBoolean("pref_realcugan_resize_large_image", false)
 
     fun realCuganShowStatus() = preferenceStore.getBoolean("pref_realcugan_show_status", false)
+
+    fun inkFilter() = preferenceStore.getBoolean("ink_filter", false)
+
+    fun inkBleedingIntensity() = preferenceStore.getInt("ink_bleeding_intensity", 0)
+
+    fun inkBumpIntensity() = preferenceStore.getInt("ink_bump_intensity", 0)
+
+    fun inkOriginalIntensity() = preferenceStore.getInt("ink_original_intensity", 0)
 
     // endregion
 

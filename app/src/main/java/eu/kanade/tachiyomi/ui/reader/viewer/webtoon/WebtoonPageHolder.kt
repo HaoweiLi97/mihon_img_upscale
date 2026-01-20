@@ -42,7 +42,7 @@ import tachiyomi.i18n.MR
  * @constructor creates a new webtoon holder.
  */
 class WebtoonPageHolder(
-    private val frame: ReaderPageImageView,
+    internal val frame: ReaderPageImageView,
     viewer: WebtoonViewer,
 ) : WebtoonBaseHolder(frame, viewer) {
 
@@ -93,6 +93,9 @@ class WebtoonPageHolder(
      */
     fun bind(page: ReaderPage) {
         this.page = page
+        frame.pageIndex = page.index
+        frame.mangaId = viewer.activity.viewModel.manga?.id ?: -1L
+        frame.chapterId = page.chapter.chapter.id ?: -1L
         loadJob?.cancel()
         loadJob = scope.launch { loadPageAndProcessStatus() }
         refreshLayoutParams()

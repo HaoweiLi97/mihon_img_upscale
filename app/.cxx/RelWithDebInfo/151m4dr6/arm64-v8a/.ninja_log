@@ -1,0 +1,17 @@
+# ninja log v5
+0	774	1768791404416281395	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	45bdeff054b29d8c
+59	809	1768791404451889188	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	a55d148f70158962
+25	880	1768791404522831233	CMakeFiles/waifu2x-jni.dir/anime4k.cpp.o	182ecafefa0627d0
+880	1016	1768791404643396037	/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/RelWithDebInfo/151m4dr6/obj/arm64-v8a/libwaifu2x-jni.so	218afd09bbdcc440
+4	1385	1768793445467689892	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	45bdeff054b29d8c
+1385	1630	1768793445694317968	/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/RelWithDebInfo/151m4dr6/obj/arm64-v8a/libwaifu2x-jni.so	218afd09bbdcc440
+3	1233	1768801734420417360	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	45bdeff054b29d8c
+5	1246	1768801734436667053	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	a55d148f70158962
+1246	1585	1768801734746377439	/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/RelWithDebInfo/151m4dr6/obj/arm64-v8a/libwaifu2x-jni.so	218afd09bbdcc440
+3	967	1768835050712264919	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	45bdeff054b29d8c
+967	1193	1768835050921922374	/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/RelWithDebInfo/151m4dr6/obj/arm64-v8a/libwaifu2x-jni.so	218afd09bbdcc440
+3	1339	1768840235364659198	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	45bdeff054b29d8c
+1339	1637	1768840235632907034	/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/RelWithDebInfo/151m4dr6/obj/arm64-v8a/libwaifu2x-jni.so	218afd09bbdcc440
+3	914	1768893777394408718	CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o	45bdeff054b29d8c
+4	936	1768893777416361161	CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o	a55d148f70158962
+936	1161	1768893777626135393	/Users/haoweili/Downloads/mihon-main/app/build/intermediates/cxx/RelWithDebInfo/151m4dr6/obj/arm64-v8a/libwaifu2x-jni.so	218afd09bbdcc440

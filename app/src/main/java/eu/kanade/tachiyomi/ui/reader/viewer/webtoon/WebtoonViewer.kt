@@ -164,6 +164,32 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
 
         frame.layoutParams = ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
         frame.addView(recycler)
+        
+        // Register listener for memory optimization in webtoon mode
+        // When page changes, manage enhanced/original images based on distance from current page
+        val pageChangeListener: (Int) -> Unit = { currentPage ->
+            val firstVisible = layoutManager.findFirstVisibleItemPosition()
+            val lastVisible = layoutManager.findLastVisibleItemPosition()
+            
+            for (i in firstVisible..lastVisible) {
+                val holder = recycler.findViewHolderForAdapterPosition(i) as? WebtoonPageHolder
+                holder?.let {
+                    val page = adapter.items.getOrNull(i) as? ReaderPage
+                    page?.let { p ->
+                        val distance = kotlin.math.abs(p.index - currentPage)
+                        
+                        if (distance > 3) {
+                            // Far from current position - restore original to save memory
+                            it.frame.restoreOriginalImage()
+                        } else {
+                            // Close to current position - restore enhanced from cache if available
+                            it.frame.restoreEnhancedFromCache()
+                        }
+                    }
+                }
+            }
+        }
+        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.addPageChangeListener(pageChangeListener)
     }
 
     private fun checkAllowPreload(page: ReaderPage?): Boolean {
@@ -212,6 +238,12 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
 
         // Notify enhancement queue of page change for priority processing
         eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.onPageChanged(page.index)
+        
+        // Check if current page needs enhancement (might have been skipped during fast scrolling)
+        val currentHolder = recycler.findViewHolderForAdapterPosition(
+            layoutManager.findFirstVisibleItemPosition()
+        ) as? WebtoonPageHolder
+        currentHolder?.frame?.onPageSelected(true)
 
         // Preload next chapter once we're within the last 5 pages of the current chapter
         val inPreloadRange = pages.size - page.number < 5

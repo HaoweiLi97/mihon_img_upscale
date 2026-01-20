@@ -1,0 +1,3 @@
+/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/286k5v33/armeabi-v7a/CMakeFiles/waifu2x-jni.dir
+/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/286k5v33/armeabi-v7a/CMakeFiles/edit_cache.dir
+/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/286k5v33/armeabi-v7a/CMakeFiles/rebuild_cache.dir

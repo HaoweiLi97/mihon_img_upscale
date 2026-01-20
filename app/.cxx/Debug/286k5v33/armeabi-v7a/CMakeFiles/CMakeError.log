@@ -1,0 +1,38 @@
+Performing C SOURCE FILE Test CMAKE_HAVE_LIBC_PTHREAD failed with the following output:
+Change Dir: /Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/286k5v33/armeabi-v7a/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/Users/haoweili/Library/Android/sdk/cmake/3.22.1/bin/ninja cmTC_4a851 && [1/2] Building C object CMakeFiles/cmTC_4a851.dir/src.c.o
+FAILED: CMakeFiles/cmTC_4a851.dir/src.c.o 
+/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang --target=armv7-none-linux-androideabi26 --sysroot=/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DCMAKE_HAVE_LIBC_PTHREAD  -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security   -fPIE -MD -MT CMakeFiles/cmTC_4a851.dir/src.c.o -MF CMakeFiles/cmTC_4a851.dir/src.c.o.d -o CMakeFiles/cmTC_4a851.dir/src.c.o -c /Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/286k5v33/armeabi-v7a/CMakeFiles/CMakeTmp/src.c
+/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/286k5v33/armeabi-v7a/CMakeFiles/CMakeTmp/src.c:13:3: error: call to undeclared function 'pthread_cancel'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+   13 |   pthread_cancel(thread);
+      |   ^
+/Users/haoweili/Downloads/mihon-main/app/.cxx/Debug/286k5v33/armeabi-v7a/CMakeFiles/CMakeTmp/src.c:13:3: note: did you mean 'pthread_once'?
+/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/include/pthread.h:250:5: note: 'pthread_once' declared here
+  250 | int pthread_once(pthread_once_t* _Nonnull __once, void (* _Nonnull __init_routine)(void));
+      |     ^
+1 error generated.
+ninja: build stopped: subcommand failed.
+
+
+Source file was:
+#include <pthread.h>
+
+static void* test_func(void* data)
+{
+  return data;
+}
+
+int main(void)
+{
+  pthread_t thread;
+  pthread_create(&thread, NULL, test_func, NULL);
+  pthread_detach(thread);
+  pthread_cancel(thread);
+  pthread_join(thread, NULL);
+  pthread_atfork(NULL, NULL, NULL);
+  pthread_exit(NULL);
+
+  return 0;
+}
+

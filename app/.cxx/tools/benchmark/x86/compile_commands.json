@@ -1,0 +1,17 @@
+[
+{
+  "directory": "/Users/haoweili/Downloads/mihon-main/app/.cxx/RelWithDebInfo/151m4dr6/x86",
+  "command": "/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=i686-none-linux-android26 --sysroot=/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Dwaifu2x_jni_EXPORTS -I/Users/haoweili/Downloads/mihon-main/app/src/main/cpp -isystem /Users/haoweili/Downloads/ncnn-20260113-android-vulkan/x86/include/ncnn -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -O2 -g -DNDEBUG -fPIC -fno-rtti -fno-exceptions -pthread -o CMakeFiles/waifu2x-jni.dir/waifu2x.cpp.o -c /Users/haoweili/Downloads/mihon-main/app/src/main/cpp/waifu2x.cpp",
+  "file": "/Users/haoweili/Downloads/mihon-main/app/src/main/cpp/waifu2x.cpp"
+},
+{
+  "directory": "/Users/haoweili/Downloads/mihon-main/app/.cxx/RelWithDebInfo/151m4dr6/x86",
+  "command": "/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=i686-none-linux-android26 --sysroot=/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Dwaifu2x_jni_EXPORTS -I/Users/haoweili/Downloads/mihon-main/app/src/main/cpp -isystem /Users/haoweili/Downloads/ncnn-20260113-android-vulkan/x86/include/ncnn -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -O2 -g -DNDEBUG -fPIC -fno-rtti -fno-exceptions -pthread -o CMakeFiles/waifu2x-jni.dir/anime4k.cpp.o -c /Users/haoweili/Downloads/mihon-main/app/src/main/cpp/anime4k.cpp",
+  "file": "/Users/haoweili/Downloads/mihon-main/app/src/main/cpp/anime4k.cpp"
+},
+{
+  "directory": "/Users/haoweili/Downloads/mihon-main/app/.cxx/RelWithDebInfo/151m4dr6/x86",
+  "command": "/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=i686-none-linux-android26 --sysroot=/Users/haoweili/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Dwaifu2x_jni_EXPORTS -I/Users/haoweili/Downloads/mihon-main/app/src/main/cpp -isystem /Users/haoweili/Downloads/ncnn-20260113-android-vulkan/x86/include/ncnn -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -O2 -g -DNDEBUG -fPIC -fno-rtti -fno-exceptions -pthread -o CMakeFiles/waifu2x-jni.dir/waifu2x_jni.cpp.o -c /Users/haoweili/Downloads/mihon-main/app/src/main/cpp/waifu2x_jni.cpp",
+  "file": "/Users/haoweili/Downloads/mihon-main/app/src/main/cpp/waifu2x_jni.cpp"
+}
+]
