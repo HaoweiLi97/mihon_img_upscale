@@ -2,7 +2,7 @@
 # Mihon_img_upscale
 
 ### Description
-A specialized fork of **Mihon** that brings high-performance AI super-resolution to your manga reading experience. By leveraging the **NCNN** framework and **Vulkan GPU acceleration**, this fork transforms low-quality, blurry scans into crisp, high-definition art in real-time.
+A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Real-ESRGAN, Waifu2x) to enhance low-resolution manga in real-time.
 
 ---
 
