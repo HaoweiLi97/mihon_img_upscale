@@ -29,6 +29,17 @@ class SetMangaViewerFlags(
         )
     }
 
+    suspend fun awaitSetShiftDoublePage(id: Long, shift: Boolean) {
+        val manga = mangaRepository.getMangaById(id)
+        val flag = if (shift) ReaderOrientation.SHIFT_DOUBLE_PAGE.toLong() else 0L
+        mangaRepository.update(
+            MangaUpdate(
+                id = id,
+                viewerFlags = manga.viewerFlags.setFlag(flag, ReaderOrientation.SHIFT_DOUBLE_PAGE.toLong()),
+            ),
+        )
+    }
+
     private fun Long.setFlag(flag: Long, mask: Long): Long {
         return this and mask.inv() or (flag and mask)
     }

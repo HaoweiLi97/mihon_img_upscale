@@ -47,23 +47,33 @@ import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
 import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
+import okio.Buffer
+import tachiyomi.core.common.util.system.logcat
+import logcat.LogPriority
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import okio.BufferedSource
 import tachiyomi.core.common.util.system.ImageUtil
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import uy.kohesive.injekt.injectLazy
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import tachiyomi.core.common.util.lang.launchUI
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancelAndJoin
-
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -81,6 +91,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @StyleRes defStyleRes: Int = 0,
     private val isWebtoon: Boolean = false,
 ) : FrameLayout(context, attrs, defStyleAttrs, defStyleRes) {
+
 
     private var isSettingProcessedImage = false // Flag to prevent recursive processing
     private val alwaysDecodeLongStripWithSSIV by lazy {
@@ -150,6 +161,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
     var onScaleChanged: ((newScale: Float) -> Unit)? = null
     var onViewClicked: (() -> Unit)? = null
 
+    // Helper properties for Enhancement logic
+    var pageIndex: Int = -1
+    var mangaId: Long = -1L
+    var chapterId: Long = -1L
+    var readerPage: ReaderPage? = null
+
     private val statusView: TextView by lazy {
         TextView(context).apply {
             layoutParams = LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
@@ -203,13 +220,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun updateStatus(text: String?) {
-        if (!realCuganShowStatus || text == null) {
-            statusView.isVisible = false
-            return
+        post {
+            if (!realCuganShowStatus || text == null) {
+                statusView.isVisible = false
+                return@post
+            }
+            statusView.text = text
+            statusView.isVisible = true
+            statusView.bringToFront()
         }
-        statusView.text = text
-        statusView.isVisible = true
-        statusView.bringToFront()
     }
 
     /**
@@ -257,9 +276,30 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     open fun onPageSelected(forward: Boolean) {
-        // Check if this page needs enhancement when selected (user might have skipped it during fast scrolling)
-        checkAndTriggerEnhancement()
-        
+        // Pruning Logic: Triggered only when this page is actually selected/viewed
+        // Pruning Logic: Triggered only when this page is actually selected/viewed
+        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
+        val cId = readerPage?.chapter?.chapter?.id ?: chapterId
+        val pIdx = readerPage?.index ?: pageIndex
+
+        // Update global current page index to help other instances decide if they should self-heal
+        if (pIdx >= 0) {
+             currentGlobalPageIndex = pIdx
+             ImageEnhancer.targetPageIndex = pIdx
+        }
+
+        if (pIdx >= 0 && mId != -1L && cId != -1L) {
+             // 1. Ensure this page is being processed (Restore if pruned, Upgrade if Low)
+             val page = readerPage
+             if (page != null) {
+                 ImageEnhancer.enhance(context.applicationContext, page, true)
+             }
+             
+             // 2. Prune others
+             ImageEnhancer.cancelRequestsLessThan(context.applicationContext, mId, cId, pIdx)
+             ImageEnhancer.cancelRequestsGreaterThan(context.applicationContext, mId, cId, pIdx + preloadSize)
+        }
+
         with(pageView as? SubsamplingScaleImageView) {
             if (this == null) return
             if (isReady) {
@@ -282,86 +322,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
     
-    /**
-     * Check if this page needs enhancement and trigger it if necessary.
-     * This handles the case where the user scrolled past a page before it was processed,
-     * and then scrolled back to it.
-     * Also handles webtoon mode where enhanced image was restored to original to save memory.
-     */
-    private fun checkAndTriggerEnhancement() {
-        if (!realCuganEnabled || pageIndex < 0 || mangaId == -1L) {
-            return
-        }
-        
-        // If the page is marked completed AND we are holding a valid enhanced bitmap,
-        // we assume we are correctly showing the enhanced image.
-        if (eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.isCompleted(pageIndex) && 
-            enhancedBitmap != null && !enhancedBitmap!!.isRecycled) {
-            return
-        }
-        
-        // Check if currently processing
-        if (eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.isProcessing(pageIndex)) {
-            return
-        }
-        
-        android.util.Log.d("ReaderPageImageView", "Page $pageIndex selected, checking if needs enhancement or cache reload...")
-        
-        // Initialize cache
-        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.init(context)
-        val configHash = eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getConfigHash(
-            realCuganNoiseLevel, 
-            realCuganScale, 
-            realCuganInputScale
-        ) + "_m${realCuganModel}_w${realCuganMaxSizeWidth}_h${realCuganMaxSizeHeight}"
-        
-        // Check if enhanced version exists in cache
-        val cachedFile = if (pageIndex >= 0 && mangaId != -1L && chapterId != -1L) {
-            eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getCachedImage(mangaId, chapterId, pageIndex, configHash)
-        } else null
-        
-        
-        if (cachedFile != null && config != null) {
-            android.util.Log.d("ReaderPageImageView", "Found cached enhanced image for page $pageIndex, loading...")
-            
-            // Load cached image with overlay transition to prevent flicker
-            launchIO {
-                try {
-                    // Decode the cached file to bitmap for overlay
-                    val cachedBitmap = android.graphics.BitmapFactory.decodeFile(cachedFile.absolutePath)
-                    
-                    if (cachedBitmap != null && !cachedBitmap.isRecycled) {
-                        withUIContext {
-                            // 1. Show overlay immediately to prevent flicker
-                            enhancedBitmap = cachedBitmap
-                            enhancedOverlay.setImageBitmap(cachedBitmap)
-                            enhancedOverlay.isVisible = true
-                            enhancedOverlay.bringToFront()
-                            statusView.bringToFront()
-                            
-                            // 2. Update background view
-                            android.util.Log.d("ReaderPageImageView", "Switching main view to cached enhanced source for page $pageIndex")
-                            isSettingProcessedImage = true
-                            (pageView as? SubsamplingScaleImageView)?.setImage(ImageSource.uri(context, android.net.Uri.fromFile(cachedFile)))
-                            eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCompleted(pageIndex)
-                            updateStatus("PROCESSED")
-                        }
-                    } else {
-                        android.util.Log.w("ReaderPageImageView", "Failed to decode cached file for page $pageIndex")
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.e("ReaderPageImageView", "Error loading cached image for page $pageIndex", e)
-                }
-            }
-            return
-        }
-        
-        // No cache - need to trigger processing
-        // But we don't hold originalBitmap anymore. We must wait for the page to be loaded naturally.
-        // If image is already loaded, processImageHelper would have triggered processing.
-        // If it was cancelled/recycled, we wait for reload.
-        android.util.Log.d("ReaderPageImageView", "Page $pageIndex needs processing, waiting for load/reload")
-    }
 
     private fun SubsamplingScaleImageView.landscapeZoom(forward: Boolean) {
         if (
@@ -399,14 +359,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config) {
+    fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config, streamFn: (() -> java.io.InputStream)? = null) {
         this.config = config
         if (isAnimated) {
             prepareAnimatedImageView()
             setAnimatedImage(source, config)
         } else {
             prepareNonAnimatedImageView()
-            setNonAnimatedImage(source, config)
+            setNonAnimatedImage(source, config, streamFn)
         }
     }
 
@@ -424,20 +384,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         enhancedBitmap?.recycle()
         enhancedBitmap = null
         isSettingProcessedImage = false
-    }
-
-    /**
-     * Restore original image to save memory (for webtoon mode)
-     */
-    fun restoreOriginalImage() {
-        // No-op: We let the system handle memory.
-    }
-
-    /**
-     * Restore enhanced image from cache if available (for webtoon mode when scrolling back)
-     */
-    fun restoreEnhancedFromCache() {
-        checkAndTriggerEnhancement()
     }
 
     /**
@@ -539,6 +485,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private fun setNonAnimatedImage(
         data: Any,
         config: Config,
+        streamFn: (() -> java.io.InputStream)? = null,
     ) = (pageView as? SubsamplingScaleImageView)?.apply {
         setDoubleTapZoomDuration(config.zoomDuration.getSystemScaledDuration())
         setMinimumScaleType(config.minimumScaleType)
@@ -560,41 +507,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
         when (data) {
             is BitmapDrawable -> {
-                val bitmapSource = data.bitmap
-                processImageHelper(bitmapSource)
+                setImage(ImageSource.bitmap(data.bitmap))
+                processImageHelper(originalData = data.bitmap)
             }
             is BufferedSource -> {
-                // If enhancement is enabled, we MUST skip this optimization and go through the ImageRequest flow below,
-                // because we need the Bitmap to process it.
-                if (!realCuganEnabled && (!isWebtoon || alwaysDecodeLongStripWithSSIV)) {
-                    setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
-                    setImage(ImageSource.inputStream(data.inputStream()))
-                    isVisible = true
-                    return@apply
-                }
+                // Determine hardware config and load stream for SSIV display
+                setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
+                setImage(ImageSource.inputStream(data.inputStream()))
+                isVisible = true
 
-                ImageRequest.Builder(context)
-                    .data(data)
-                    .memoryCachePolicy(CachePolicy.DISABLED)
-                    .diskCachePolicy(CachePolicy.DISABLED)
-                    .target(
-                        onSuccess = { result ->
-                            val image = result as BitmapImage
-                            processImageHelper(image.bitmap)
-                        },
-                    )
-                    .listener(
-                        onError = { _, result ->
-                            onImageLoadError(result.throwable)
-                        },
-                    )
-                    .size(ViewSizeResolver(this@ReaderPageImageView))
-                    .precision(Precision.INEXACT)
-                    .cropBorders(config.cropBorders)
-                    .customDecoder(true)
-                    .crossfade(false)
-                    .build()
-                    .let(context.imageLoader::enqueue)
+                // Enhancement Logic for Stream Sources
+                if (realCuganEnabled && pageIndex >= 0 && mangaId != -1L) {
+                     processImageHelper(streamFn = streamFn)
+                }
+                return@apply
             }
             else -> {
                 throw IllegalArgumentException("Not implemented for class ${data::class.simpleName}")
@@ -602,301 +528,180 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    // Current page index for priority processing
-    var pageIndex: Int = -1
-    var mangaId: Long = -1L
-    var chapterId: Long = -1L
-
-    private fun SubsamplingScaleImageView.processImageHelper(bitmap: Bitmap) {
-        android.util.Log.d("ReaderPageImageView", "processImageHelper called. realCugan=$realCuganEnabled, pageIndex=$pageIndex")
-        
-        if (isSettingProcessedImage) {
-            android.util.Log.d("ReaderPageImageView", "Skipping processImageHelper - setting processed image")
-            isSettingProcessedImage = false
-            return
-        }
-        
-        // Check if bitmap is recycled before trying to use it
-        if (bitmap.isRecycled) {
-            android.util.Log.d("ReaderPageImageView", "Skipping processImageHelper - bitmap is recycled for page $pageIndex")
+    private fun SubsamplingScaleImageView.processImageHelper(
+        streamFn: (() -> java.io.InputStream)? = null,
+        originalData: Any? = null
+    ) {
+        if (isSettingProcessedImage || !realCuganEnabled) {
+            updateStatus(if (realCuganEnabled) null else "RAW")
             return
         }
 
-        if (!realCuganEnabled) {
-            // If enhancement is disabled, just show the original image
-            setImage(ImageSource.bitmap(bitmap))
+        // Initialize IDs from readerPage if available, otherwise use properties
+        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
+        val cId = readerPage?.chapter?.chapter?.id ?: chapterId
+        val pIdx = readerPage?.index ?: pageIndex
+
+        if (pIdx < 0 || mId == -1L || cId == -1L) {
+            logcat(LogPriority.DEBUG) { "ReaderPageImageView: Skipping enhancement, invalid IDs (m=$mId, c=$cId, p=$pIdx)" }
+            return
+        }
+
+        ImageEnhancementCache.init(context)
+        val configHash = ImageEnhancementCache.getConfigHash(
+            realCuganNoiseLevel, 
+            realCuganScale, 
+            realCuganInputScale,
+            realCuganModel,
+            realCuganMaxSizeWidth,
+            realCuganMaxSizeHeight
+        )
+
+        val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash)
+        if (cachedFile != null) {
+            logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx found in cache on first check: ${cachedFile.absolutePath}" }
+            setImage(ImageSource.uri(context, android.net.Uri.fromFile(cachedFile)))
             isVisible = true
-            updateStatus("RAW")
-            android.util.Log.d("ReaderPageImageView", "Real-CUGAN not enabled, skipping enhancement")
+            updateStatus("PROCESSED")
             return
         }
 
-        // Initialize cache
-        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.init(context)
-        // Include model type and max size in hash. Note: model 0=SE, 1=Pro
-        val configHash = eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getConfigHash(realCuganNoiseLevel, realCuganScale, realCuganInputScale) + "_m${realCuganModel}_w${realCuganMaxSizeWidth}_h${realCuganMaxSizeHeight}"
-
-        // Check cache first - BEFORE loading original image
-        if (pageIndex >= 0 && mangaId != -1L && chapterId != -1L) {
-            val cachedFile = eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getCachedImage(mangaId, chapterId, pageIndex, configHash)
-            if (cachedFile != null) {
-                android.util.Log.d("ReaderPageImageView", "Cache hit for page $pageIndex (manga $mangaId), loading cached version directly")
-                
-                // Load cached image in background to avoid blocking
-                launchIO {
-                    try {
-                        // Decode the cached file to bitmap for overlay
-                        val cachedBitmap = android.graphics.BitmapFactory.decodeFile(cachedFile.absolutePath)
-                        
-                        if (cachedBitmap != null && !cachedBitmap.isRecycled) {
-                            withUIContext {
-                                // 1. Show overlay immediately to prevent flicker
-                                enhancedBitmap = cachedBitmap
-                                enhancedOverlay.setImageBitmap(cachedBitmap)
-                                enhancedOverlay.isVisible = true
-                                enhancedOverlay.bringToFront()
-                                statusView.bringToFront()
-                                
-                                // 2. Update background view
-                                android.util.Log.d("ReaderPageImageView", "Switching main view to cached enhanced source for page $pageIndex")
-                                isSettingProcessedImage = true
-                                setImage(ImageSource.uri(context, android.net.Uri.fromFile(cachedFile)))
-                                isVisible = true
-                                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCompleted(pageIndex)
-                                updateStatus("PROCESSED")
-                            }
-                        } else {
-                            android.util.Log.w("ReaderPageImageView", "Failed to decode cached file for page $pageIndex, falling back to original")
-                            // Fallback to original image if cache decode fails
-                            withUIContext {
-                                setImage(ImageSource.bitmap(bitmap))
-                                isVisible = true
-                                updateStatus("RAW")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.e("ReaderPageImageView", "Error loading cached image for page $pageIndex, falling back to original", e)
-                        // Fallback to original image on error
-                        withUIContext {
-                            setImage(ImageSource.bitmap(bitmap))
-                            isVisible = true
-                            updateStatus("RAW")
-                        }
-                    }
-                }
-                
-                return
+        logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx NOT in cache, starting monitoring (m=$mId, c=$cId, config=$configHash)" }
+        
+        // Trigger enhancement if it's not already in progress
+        val triggerData = readerPage ?: streamFn?.let {
+            try {
+                okio.Buffer().readFrom(it())
+            } catch (e: Exception) {
+                null
+            }
+        } ?: originalData
+        
+        
+        if (triggerData != null) {
+            // Default to Low Priority for preloads. onPageSelected will upgrade to High.
+            if (triggerData is ReaderPage) {
+                ImageEnhancer.enhance(context.applicationContext, triggerData, false)
+            } else {
+                ImageEnhancer.enhance(context.applicationContext, mId, cId, pIdx, triggerData, false)
             }
         }
-
-        // No cache hit - show original image first, then process
-        setImage(ImageSource.bitmap(bitmap))
-        isVisible = true
-        updateStatus("RAW")
         
-        // Mark this page as queued for processing (so checkAndTriggerEnhancement knows it's being handled)
-        if (pageIndex >= 0) {
-            eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markQueued(pageIndex)
-        }
-
+        // Simplified polling for the enhanced image in cache
         processingJob?.cancel()
         processingJob = launchIO {
             try {
-                // Lower thread priority to avoid blocking UI
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-                
-                // Wait until this page is within processing range
-                while (pageIndex >= 0 && isActive) {
-                    val currentPage = eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.currentReadingPage
-                    
-                    // Cancel if we're too far behind
-                    // We allow up to 5 pages back to handle scroll back better
-                    // This prevents wasting resources on pages the user has scrolled past
-                    if (pageIndex < currentPage - 5) {
-                        android.util.Log.d("ReaderPageImageView", "Cancelling page $pageIndex - too far behind ($currentPage)")
-                        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCancelled(pageIndex)
-                        return@launchIO
-                    }
-                    
-                    // Process if we're within range (current page ± 5, or ahead within preload range)
-                    if (pageIndex >= currentPage - 5 && pageIndex <= currentPage + preloadSize) {
-                        break
-                    }
-                    
-                    // Too far ahead, wait a bit
-                    delay(500)
-                }
+                // Poll every 500ms for up to 60 seconds if it's the current page
+                var attempts = 0
+                var wasEnhancing = false
+                while (attempts < 120 && isActive) {
+                    val file = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash)
+                    if (file != null) {
+                        logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx found in cache during polling: ${file.absolutePath}" }
+                        // Fix Flicker: "Instant Swap" Strategy with Pre-decoded Bitmap
+                        // Decode bitmap in IO thread to avoid UI thread lag/flash
+                        val bitmap = try {
+                            android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                        } catch (e: Exception) { null }
 
-                android.util.Log.d("ReaderPageImageView", "Real-CUGAN starting processing page $pageIndex (inputScale=$realCuganInputScale%)...")
-                
-                // Check if bitmap was recycled before we could use it
-                if (bitmap.isRecycled) {
-                    android.util.Log.d("ReaderPageImageView", "Enhancement cancelled for page $pageIndex - bitmap was recycled")
-                    eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCancelled(pageIndex)
-                    return@launchIO
-                }
-                
-                // First copy HARDWARE bitmap to software bitmap AND ensure we own it (copy) 
-                // because EnhancementQueue might outlive this View/Bitmap
-                var inputBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
-
-                // Apply max size limit if enabled
-                if (inputBitmap.width > realCuganMaxSizeWidth || inputBitmap.height > realCuganMaxSizeHeight) {
-                    if (realCuganResizeLargeImage) {
-                        val ratio = kotlin.math.min(realCuganMaxSizeWidth.toFloat() / inputBitmap.width, realCuganMaxSizeHeight.toFloat() / inputBitmap.height)
-                        val newWidth = (inputBitmap.width * ratio).toInt()
-                        val newHeight = (inputBitmap.height * ratio).toInt()
-                        android.util.Log.d("ReaderPageImageView", "Resizing large image: ${inputBitmap.width}x${inputBitmap.height} -> ${newWidth}x${newHeight}")
-                        val scaled = Bitmap.createScaledBitmap(inputBitmap, newWidth, newHeight, true)
-                        if (inputBitmap != bitmap) {
-                            inputBitmap.recycle()
-                        }
-                        inputBitmap = scaled
-                    } else {
-                        android.util.Log.d("ReaderPageImageView", "Skipping processing: Image too large (${inputBitmap.width}x${inputBitmap.height} > max ${realCuganMaxSizeWidth}x${realCuganMaxSizeHeight})")
-                        if (inputBitmap != bitmap) {
-                            inputBitmap.recycle()
-                        }
-                        return@launchIO
-                    }
-                }
-
-                // Pre-scale image if inputScale < 100 for faster processing
-                if (realCuganInputScale < 100) {
-                    val scale = realCuganInputScale / 100f
-                    val newWidth = (inputBitmap.width * scale).toInt()
-                    val newHeight = (inputBitmap.height * scale).toInt()
-                    android.util.Log.d("ReaderPageImageView", "Pre-scaling (InputScale): ${inputBitmap.width}x${inputBitmap.height} -> ${newWidth}x${newHeight}")
-                    val scaled = Bitmap.createScaledBitmap(inputBitmap, newWidth, newHeight, true)
-                    if (inputBitmap != bitmap) {
-                        inputBitmap.recycle()
-                    }
-                    inputBitmap = scaled
-                }
-                
-                val initialized = when (realCuganModel) {
-                    0 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initRealCugan(context, realCuganNoiseLevel, realCuganScale, false, tileSleepMs, tileSize)
-                    1 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initRealCugan(context, realCuganNoiseLevel, realCuganScale, true, tileSleepMs, tileSize)
-                    2 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initRealESRGAN(context, realCuganScale, tileSleepMs, tileSize)
-                    3 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initNose(context, tileSleepMs, tileSize)
-                    4 -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initWaifu2x(context, realCuganNoiseLevel, 2, tileSleepMs, tileSize)
-                    else -> eu.kanade.tachiyomi.util.waifu2x.Waifu2x.initRealCugan(context, realCuganNoiseLevel, realCuganScale, false, tileSleepMs, tileSize)
-                }
-
-                val progressJob = launchUI {
-                    while (isActive) {
-                        val packed = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgress()
-                        val id = (packed shr 32).toInt()
-                        val p = (packed and 0xFFFFFFFF).toInt()
-                        
-                        if (id == pageIndex) {
-                            updateStatus("PROCESSING: $p%")
-                        } else {
-                            updateStatus("QUEUED")
-                        }
-                        delay(100)
-                    }
-                }
-
-                val processed: Bitmap? = try {
-                    if (initialized) {
-                        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.process(
-                            pageIndex, 
-                            inputBitmap, 
-                            realCuganModel, 
-                            realCuganNoiseLevel, 
-                            if (realCuganModel == 3 || realCuganModel == 4) 2 else realCuganScale,
-                            mangaId,
-                            chapterId,
-                            configHash
-                        )
-                    } else {
-                        android.util.Log.e("ReaderPageImageView", "Waifu2x not initialized!")
-                        null
-                    }
-                } finally {
-                    progressJob.cancelAndJoin()
-                }
-                
-                // Ownership of inputBitmap is now transferred to EnhancementQueue.
-                // It will be recycled by the worker once processing is done.
-
-                if (processed != null) {
-                    android.util.Log.d("ReaderPageImageView", "Real-CUGAN processing complete for page $pageIndex, applying...")
-                    
-                    if (pageIndex >= 0) {
-                        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCompleted(pageIndex)
-                    }
-
-                    // Manually save to cache since we are processing locally
-                    if (pageIndex >= 0 && mangaId != -1L && chapterId != -1L) {
-                        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.saveToCache(
-                            mangaId, chapterId, pageIndex, configHash, processed
-                        )
-                    }
-
-                    // Get the file from cache
-                    val savedFile = if (pageIndex >= 0 && mangaId != -1L && chapterId != -1L) {
-                        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.getCachedImage(mangaId, chapterId, pageIndex, configHash)
-                    } else null
-
-                    withUIContext {
-                        // 1. Show overlay immediately to prevent flicker
-                        enhancedBitmap = processed
-                        enhancedOverlay.setImageBitmap(processed)
-                        enhancedOverlay.isVisible = true
-                        enhancedOverlay.bringToFront()
-                        statusView.bringToFront()
-                        
-                        // 2. Update background view
-                        android.util.Log.d("ReaderPageImageView", "Switching main view to enhanced source for page $pageIndex")
-                        isSettingProcessedImage = true
-                        if (savedFile != null) {
-                            setImage(ImageSource.uri(context, android.net.Uri.fromFile(savedFile)))
-                        } else {
-                            // If not in cache and large, SSIV might fail with ImageSource.bitmap
-                            if (processed.width > 4000 || processed.height > 4000) {
-                                android.util.Log.w("ReaderPageImageView", "Large processed bitmap not in cache, saving to temp file to avoid black screen")
-                                try {
-                                    val tempFile = java.io.File(context.cacheDir, "enhanced_temp_${System.currentTimeMillis()}.png")
-                                    java.io.FileOutputStream(tempFile).use { out ->
-                                        processed.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        if (bitmap != null) {
+                            withUIContext {
+                                // 1. Show enhanced image on overlay immediately (opaque)
+                                enhancedOverlay.bringToFront()
+                                enhancedOverlay.setImageBitmap(bitmap)
+                                enhancedOverlay.alpha = 1f
+                                enhancedOverlay.isVisible = true
+                                updateStatus("PROCESSED") // Status done early
+                                
+                                // 2. Render Barrier: Wait 50ms to ensure Overlay is actually drawn on screen
+                                // before we touch the underlying view (which might flash white/black on change)
+                                handler?.postDelayed({
+                                    // 3. Swap the underlying view
+                                    if (context != null) { // Safe check
+                                        setImage(ImageSource.uri(context, android.net.Uri.fromFile(file)))
+                                        isVisible = true
                                     }
-                                    setImage(ImageSource.uri(context, android.net.Uri.fromFile(tempFile)))
-                                    // Delete temp file after view is recycled or image is replaced? 
-                                    // For now, let it be in cacheDir
-                                } catch (e: Exception) {
-                                    android.util.Log.e("ReaderPageImageView", "Failed to save temp file, falling back to bitmap source", e)
-                                    setImage(ImageSource.bitmap(processed))
-                                }
-                            } else {
-                                setImage(ImageSource.bitmap(processed))
+                                    
+                                    // 4. Hide overlay after another safety buffer (e.g. 250ms)
+                                    handler?.postDelayed({
+                                        enhancedOverlay.isVisible = false
+                                        enhancedOverlay.setImageBitmap(null)
+                                        enhancedBitmap?.recycle() // Clean up bitmap
+                                        enhancedBitmap = null
+                                    }, 250)
+                                }, 50)
                             }
+                        } else {
+                           // Fail-safe
+                           withUIContext {
+                               setImage(ImageSource.uri(context, android.net.Uri.fromFile(file)))
+                               isVisible = true
+                               updateStatus("PROCESSED")
+                           }
                         }
-                        
-                        updateStatus("PROCESSED")
-                        android.util.Log.d("ReaderPageImageView", "Processed update complete for page $pageIndex!")
+                        return@launchIO
                     }
-                } else {
-                    android.util.Log.e("ReaderPageImageView", "Real-CUGAN process returned null for page $pageIndex")
-                    updateStatus("RAW")
+                    
+                    // Check status every 500ms
+                    val pid = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.processingId
+                    if (pid == pIdx) {
+                        wasEnhancing = true
+                        val rawProgress = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgress()
+                        if (rawProgress in 0..100) {
+                            updateStatus("ENHANCING... $rawProgress%")
+                        } else {
+                            val dots = (rawProgress % 3).toInt().let { if (it < 0) -it else it } + 1
+                            updateStatus("ENHANCING" + ".".repeat(dots))
+                        }
+                    } else if (ImageEnhancer.hasRequest(mId, cId, pIdx)) {
+                        // Prevent reverting to QUEUED if we were just enhancing (race condition at finish)
+                        if (!wasEnhancing) {
+                            updateStatus("QUEUED")
+                        } else {
+                            updateStatus("FINISHING...")
+                        }
+                    }
+                    
+                    if (attempts % 10 == 0) { // Log every 5 seconds
+                         logcat(LogPriority.DEBUG) { "ReaderPageImageView: Polling for page $pIdx cache (attempt $attempts)..." }
+                         
+                         // Self-Healing: Check if request is still active
+                         if (!ImageEnhancer.hasRequest(mId, cId, pIdx)) {
+                             // Only restart if:
+                             // 1. This page is ahead of or equal to the current reading page
+                             // 2. AND this page is within the preload range
+                             val current = currentGlobalPageIndex
+                             val shouldHeal = pIdx >= current && pIdx <= current + preloadSize
+                             
+                             if (shouldHeal) {
+                                 logcat(LogPriority.WARN) { "ReaderPageImageView: Request for page $pIdx (cur=$current) missing, restarting enhancement..." }
+                                 
+                                 val page = readerPage
+                                 if (page != null) {
+                                     ImageEnhancer.enhance(context.applicationContext, page, true)
+                                 } else {
+                                     val retryData = streamFn?.let { 
+                                         try { okio.Buffer().readFrom(it()) } catch (e: Exception) { null } 
+                                     } ?: originalData
+                                     
+                                     if (retryData != null) {
+                                         ImageEnhancer.enhance(context.applicationContext, mId, cId, pIdx, retryData, true)
+                                     }
+                                 }
+                             }
+                         }
+                    }
+
+                    delay(500)
+                    attempts++
+                    
+                    // Update status
+                    // Status updated above inside loop
+
                 }
             } catch (e: Exception) {
-                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.markCancelled(pageIndex)
-                if (e is kotlinx.coroutines.CancellationException) {
-                    android.util.Log.d("ReaderPageImageView", "Enhancement cancelled for page $pageIndex")
-                    // If cancelled, it might be because it was scrolled away or pre-empted
-                    // We don't update status here as it might be recycled
-                } else {
-                    android.util.Log.e("ReaderPageImageView", "Enhancement error for page $pageIndex", e)
-                    updateStatus("ERROR")
-                }
+                android.util.Log.e("ReaderPageImageView", "Error monitoring enhancement for page $pageIndex", e)
             }
-        }
-
-        // Register job for potential cancellation
-        if (pageIndex >= 0) {
-            eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.registerJob(pageIndex, processingJob!!)
         }
     }
 
@@ -913,7 +718,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
             if (this is PhotoView) {
                 setScaleLevels(1F, 2F, MAX_ZOOM_SCALE)
-                // Force 2 scale levels on double tap
                 setOnDoubleTapListener(
                     object : GestureDetector.SimpleOnGestureListener() {
                         override fun onDoubleTap(e: MotionEvent): Boolean {
@@ -935,6 +739,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     this@ReaderPageImageView.onScaleChanged(scale)
                 }
             }
+            setOnClickListener { this@ReaderPageImageView.onViewClicked() }
         }
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
     }
@@ -993,15 +798,32 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        if (pageIndex >= 0) {
-            eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.removePage(pageIndex)
+        
+        // Cancel enhancement if this view is detached/recycled
+        // Use readerPage as primary source, falling back to properties
+        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
+        val cId = readerPage?.chapter?.chapter?.id ?: chapterId
+        val pIdx = readerPage?.index ?: pageIndex
+
+        if (mId != -1L && cId != -1L && pIdx >= 0) {
+             ImageEnhancer.cancel(mId, cId, pIdx)
         }
+
         enhancedOverlay.setImageBitmap(null)
         enhancedBitmap?.recycle()
         enhancedBitmap = null
         isSettingProcessedImage = false
+    } 
+
+    companion object {
+        var currentGlobalPageIndex: Int = -1
+        
+        /**
+         * Global semaphore to serialize image decoding.
+         * Native HEIF decoders on some devices are not thread-safe and can SIGSEGV if used concurrently.
+         */
+        val decodeSemaphore = Semaphore(1) // Make public if needed, or keep private if only used here
     }
 }
 
 private const val MAX_ZOOM_SCALE = 5F
-

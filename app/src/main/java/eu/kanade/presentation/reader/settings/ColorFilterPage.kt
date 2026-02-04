@@ -151,7 +151,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         val realCuganInputScale by screenModel.preferences.realCuganInputScale().collectAsState()
 
         SettingsChipRow("模型") {
-            listOf("Real-CUGAN SE", "Real-CUGAN Pro", "Real-ESRGAN", "Real-CUGAN Nose", "Waifu2x").mapIndexed { index, name ->
+            listOf("Real-CUGAN SE", "Real-CUGAN Pro", "Real-ESRGAN", "Real-CUGAN Nose", "Waifu2x", "Waifu2x (Fast)").mapIndexed { index, name ->
                 FilterChip(
                     selected = realCuganModel == index,
                     onClick = { screenModel.preferences.realCuganModel().set(index) },
@@ -160,11 +160,13 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        if (realCuganModel == 0 || realCuganModel == 1 || realCuganModel == 4) {
+        if (realCuganModel == 0 || realCuganModel == 1 || realCuganModel == 4 || realCuganModel == 5) {
             val levels = if (realCuganModel == 1) { // Pro only has no-denoise, denoise3x, conservative
                 listOf(0 to "无", 3 to "3x", 4 to "保守")
             } else if (realCuganModel == 4) { // Waifu2x
                 listOf(0 to "1x", 1 to "2x", 2 to "3x") 
+            } else if (realCuganModel == 5) { // Waifu2x Fast (UpConv7)
+                listOf(0 to "无", 1 to "1x", 2 to "2x", 3 to "3x")
             } else { // SE
                 listOf(0 to "无", 1 to "1x", 2 to "2x", 3 to "3x", 4 to "保守")
             }
@@ -180,7 +182,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        if (realCuganModel == 3 || realCuganModel == 4) {
+        if (realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5) {
              SettingsChipRow("放大倍率") {
                   FilterChip(
                       selected = true,

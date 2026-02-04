@@ -8,7 +8,19 @@ open class ReaderPage(
     url: String = "",
     imageUrl: String? = null,
     var stream: (() -> InputStream)? = null,
-) : Page(index, url, imageUrl, null) {
+) : Page(index, url, imageUrl, null), ReaderItem {
 
     open lateinit var chapter: ReaderChapter
+
+    var fullPage: Boolean? = null
+    var isolatedPage: Boolean = false
+    var shiftedPage: Boolean = false
+    var firstHalf: Boolean? = null
+
+    var endPageConfidence: Int? = null
+    var startPageConfidence: Int? = null
+
+    fun isFromSamePage(other: ReaderPage): Boolean {
+        return index == other.index && chapter.chapter.id == other.chapter.chapter.id
+    }
 }

@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
+import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
@@ -108,6 +109,33 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
         label = stringResource(MR.strings.pref_navigate_pan),
         pref = screenModel.preferences.navigateToPan(),
     )
+
+    val pageLayout by screenModel.preferences.pageLayout().collectAsState()
+    SettingsChipRow(MR.strings.pref_page_layout) {
+        PageLayout.entries
+            .filter { it != PageLayout.DOUBLE_PAGES }
+            .map {
+            FilterChip(
+                selected = pageLayout == it.value,
+                onClick = { screenModel.preferences.pageLayout().set(it.value) },
+                label = { Text(stringResource(it.stringRes)) },
+            )
+        }
+    }
+
+    if (pageLayout == PageLayout.DOUBLE_PAGES.value ||
+        pageLayout == PageLayout.AUTOMATIC.value
+    ) {
+        val manga by screenModel.mangaFlow.collectAsState()
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_dual_page_shift),
+            checked = manga?.readerOrientation?.toInt()?.let { (it and ReaderOrientation.SHIFT_DOUBLE_PAGE) != 0 } ?: false,
+            onClick = {
+                val current = manga?.readerOrientation?.toInt() ?: 0
+                screenModel.onChangeOrientation(ReaderOrientation.fromPreference(current xor ReaderOrientation.SHIFT_DOUBLE_PAGE))
+            },
+        )
+    }
 
     val dualPageSplitPaged by screenModel.preferences.dualPageSplitPaged().collectAsState()
     CheckboxItem(

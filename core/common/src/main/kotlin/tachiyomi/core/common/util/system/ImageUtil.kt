@@ -688,6 +688,150 @@ object ImageUtil {
 
         else -> false
     }
+
+    fun mergeBitmaps(
+        iBitmap: Bitmap,
+        iBitmap2: Bitmap,
+        isLTR: Boolean,
+        @ColorInt background: Int = Color.WHITE,
+        hingeGap: Int = 0,
+        context: Context? = null,
+    ): BufferedSource {
+        var imageBitmap = iBitmap
+        var imageBitmap2 = iBitmap2
+        var height = imageBitmap.height
+        var width = imageBitmap.width
+        var height2 = imageBitmap2.height
+        var width2 = imageBitmap2.width
+        val maxHeight = max(height, height2)
+        val maxWidth = max(width, width2)
+        val adjustedHingeGap = context?.let {
+            val resources = it.resources
+            (maxHeight.toFloat() / resources.displayMetrics.heightPixels * hingeGap).toInt()
+        } ?: hingeGap
+
+        val result = createBitmap((maxWidth * 2) + adjustedHingeGap, maxHeight)
+        result.applyCanvas {
+            drawColor(background)
+            val widthAndHinge = maxWidth + adjustedHingeGap
+            if (imageBitmap.height != maxHeight && imageBitmap.width != maxWidth) {
+                val minRatio = min(maxHeight / height.toFloat(), maxWidth / width.toFloat())
+                imageBitmap = Bitmap.createScaledBitmap(imageBitmap, (width * minRatio).toInt(), (height * minRatio).toInt(), true)
+            }
+            height = imageBitmap.height
+            width = imageBitmap.width
+            val upperPart = Rect(
+                if (isLTR) max(maxWidth - width, 0) else widthAndHinge,
+                (maxHeight - height) / 2,
+                (if (isLTR) max(maxWidth - width, 0) else widthAndHinge) + width,
+                height + (maxHeight - height) / 2,
+            )
+            drawBitmap(imageBitmap, null, upperPart, null)
+
+            if (imageBitmap2.height != maxHeight && imageBitmap2.width != maxWidth) {
+                val minRatio = min(maxHeight / height2.toFloat(), maxWidth / width2.toFloat())
+                imageBitmap2 = Bitmap.createScaledBitmap(imageBitmap2, (width2 * minRatio).toInt(), (height2 * minRatio).toInt(), true)
+            }
+            height2 = imageBitmap2.height
+            width2 = imageBitmap2.width
+            val bottomPart = Rect(
+                if (!isLTR) max(maxWidth - width2, 0) else widthAndHinge,
+                (maxHeight - height2) / 2,
+                (if (!isLTR) max(maxWidth - width2, 0) else widthAndHinge) + width2,
+                height2 + (maxHeight - height2) / 2,
+            )
+            drawBitmap(imageBitmap2, null, bottomPart, null)
+        }
+
+        val output = Buffer()
+        result.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
+        return output
+    }
+
+    /**
+     * Returns if this bitmap matches what would be (if rightSide param is true)
+     * the single left side page, or the second page to read in an RTL book, first in an LTR book.
+     *
+     * @return An int based on confidence, 0 meaning not padded, 1 meaning barely padded,
+     * 2 meaning likely padded, 3 meaning definitely padded
+     * @param rightSide: When true, check if it's a single left side page, else right side
+     */
+    fun isPagePadded(bitmap: Bitmap, rightSide: Boolean): Int {
+        val booleans = listOf(true, false)
+        return when {
+            booleans.any { isSidePadded(bitmap, !rightSide, checkWhite = it) > 1 } -> 0
+            booleans.any {
+                when (isSidePadded(bitmap, rightSide, checkWhite = it)) {
+                    2 -> true
+                    1 -> isSideLonger(bitmap, rightSide, checkWhite = it)
+                    else -> false
+                }
+            } -> 3
+            booleans.any { isSideLonger(bitmap, rightSide, checkWhite = it) } -> 2
+            booleans.any { isOneSideMorePadded(bitmap, rightSide, checkWhite = it) } -> 1
+            else -> 0
+        }
+    }
+
+    private fun isSidePadded(bitmap: Bitmap, rightSide: Boolean, checkWhite: Boolean, halfCheck: Boolean = false): Int {
+        val left = (bitmap.width * 0.0275).toInt()
+        val right = bitmap.width - left
+        val paddedSide = if (rightSide) right else left
+        val unPaddedSide = if (!rightSide) right else left
+        val paddedCount = (1 until 50).count {
+            bitmap[paddedSide, (bitmap.height * (it / 50f)).toInt()].isWhiteOrDark(checkWhite)
+        }
+        val isNotFullyUnPadded = !(1 until 50).all {
+            bitmap[unPaddedSide, (bitmap.height * (it / 50f)).toInt()].isWhiteOrDark(checkWhite)
+        }
+        return if (isNotFullyUnPadded) {
+            if (paddedCount == 49) 2 else if (paddedCount >= (if (halfCheck) 25 else 47)) 1 else 0
+        } else {
+            0
+        }
+    }
+
+    private fun isSideLonger(bitmap: Bitmap, rightSide: Boolean, checkWhite: Boolean): Boolean {
+        if (isSidePadded(bitmap, rightSide, checkWhite, true) == 0) return false
+        val left = (bitmap.width * 0.0275).toInt()
+        val right = bitmap.width - left
+        val step = 70
+        val list = listOf((1 until step), (1 until step).toList().asReversed())
+        val streakFunc: (Int) -> Int = { side ->
+            list.maxOf { range ->
+                var count = 0
+                for (it in range) {
+                    val pixel = bitmap[side, (bitmap.height * (it / step.toFloat())).toInt()]
+                    if (pixel.isWhiteOrDark(checkWhite)) ++count else return@maxOf count
+                }
+                count
+            }
+        }
+        val paddedSide = if (rightSide) right else left
+        val unPaddedSide = if (!rightSide) right else left
+        return streakFunc(paddedSide) > streakFunc(unPaddedSide)
+    }
+
+    private fun isOneSideMorePadded(bitmap: Bitmap, rightSide: Boolean, checkWhite: Boolean): Boolean {
+        val middle = (bitmap.height * 0.475).toInt()
+        val middle2 = (bitmap.height * 0.525).toInt()
+        val widthFactor = max(1, (bitmap.width / 400f).toInt())
+        val paddedSide: (Int) -> Int = { if (!rightSide) bitmap.width - it * widthFactor else it * widthFactor }
+        val unPaddedSide: (Int) -> Int = { if (rightSide) bitmap.width - it * widthFactor else it * widthFactor }
+        return try {
+            (1 until 37).any {
+                if (!bitmap[paddedSide(it), middle].isWhiteOrDark(checkWhite)) return@any false
+                if (!bitmap[paddedSide(it), middle2].isWhiteOrDark(checkWhite)) return@any false
+                !bitmap[unPaddedSide(it), middle].isWhiteOrDark(checkWhite) ||
+                    !bitmap[unPaddedSide(it), middle2].isWhiteOrDark(checkWhite)
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun @receiver:ColorInt Int.isWhiteOrDark(checkWhite: Boolean): Boolean =
+        if (checkWhite) isWhite() else isDark()
 }
 
 val getDisplayMaxHeightInPx: Int

@@ -113,7 +113,6 @@ class PagerConfig(
             .drop(1)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
                 imagePropertyChangedListener?.invoke() 
             }
             .launchIn(scope)
@@ -122,7 +121,6 @@ class PagerConfig(
             .drop(1)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
                 imagePropertyChangedListener?.invoke() 
             }
             .launchIn(scope)
@@ -132,7 +130,6 @@ class PagerConfig(
             .debounce(500)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
                 imagePropertyChangedListener?.invoke() 
             }
             .launchIn(scope)
@@ -142,7 +139,6 @@ class PagerConfig(
             .debounce(500)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart()
                 imagePropertyChangedListener?.invoke() 
             }
             .launchIn(scope)
@@ -152,7 +148,6 @@ class PagerConfig(
             .debounce(500)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart(resetModel = false)
                 imagePropertyChangedListener?.invoke() 
             }
             .launchIn(scope)
@@ -160,8 +155,7 @@ class PagerConfig(
         readerPreferences.realCuganPreloadSize().changes()
             .drop(1)
             .onEach { 
-                // No need to clear cache for preload size change, just restart queue
-                eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.restart(resetModel = false)
+                // No need to clear cache for preload size change
                 imagePropertyChangedListener?.invoke() 
             }
             .launchIn(scope)

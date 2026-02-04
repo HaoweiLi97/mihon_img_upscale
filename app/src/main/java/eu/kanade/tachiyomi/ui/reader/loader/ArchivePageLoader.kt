@@ -18,7 +18,10 @@ internal class ArchivePageLoader(private val reader: ArchiveReader) : PageLoader
             .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
             .mapIndexed { i, entry ->
                 ReaderPage(i).apply {
-                    stream = { reader.getInputStream(entry.name)!! }
+                    stream = {
+                        if (isRecycled) throw IllegalStateException("Loader has been recycled")
+                        reader.getInputStream(entry.name)!!
+                    }
                     status = Page.State.Ready
                 }
             }

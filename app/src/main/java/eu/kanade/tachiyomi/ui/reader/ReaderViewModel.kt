@@ -436,7 +436,13 @@ class ReaderViewModel @JvmOverloads constructor(
      * read, update tracking services, enqueue downloaded chapter deletion, and updating the active chapter if this
      * [page]'s chapter is different from the currently active.
      */
-    fun onPageSelected(page: ReaderPage) {
+    /**
+     * Called every time a page changes on the reader. Used to mark the flag of chapters being
+     * read, update tracking services, enqueue downloaded chapter deletion, and updating the active chapter if this
+     * [page]'s chapter is different from the currently active.
+     */
+    fun onPageSelected(page: ReaderPage, hasExtraPage: Boolean = false) {
+        mutableState.update { it.copy(hasExtraPage = hasExtraPage) }
         // InsertPage doesn't change page progress
         if (page is InsertPage) {
             return
@@ -735,6 +741,19 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    fun setDoublePageShift(shift: Boolean) {
+        val manga = manga ?: return
+        viewModelScope.launchIO {
+            setMangaViewerFlags.awaitSetShiftDoublePage(manga.id, shift)
+            mutableState.update {
+                it.copy(
+                    manga = getManga.await(manga.id),
+                )
+            }
+            eventChannel.send(Event.ReloadViewerChapters)
+        }
+    }
+
     fun toggleCropBorders(): Boolean {
         val isPagerType = ReadingMode.isPagerType(getMangaReadingMode())
         return if (isPagerType) {
@@ -951,6 +970,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val bookmarked: Boolean = false,
         val isLoadingAdjacentChapter: Boolean = false,
         val currentPage: Int = -1,
+        val hasExtraPage: Boolean = false,
 
         /**
          * Viewer used to display the pages (pager, webtoon, ...).

@@ -20,11 +20,15 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
 import java.util.concurrent.PriorityBlockingQueue
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.math.min
+import tachiyomi.core.common.util.system.logcat
+import logcat.LogPriority
 
 /**
  * Loader used to load chapters from an online source.
@@ -184,7 +188,39 @@ internal class HttpPageLoader(
                 chapterCache.putImageToCache(imageUrl, imageResponse)
             }
 
-            page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
+            // Start with original stream
+            var streamSource = { chapterCache.getImageFile(imageUrl).inputStream() }
+            
+            // Check for enhanced version
+            if (preferences.realCuganEnabled().get()) {
+                val context = Injekt.get<android.app.Application>()
+                ImageEnhancementCache.init(context)
+                
+                val mangaId = page.chapter.chapter.manga_id ?: -1L
+                val chapterId = page.chapter.chapter.id ?: -1L
+                
+                if (mangaId != -1L && chapterId != -1L) {
+                    val configHash = ImageEnhancementCache.getConfigHash(
+                        preferences.realCuganNoiseLevel().get(),
+                        preferences.realCuganScale().get(),
+                        preferences.realCuganInputScale().get(),
+                        preferences.realCuganModel().get(),
+                        preferences.realCuganMaxSizeWidth().get(),
+                        preferences.realCuganMaxSizeHeight().get()
+                    )
+                    val cachedFile = ImageEnhancementCache.getCachedImage(mangaId, chapterId, page.index, configHash)
+                    if (cachedFile != null) {
+                        // Use enhanced stream
+                        streamSource = { cachedFile.inputStream() }
+                    } else {
+                        // Not cached, trigger enhancement via unified decoder (Low priority for preload)
+                        logcat(LogPriority.DEBUG) { "HttpPageLoader: Triggering enhancement for page ${page.index}" }
+                        ImageEnhancer.enhance(context, page, false)
+                    }
+                }
+            }
+
+            page.stream = streamSource
             page.status = Page.State.Ready
         } catch (e: Throwable) {
             page.status = Page.State.Error(e)

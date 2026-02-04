@@ -96,6 +96,7 @@ class WebtoonPageHolder(
         frame.pageIndex = page.index
         frame.mangaId = viewer.activity.viewModel.manga?.id ?: -1L
         frame.chapterId = page.chapter.chapter.id ?: -1L
+        frame.readerPage = page
         loadJob?.cancel()
         loadJob = scope.launch { loadPageAndProcessStatus() }
         refreshLayoutParams()
@@ -207,6 +208,7 @@ class WebtoonPageHolder(
                         minimumScaleType = SubsamplingScaleImageView.SCALE_TYPE_FIT_WIDTH,
                         cropBorders = viewer.config.imageCropBorders,
                     ),
+                    streamFn
                 )
                 removeErrorLayout()
             }

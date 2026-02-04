@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
+import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -15,6 +16,8 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
     var imagePropertyChangedListener: (() -> Unit)? = null
 
     var navigationModeChangedListener: (() -> Unit)? = null
+
+    var reloadChapterListener: ((Boolean) -> Unit)? = null
 
     var tappingInverted = ReaderPreferences.TappingInvertMode.NONE
     var longTapEnabled = true
@@ -41,6 +44,27 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
 
     var dualPageRotateToFitInvert = false
         protected set
+
+    var readerTheme = 1
+
+    var hingeGapSize = 0
+
+    var shiftDoublePage = false
+
+    var doublePages = false
+        set(value) {
+            field = value
+            if (!value) {
+                shiftDoublePage = false
+            }
+        }
+
+    var invertDoublePages = false
+
+    var autoDoublePages = false
+
+    var splitPages = false
+    var autoSplitPages = false
 
     abstract var navigator: ViewerNavigation
         protected set
@@ -71,6 +95,29 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
 
         readerPreferences.showNavigationOverlayOnStart()
             .register({ navigationOverlayOnStart = it })
+
+        readerPreferences.invertDoublePages()
+            .register({ invertDoublePages = it }, { imagePropertyChangedListener?.invoke() })
+
+        readerPreferences.pageLayout()
+            .register({
+                autoDoublePages = it == PageLayout.AUTOMATIC.value
+                splitPages = it == PageLayout.SPLIT_PAGES.value
+                if (!autoDoublePages) {
+                    doublePages = it == PageLayout.DOUBLE_PAGES.value
+                }
+            }, {
+                reloadChapterListener?.invoke(doublePages)
+            })
+
+        readerPreferences.automaticSplitsPage()
+            .register({ autoSplitPages = it })
+
+        readerPreferences.readerTheme()
+            .register({ readerTheme = it })
+
+        readerPreferences.hingeGapSize()
+            .register({ hingeGapSize = it }, { imagePropertyChangedListener?.invoke() })
     }
 
     protected abstract fun defaultNavigation(): ViewerNavigation

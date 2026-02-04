@@ -137,6 +137,14 @@ class ReaderPreferences(
 
     fun dualPageRotateToFitInvertWebtoon() = preferenceStore.getBoolean("pref_dual_page_rotate_invert_webtoon", false)
 
+    fun pageLayout() = preferenceStore.getInt("page_layout", PageLayout.SINGLE_PAGE.value)
+
+    fun automaticSplitsPage() = preferenceStore.getBoolean("automatic_splits_page", false)
+
+    fun invertDoublePages() = preferenceStore.getBoolean("invert_double_pages", false)
+
+    fun hingeGapSize() = preferenceStore.getInt("hinge_gap_size", 0)
+
     // endregion
 
     // region Color filter

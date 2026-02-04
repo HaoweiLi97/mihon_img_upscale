@@ -121,7 +121,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
         pager.longTapListener = f@{
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
-                val item = adapter.items.getOrNull(pager.currentItem)
+                val item = adapter.joinedItems.getOrNull(pager.currentItem)?.first
                 if (item is ReaderPage) {
                     activity.onPageLongTap(item)
                     return@f true
@@ -169,33 +169,35 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun getPageHolder(page: ReaderPage): PagerPageHolder? =
         pager.children
             .filterIsInstance(PagerPageHolder::class.java)
-            .firstOrNull { it.item == page }
+            .firstOrNull { it.item.first.index == page.index || it.item.second?.index == page.index }
 
     /**
      * Called when a new page (either a [ReaderPage] or [ChapterTransition]) is marked as active
      */
     private fun onPageChange(position: Int) {
-        val page = adapter.items.getOrNull(position)
+        val page = adapter.joinedItems.getOrNull(position)
         if (page != null && currentPage != page) {
-            val allowPreload = checkAllowPreload(page as? ReaderPage)
+            val pageF = page.first
+            val allowPreload = checkAllowPreload(pageF as? ReaderPage)
             val forward = when {
-                currentPage is ReaderPage && page is ReaderPage -> {
+                currentPage is ReaderPage && pageF is ReaderPage -> {
                     // if both pages have the same number, it's a split page with an InsertPage
-                    if (page.number == (currentPage as ReaderPage).number) {
+                    if (pageF.number == (currentPage as ReaderPage).number) {
                         // the InsertPage is always the second in the reading direction
-                        page is InsertPage
+                        pageF is InsertPage
                     } else {
-                        page.number > (currentPage as ReaderPage).number
+                        pageF.number > (currentPage as ReaderPage).number
                     }
                 }
-                currentPage is ChapterTransition.Prev && page is ReaderPage ->
+                currentPage is ChapterTransition.Prev && pageF is ReaderPage ->
                     false
                 else -> true
             }
-            currentPage = page
-            when (page) {
-                is ReaderPage -> onReaderPageSelected(page, allowPreload, forward)
-                is ChapterTransition -> onTransitionSelected(page)
+            currentPage = pageF
+            when (pageF) {
+                is ReaderPage -> onReaderPageSelected(pageF, allowPreload, page.second is ReaderPage, forward)
+                is ChapterTransition -> onTransitionSelected(pageF)
+                else -> {}
             }
         }
     }
@@ -223,13 +225,14 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Called when a [ReaderPage] is marked as active. It notifies the
      * activity of the change and requests the preload of the next chapter if this is the last page.
      */
-    private fun onReaderPageSelected(page: ReaderPage, allowPreload: Boolean, forward: Boolean) {
+    private fun onReaderPageSelected(page: ReaderPage, allowPreload: Boolean, hasExtraPage: Boolean, forward: Boolean) {
         val pages = page.chapter.pages ?: return
-        logcat { "onReaderPageSelected: ${page.number}/${pages.size}" }
-        activity.onPageSelected(page)
-
-        // Notify enhancement queue of page change for priority processing
-        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.onPageChanged(page.index)
+        if (hasExtraPage) {
+            logcat { "onReaderPageSelected: ${page.number}-${page.number + 1}/${pages.size}" }
+        } else {
+            logcat { "onReaderPageSelected: ${page.number}/${pages.size}" }
+        }
+        activity.onPageSelected(page, hasExtraPage)
 
         // Notify holder of page change
         getPageHolder(page)?.onPageSelected(forward)
@@ -282,11 +285,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         // Remove listener so the change in item doesn't trigger it
         pager.removeOnPageChangeListener(pagerListener)
 
-        // Reset enhancement queue when chapter changes
-        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.reset()
-
         val forceTransition = config.alwaysShowChapterTransition ||
-            adapter.items.getOrNull(pager.currentItem) is ChapterTransition
+            adapter.joinedItems.getOrNull(pager.currentItem)?.first is ChapterTransition
         adapter.setChapters(chapters, forceTransition)
 
         // Layout the pager once a chapter is being set
@@ -306,7 +306,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Tells this viewer to move to the given [page].
      */
     override fun moveToPage(page: ReaderPage) {
-        val position = adapter.items.indexOf(page)
+        val position = adapter.joinedItems.indexOfFirst { it.first == page || it.second == page }
         if (position != -1) {
             val currentPosition = pager.currentItem
             pager.setCurrentItem(position, true)

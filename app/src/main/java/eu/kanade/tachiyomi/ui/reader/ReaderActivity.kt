@@ -352,8 +352,6 @@ class ReaderActivity : BaseActivity() {
     override fun onDestroy() {
         viewModel.state.value.viewer?.destroy()
         
-        
-        eu.kanade.tachiyomi.util.waifu2x.EnhancementQueue.reset()
         config = null
         menuToggleToast?.cancel()
         readingModeToast?.cancel()
@@ -703,8 +701,8 @@ class ReaderActivity : BaseActivity() {
      * Called from the viewer whenever a [page] is marked as active. It updates the values of the
      * bottom menu and delegates the change to the presenter.
      */
-    fun onPageSelected(page: ReaderPage) {
-        viewModel.onPageSelected(page)
+    fun onPageSelected(page: ReaderPage, hasExtraPage: Boolean = false) {
+        viewModel.onPageSelected(page, hasExtraPage)
     }
 
     /**

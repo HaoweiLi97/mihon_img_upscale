@@ -382,6 +382,12 @@
     <string name="pref_fullscreen">Fullscreen</string>
     <string name="pref_show_navigation_mode">Show tap zones overlay</string>
     <string name="pref_show_navigation_mode_summary">Briefly show when reader is opened</string>
+    <string name="pref_page_layout">Page layout</string>
+    <string name="page_layout_single">Single page</string>
+    <string name="page_layout_double">Double page</string>
+    <string name="page_layout_automatic">Automatic</string>
+    <string name="page_layout_split">Split pages</string>
+    <string name="pref_dual_page_shift">Shift double pages</string>
     <string name="pref_dual_page_split">Split wide pages</string>
     <string name="pref_dual_page_invert">Invert split page placement</string>
     <string name="pref_dual_page_invert_summary">If the placement of the split wide pages don\'t match reading direction</string>

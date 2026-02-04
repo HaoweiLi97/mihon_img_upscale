@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import mihon.core.archive.archiveReader
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.injectLazy
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 
 /**
  * Loader used to load a chapter from the downloaded chapters.
@@ -68,7 +69,13 @@ internal class DownloadPageLoader(
         }
     }
 
+    private val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
+
     override suspend fun loadPage(page: ReaderPage) {
         archivePageLoader?.loadPage(page)
+        
+        if (preferences.realCuganEnabled().get()) {
+            ImageEnhancer.enhance(context, page)
+        }
     }
 }
