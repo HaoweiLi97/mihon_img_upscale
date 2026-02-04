@@ -1,3 +1,32 @@
+
+# Mihon_img_upscale
+
+### Description
+A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Real-ESRGAN, Waifu2x) to enhance low-resolution manga in real-time.
+
+---
+
+<p align="center">
+  <img width="350" alt="Mihon AI Upscale Preview" src="https://github.com/user-attachments/assets/c5d68b57-d93d-4a6e-b426-b8624ebcc5e8">
+  <br>
+
+</p>
+
+---
+
+## Upscaling Models
+
+| Model Name | Performance | Best Use Case |
+| :--- | :---: | :--- |
+| **Real-CUGAN SE** | Medium | Balanced daily reading |
+| **Real-CUGAN Pro** | High Quality | Sharpest lines for high-res art |
+| **Real-CUGAN NoSE** | Fast | Focuses on "No Super-Resolution" (Denoising). |
+| **Real-ESRGAN** | Fast | Repairing heavily compressed scans |
+| **Waifu2x** | Medium | The classic standard |
+| **Waifu2x Fast** | Ultra Fast | Low-end devices / smooth scrolling |
+
+
+
 <div align="center">
 
 <a href="https://mihon.app">
@@ -5,6 +34,10 @@
 </a>
 
 # Mihon [App](#)
+
+
+
+
 
 ### Full-featured reader
 Discover and read manga, webtoons, comics, and more – easier than ever on your Android device.
