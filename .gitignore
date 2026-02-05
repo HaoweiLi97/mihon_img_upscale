@@ -2,6 +2,8 @@
 .gradle
 .kotlin
 build
+app/.cxx/
+app/release/
 
 # IDE files
 *.iml
@@ -11,6 +13,10 @@ build
 
 # Configuration files
 local.properties
+
+# Android specific ignores
+*.dm
+*.apk
 
 # macOS specific files
 .DS_Store
