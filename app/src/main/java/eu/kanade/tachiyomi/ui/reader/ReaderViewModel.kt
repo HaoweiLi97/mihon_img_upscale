@@ -283,12 +283,15 @@ class ReaderViewModel @JvmOverloads constructor(
                     sourceManager.isInitialized.first { it }
                     mutableState.update { it.copy(manga = manga) }
                     if (chapterId == -1L) chapterId = initialChapterId
+                    val selectedChapter = chapterList.first { chapterId == it.chapter.id }
+                    val startingPage = if (chapterPageIndex >= 0) chapterPageIndex else selectedChapter.chapter.last_page_read
+                    eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.reset(startingPage)
 
                     val context = Injekt.get<Application>()
                     val source = sourceManager.getOrStub(manga.source)
                     loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
 
-                    loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
+                    loadChapter(loader!!, selectedChapter)
                     Result.success(true)
                 } else {
                     // Unlikely but okay

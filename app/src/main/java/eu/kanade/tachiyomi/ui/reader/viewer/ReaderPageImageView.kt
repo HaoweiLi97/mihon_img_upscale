@@ -241,13 +241,19 @@ open class ReaderPageImageView @JvmOverloads constructor(
         onImageLoaded?.invoke()
         background = pageBackground
         
-        // Hide overlay and recycle temporary bitmap once main view is ready with the new image
+        // Synchronized Fade-out: Only hide overlay after the new image is actually rendered
         if (isSettingProcessedImage) {
-            enhancedOverlay.setImageBitmap(null)
-            enhancedOverlay.isVisible = false
-            enhancedBitmap?.recycle()
-            enhancedBitmap = null
-            isSettingProcessedImage = false
+            enhancedOverlay.animate()
+                .alpha(0f)
+                .setDuration(300)
+                .withEndAction {
+                    enhancedOverlay.isVisible = false
+                    enhancedOverlay.setImageBitmap(null)
+                    enhancedBitmap?.recycle()
+                    enhancedBitmap = null
+                    isSettingProcessedImage = false
+                }
+                .start()
         }
     }
 
@@ -611,25 +617,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
                                 enhancedOverlay.setImageBitmap(bitmap)
                                 enhancedOverlay.alpha = 1f
                                 enhancedOverlay.isVisible = true
-                                updateStatus("PROCESSED") // Status done early
+                                updateStatus("PROCESSED")
+
+                                // 2. Mark state transition
+                                isSettingProcessedImage = true
+                                enhancedBitmap = bitmap
                                 
-                                // 2. Render Barrier: Wait 50ms to ensure Overlay is actually drawn on screen
-                                // before we touch the underlying view (which might flash white/black on change)
-                                handler?.postDelayed({
-                                    // 3. Swap the underlying view
-                                    if (context != null) { // Safe check
-                                        setImage(ImageSource.uri(context, android.net.Uri.fromFile(file)))
-                                        isVisible = true
-                                    }
-                                    
-                                    // 4. Hide overlay after another safety buffer (e.g. 250ms)
-                                    handler?.postDelayed({
-                                        enhancedOverlay.isVisible = false
-                                        enhancedOverlay.setImageBitmap(null)
-                                        enhancedBitmap?.recycle() // Clean up bitmap
-                                        enhancedBitmap = null
-                                    }, 250)
-                                }, 50)
+                                // 3. Swap the underlying view - onImageLoaded() will handle the fade-out
+                                if (context != null) {
+                                    setImage(ImageSource.uri(context, android.net.Uri.fromFile(file)))
+                                    isVisible = true
+                                }
                             }
                         } else {
                            // Fail-safe

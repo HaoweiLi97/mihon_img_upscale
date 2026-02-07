@@ -128,6 +128,14 @@ object ImageEnhancer {
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Enqueued page $pageIndex (priority=$priorityLevel)" }
     }
 
+    fun reset(initialPageIndex: Int = 0) {
+        queue.clear()
+        pendingRequests.clear()
+        targetPageIndex = initialPageIndex
+        seqGenerator.set(0)
+        logcat(LogPriority.DEBUG) { "ImageEnhancer: Resetting state to page $initialPageIndex" }
+    }
+
     fun hasRequest(mangaId: Long, chapterId: Long, pageIndex: Int): Boolean {
         return pendingRequests.containsKey("${mangaId}_${chapterId}_$pageIndex")
     }
