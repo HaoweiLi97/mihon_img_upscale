@@ -670,20 +670,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
                              // 2. AND this page is within the preload range
                              val current = currentGlobalPageIndex
                              val shouldHeal = pIdx >= current && pIdx <= current + preloadSize
-                             
                              if (shouldHeal) {
                                  logcat(LogPriority.WARN) { "ReaderPageImageView: Request for page $pIdx (cur=$current) missing, restarting enhancement..." }
                                  
+                                 val isCurrent = pIdx == current
                                  val page = readerPage
                                  if (page != null) {
-                                     ImageEnhancer.enhance(context.applicationContext, page, true)
+                                     ImageEnhancer.enhance(context.applicationContext, page, isCurrent)
                                  } else {
                                      val retryData = streamFn?.let { 
                                          try { okio.Buffer().readFrom(it()) } catch (e: Exception) { null } 
                                      } ?: originalData
                                      
                                      if (retryData != null) {
-                                         ImageEnhancer.enhance(context.applicationContext, mId, cId, pIdx, retryData, true)
+                                         ImageEnhancer.enhance(context.applicationContext, mId, cId, pIdx, retryData, isCurrent)
                                      }
                                  }
                              }

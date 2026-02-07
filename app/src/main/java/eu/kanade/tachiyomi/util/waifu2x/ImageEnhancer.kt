@@ -79,7 +79,7 @@ object ImageEnhancer {
         }
     }
 
-    fun enhance(context: Context, page: ReaderPage, highPriority: Boolean = true) {
+    fun enhance(context: Context, page: ReaderPage, highPriority: Boolean = false) {
         val mangaId = page.chapter.chapter.manga_id ?: -1L
         val chapterId = page.chapter.chapter.id ?: -1L
         
