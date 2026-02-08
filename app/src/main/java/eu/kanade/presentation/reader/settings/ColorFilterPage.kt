@@ -223,16 +223,6 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        SettingsChipRow("输入缩放 (加速)") {
-            listOf(100 to "原图", 90 to "90%", 80 to "80%", 70 to "70%").map { (value, name) ->
-                FilterChip(
-                    selected = realCuganInputScale == value,
-                    onClick = { screenModel.preferences.realCuganInputScale().set(value) },
-                    label = { Text(name) },
-                )
-            }
-        }
-
         SettingsChipRow("GPU 性能档位") {
             val performanceMode by screenModel.preferences.realCuganPerformanceMode().collectAsState()
             listOf(0 to "性能 90%", 1 to "平衡 50%", 2 to "节能 30%").map { (value, name) ->
@@ -245,7 +235,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
 
         Column {
-            HeadingItem("最大处理分辨率 (2048 = 2K)")
+            HeadingItem("最大处理分辨率")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

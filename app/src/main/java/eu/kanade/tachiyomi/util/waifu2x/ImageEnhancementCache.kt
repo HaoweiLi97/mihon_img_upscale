@@ -82,7 +82,28 @@ object ImageEnhancementCache {
     }
 
     /**
-     * Clear cache files that are far from the current reading page for a specific chapter
+     * Mark a page as skipped (too large to process) in the cache
+     */
+    fun saveSkippedToCache(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String) {
+        try {
+            val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash) + ".skip")
+            if (!file.exists()) {
+                file.createNewFile()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("ImageEnhancementCache", "Failed to save skip marker", e)
+        }
+    }
+
+    /**
+     * Check if a page was marked as skipped in the cache
+     */
+    fun isSkipped(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String): Boolean {
+        return File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash) + ".skip").exists()
+    }
+
+    /**
+     * Clear old cache files including skip markers
      */
     fun clearOldCache(mangaId: Long, chapterId: Long, currentPage: Int, keepRange: Int = 5) {
         getChapterDir(mangaId, chapterId).listFiles()?.forEach { file ->
@@ -127,9 +148,10 @@ object ImageEnhancementCache {
         inputScale: Int,
         model: Int = 0,
         maxWidth: Int = 0,
-        maxHeight: Int = 0
+        maxHeight: Int = 0,
+        resizeEnabled: Boolean = false
     ): String {
-        return "${noise}x${scale}x${inputScale}_m${model}_w${maxWidth}_h${maxHeight}"
+        return "${noise}x${scale}x${inputScale}_m${model}_w${maxWidth}_h${maxHeight}_r${if (resizeEnabled) 1 else 0}"
     }
     
     /**

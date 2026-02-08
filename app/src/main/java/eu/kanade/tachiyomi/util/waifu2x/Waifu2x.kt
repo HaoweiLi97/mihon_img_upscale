@@ -303,7 +303,27 @@ object Waifu2x {
         }
     }
 
+    /**
+     * Get the raw packed progress value from native code.
+     * Format: [ID (upper 32 bits)] [Progress (lower 32 bits)]
+     */
     fun getProgress(): Long = nativeGetProgress()
+    
+    /**
+     * Get only the progress percentage (0-100) from the packed value.
+     */
+    fun getProgressPercent(): Int {
+        val packed = nativeGetProgress()
+        return (packed and 0xFFFFFFFF).toInt()
+    }
+    
+    /**
+     * Get only the processing ID from the packed value.
+     */
+    fun getProgressId(): Int {
+        val packed = nativeGetProgress()
+        return (packed shr 32).toInt()
+    }
 
     /**
      * Reset Real-CUGAN to allow re-initialization with new settings.

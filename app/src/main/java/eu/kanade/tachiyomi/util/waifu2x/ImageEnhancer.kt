@@ -85,13 +85,15 @@ object ImageEnhancer {
         
         if (mangaId == -1L || chapterId == -1L) return
 
-        val data: Any = page.imageUrl ?: page.stream?.let { it ->
+        // Prioritize stream over imageUrl. For online manga, imageUrl can be a placeholder
+        // (e.g., https://127.0.0.1/...) while the actual image data is in the stream.
+        val data: Any = page.stream?.let { streamFn ->
              try {
-                 okio.Buffer().readFrom(it())
+                 okio.Buffer().readFrom(streamFn())
              } catch (e: Exception) {
-                 return@let null
+                 null
              }
-        } ?: return
+        } ?: page.imageUrl ?: return
 
         enhance(context, mangaId, chapterId, page.index, data, highPriority)
     }

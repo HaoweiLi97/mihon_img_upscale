@@ -560,7 +560,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
             realCuganInputScale,
             realCuganModel,
             realCuganMaxSizeWidth,
-            realCuganMaxSizeHeight
+            realCuganMaxSizeHeight,
+            realCuganResizeLargeImage
         )
 
         val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash)
@@ -569,6 +570,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setImage(ImageSource.uri(context, android.net.Uri.fromFile(cachedFile)))
             isVisible = true
             updateStatus("PROCESSED")
+            return
+        }
+        
+        if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash)) {
+            logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx marked as skipped, showing RAW" }
+            updateStatus("RAW")
             return
         }
 
@@ -601,6 +608,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 var attempts = 0
                 var wasEnhancing = false
                 while (attempts < 120 && isActive) {
+                    if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash)) {
+                        withUIContext { updateStatus("RAW") }
+                        return@launchIO
+                    }
                     val file = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash)
                     if (file != null) {
                         logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx found in cache during polling: ${file.absolutePath}" }
@@ -618,6 +629,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
                                 enhancedOverlay.alpha = 1f
                                 enhancedOverlay.isVisible = true
                                 updateStatus("PROCESSED")
+                                
+                                // Ensure statusView stays on top of the overlay
+                                statusView.bringToFront()
 
                                 // 2. Mark state transition
                                 isSettingProcessedImage = true
@@ -630,7 +644,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
                                 }
                             }
                         } else {
-                           // Fail-safe
+                           // Bitmap decode failed - log details for debugging
+                           logcat(LogPriority.ERROR) { "ReaderPageImageView: BitmapFactory.decodeFile returned NULL for ${file.absolutePath}" }
+                           logcat(LogPriority.ERROR) { "  File exists: ${file.exists()}, size: ${file.length()} bytes, readable: ${file.canRead()}" }
+                           
+                           // Try with BitmapFactory.Options to get more info
+                           val options = android.graphics.BitmapFactory.Options().apply {
+                               inJustDecodeBounds = true
+                           }
+                           android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                           logcat(LogPriority.ERROR) { "  Decode bounds: ${options.outWidth}x${options.outHeight}, mimeType: ${options.outMimeType}" }
+                           
+                           // Fail-safe: try using SubsamplingScaleImageView directly
                            withUIContext {
                                setImage(ImageSource.uri(context, android.net.Uri.fromFile(file)))
                                isVisible = true
@@ -641,14 +666,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     }
                     
                     // Check status every 500ms
-                    val pid = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.processingId
+                    val pid = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgressId()
                     if (pid == pIdx) {
                         wasEnhancing = true
-                        val rawProgress = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgress()
+                        val rawProgress = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgressPercent()
                         if (rawProgress in 0..100) {
                             updateStatus("ENHANCING... $rawProgress%")
                         } else {
-                            val dots = (rawProgress % 3).toInt().let { if (it < 0) -it else it } + 1
+                            val dots = (rawProgress % 3).let { if (it < 0) -it else it } + 1
                             updateStatus("ENHANCING" + ".".repeat(dots))
                         }
                     } else if (ImageEnhancer.hasRequest(mId, cId, pIdx)) {
@@ -658,6 +683,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         } else {
                             updateStatus("FINISHING...")
                         }
+                    } else {
+                        // Enhancement finished but image not in cache (skipped or failed)
+                        updateStatus("RAW")
+                        // Wait 2 seconds then exit polling to stop unnecessary work
+                        delay(2000)
+                        return@launchIO
                     }
                     
                     if (attempts % 10 == 0) { // Log every 5 seconds
@@ -670,7 +701,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                              // 2. AND this page is within the preload range
                              val current = currentGlobalPageIndex
                              val shouldHeal = pIdx >= current && pIdx <= current + preloadSize
-                             if (shouldHeal) {
+                             if (shouldHeal && !ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash)) {
                                  logcat(LogPriority.WARN) { "ReaderPageImageView: Request for page $pIdx (cur=$current) missing, restarting enhancement..." }
                                  
                                  val isCurrent = pIdx == current

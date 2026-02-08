@@ -206,13 +206,17 @@ internal class HttpPageLoader(
                         preferences.realCuganInputScale().get(),
                         preferences.realCuganModel().get(),
                         preferences.realCuganMaxSizeWidth().get(),
-                        preferences.realCuganMaxSizeHeight().get()
+                        preferences.realCuganMaxSizeHeight().get(),
+                        preferences.realCuganResizeLargeImage().get()
                     )
                     val cachedFile = ImageEnhancementCache.getCachedImage(mangaId, chapterId, page.index, configHash)
                     if (cachedFile != null) {
                         // Use enhanced stream
                         streamSource = { cachedFile.inputStream() }
                     } else {
+                        // Set the stream first so enhance can use it
+                        page.stream = streamSource
+                        
                         // Not cached, trigger enhancement via unified decoder (Low priority for preload)
                         logcat(LogPriority.DEBUG) { "HttpPageLoader: Triggering enhancement for page ${page.index}" }
                         ImageEnhancer.enhance(context, page, false)
@@ -220,7 +224,10 @@ internal class HttpPageLoader(
                 }
             }
 
-            page.stream = streamSource
+            // Set stream if not already set (for non-enhancement path or cached path)
+            if (page.stream == null) {
+                page.stream = streamSource   
+            }
             page.status = Page.State.Ready
         } catch (e: Throwable) {
             page.status = Page.State.Error(e)

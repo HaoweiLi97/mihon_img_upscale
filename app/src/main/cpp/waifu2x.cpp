@@ -171,8 +171,24 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
     if (scale == 2) {
       bicubic_2x->forward(alpha_in, alpha_out, net.opt);
     } else {
-      // For 3x/4x, use ncnn resize as fallback for alpha
-      ncnn::resize_bilinear(alpha_in, alpha_out, target_w, target_h, net.opt);
+      // For 3x/4x, use bicubic interpolation (same quality as 2x)
+      // Create dynamic Interp layer with correct scale factor
+      ncnn::Layer *interp = ncnn::create_layer("Interp");
+      if (interp) {
+        interp->vkdev = vkdev;
+        ncnn::ParamDict pd;
+        pd.set(0, 3);            // bicubic interpolation
+        pd.set(1, (float)scale); // width scale
+        pd.set(2, (float)scale); // height scale
+        interp->load_param(pd);
+        interp->create_pipeline(net.opt);
+        interp->forward(alpha_in, alpha_out, net.opt);
+        interp->destroy_pipeline(net.opt);
+        delete interp;
+      } else {
+        // Fallback to bilinear if layer creation fails
+        ncnn::resize_bilinear(alpha_in, alpha_out, target_w, target_h, net.opt);
+      }
     }
     alpha_data = (const float *)alpha_out.data;
   }
@@ -240,6 +256,16 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
         continue;
       }
 
+      // Debug logging for first tile to diagnose x3/x4 issues
+      if (xi == 0 && yi == 0) {
+        int expected_w = (std::min(TILE_SIZE_X, w) + 2 * prepadding) * scale;
+        int expected_h = (std::min(TILE_SIZE_Y, h) + 2 * prepadding) * scale;
+        LOGD("Tile debug: scale=%d, prepadding=%d", scale, prepadding);
+        LOGD("  in_tile: %dx%dx%d", in_tile.w, in_tile.h, in_tile.c);
+        LOGD("  out_tile: %dx%dx%d (expected ~%dx%d)", out_tile.w, out_tile.h,
+             out_tile.c, expected_w, expected_h);
+      }
+
       // Update progress IMMEDIATELY after GPU inference to show activity
       if (progress_ptr) {
         int p =
@@ -266,11 +292,28 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
             int out_h_tile = h_tile * scale;
             int out_pad = prepadding * scale;
 
-            int src_offset_x = out_pad;
-            int src_offset_y = out_pad;
+            // Calculate source offset based on actual model output
+            // Models typically output: input_tile * scale (without additional
+            // padding) For full tiles, this equals (tilesize + 2*prepadding) *
+            // scale For edge tiles, the output may be smaller
+            int expected_out_w = in_tile_w * scale;
+            int expected_out_h = in_tile_h * scale;
 
-            if (out_tile_captured.w < out_w_tile + 2 * out_pad ||
-                out_tile_captured.h < out_h_tile + 2 * out_pad) {
+            int src_offset_x, src_offset_y;
+
+            if (out_tile_captured.w >= expected_out_w &&
+                out_tile_captured.h >= expected_out_h) {
+              // Model output includes padding - use standard offset
+              src_offset_x = out_pad;
+              src_offset_y = out_pad;
+            } else if (out_tile_captured.w >= out_w_tile &&
+                       out_tile_captured.h >= out_h_tile) {
+              // Model output is content-only (stripped padding) - calculate
+              // center offset
+              src_offset_x = (out_tile_captured.w - out_w_tile) / 2;
+              src_offset_y = (out_tile_captured.h - out_h_tile) / 2;
+            } else {
+              // Output smaller than content - use from beginning (edge case)
               src_offset_x = 0;
               src_offset_y = 0;
             }

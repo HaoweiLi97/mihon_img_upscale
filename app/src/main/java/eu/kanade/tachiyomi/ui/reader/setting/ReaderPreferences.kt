@@ -101,9 +101,9 @@ class ReaderPreferences(
 
     fun realCuganPerformanceMode() = preferenceStore.getInt("pref_realcugan_performance_mode", 0) // 0: 90%, 1: 50%, 2: 30%
 
-    fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 2048)
+    fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 1600)
 
-    fun realCuganMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_max_size_height", 2048)
+    fun realCuganMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_max_size_height", 1600)
     
     fun realCuganResizeLargeImage() = preferenceStore.getBoolean("pref_realcugan_resize_large_image", false)
 
