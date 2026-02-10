@@ -31,6 +31,13 @@ object ImageEnhancer {
     private val queue = PriorityBlockingQueue<EnhanceRequest>()
     private val seqGenerator = AtomicInteger(0)
 
+    @Volatile
+    private var lastResetTime = 0L
+
+    @Volatile
+    private var isFirstRequestAfterReset = false
+
+
     // Current page the user is viewing. Used to prioritize requests closest to this page.
     @Volatile
     var targetPageIndex: Int = 0
@@ -68,6 +75,14 @@ object ImageEnhancer {
         scope.launch {
             while (true) {
                 try {
+                    if (isFirstRequestAfterReset) {
+                        val elapsed = System.currentTimeMillis() - lastResetTime
+                        if (elapsed < 700) {
+                            kotlinx.coroutines.delay(700 - elapsed)
+                        }
+                        isFirstRequestAfterReset = false
+                    }
+
                     val req = runInterruptible { queue.take() }
                     processRequest(req)
                 } catch (e: Exception) {
@@ -77,6 +92,7 @@ object ImageEnhancer {
                 }
             }
         }
+
     }
 
     fun enhance(context: Context, page: ReaderPage, highPriority: Boolean = false) {
@@ -135,8 +151,11 @@ object ImageEnhancer {
         pendingRequests.clear()
         targetPageIndex = initialPageIndex
         seqGenerator.set(0)
+        lastResetTime = System.currentTimeMillis()
+        isFirstRequestAfterReset = true
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Resetting state to page $initialPageIndex" }
     }
+
 
     fun hasRequest(mangaId: Long, chapterId: Long, pageIndex: Int): Boolean {
         return pendingRequests.containsKey("${mangaId}_${chapterId}_$pageIndex")

@@ -150,6 +150,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
 
     private var pageView: View? = null
+    private var currentLoadedUri: String? = null
+
 
     private var config: Config? = null
     
@@ -243,9 +245,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         
         // Synchronized Fade-out: Only hide overlay after the new image is actually rendered
         if (isSettingProcessedImage) {
+            pageView?.alpha = 1f
             enhancedOverlay.animate()
                 .alpha(0f)
-                .setDuration(300)
+                .setDuration(200)
                 .withEndAction {
                     enhancedOverlay.isVisible = false
                     enhancedOverlay.setImageBitmap(null)
@@ -255,6 +258,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 }
                 .start()
         }
+
+
     }
 
     @CallSuper
@@ -274,7 +279,19 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @CallSuper
     open fun onScaleChanged(newScale: Float) {
         onScaleChanged?.invoke(newScale)
+        
+        // If zooming, dismiss the static overlay immediately to show the zoomable image
+        if (newScale != 1f && isSettingProcessedImage) {
+            enhancedOverlay.animate().cancel()
+            enhancedOverlay.isVisible = false
+            enhancedOverlay.setImageBitmap(null)
+            enhancedBitmap?.recycle()
+            enhancedBitmap = null
+            isSettingProcessedImage = false
+            pageView?.alpha = 1f
+        }
     }
+
 
     @CallSuper
     open fun onViewClicked() {
@@ -308,8 +325,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
                      // Already processed - update status and load enhanced image
                      logcat(LogPriority.DEBUG) { "ReaderPageImageView: onPageSelected - Page $pIdx found in cache" }
                      updateStatus("PROCESSED")
-                     // Load the enhanced image if not already loaded
-                     if (!isSettingProcessedImage && enhancedBitmap == null) {
+                     
+                     val uriString = cachedFile.toURI().toString()
+                     if (currentLoadedUri != uriString) {
+                         // Load the enhanced image if not already loaded or if source changed
                          launchIO {
                              val bitmap = try {
                                  android.graphics.BitmapFactory.decodeFile(cachedFile.absolutePath)
@@ -324,11 +343,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
                                      statusView.bringToFront()
                                      enhancedBitmap = bitmap
                                      isSettingProcessedImage = true
+                                     
+                                     // Hide underlying image while we swap it in background
+                                     pageView?.alpha = 0f
+                                     
+                                     // Swap source in background view
+                                     val uri = android.net.Uri.fromFile(cachedFile)
+                                     (pageView as? SubsamplingScaleImageView)?.setImage(ImageSource.uri(context, uri))
+                                     currentLoadedUri = uriString
                                  }
                              }
                          }
                      }
                  } else if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash)) {
+
                      updateStatus("RAW")
                  } else {
                      // Not in cache, not skipped - ensure it's being processed with high priority
@@ -609,11 +637,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash)
         if (cachedFile != null) {
             logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx found in cache on first check: ${cachedFile.absolutePath}" }
-            setImage(ImageSource.uri(context, android.net.Uri.fromFile(cachedFile)))
+            val uri = android.net.Uri.fromFile(cachedFile)
+            setImage(ImageSource.uri(context, uri))
+            currentLoadedUri = cachedFile.toURI().toString()
             isVisible = true
             updateStatus("PROCESSED")
             return
         }
+
         
         if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash)) {
             logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx marked as skipped, showing RAW" }
@@ -692,18 +723,24 @@ open class ReaderPageImageView @JvmOverloads constructor(
                                 enhancedBitmap = bitmap
                                 if (context != null) {
                                     val uri = android.net.Uri.fromFile(file)
+                                    val uriString = file.toURI().toString()
+                                    pageView?.alpha = 0f
                                     (pageView as? SubsamplingScaleImageView)?.setImage(ImageSource.uri(context, uri))
+                                    currentLoadedUri = uriString
                                     isVisible = true
                                 }
                             }
                         } else {
                             withUIContext {
                                 val uri = android.net.Uri.fromFile(file)
+                                val uriString = file.toURI().toString()
                                 (pageView as? SubsamplingScaleImageView)?.setImage(ImageSource.uri(context, uri))
+                                currentLoadedUri = uriString
                                 isVisible = true
                                 updateStatus("PROCESSED")
                             }
                         }
+
                         return@launchIO
                     }
                     
