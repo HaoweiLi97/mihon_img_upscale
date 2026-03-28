@@ -106,7 +106,7 @@ class WebtoonConfig(
         readerPreferences.realCuganEnabled().changes()
             .drop(1)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
@@ -114,7 +114,7 @@ class WebtoonConfig(
         readerPreferences.realCuganModel().changes()
             .drop(1)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
@@ -123,7 +123,7 @@ class WebtoonConfig(
             .drop(1)
             .debounce(500)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
@@ -132,7 +132,7 @@ class WebtoonConfig(
             .drop(1)
             .debounce(500)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
@@ -141,7 +141,7 @@ class WebtoonConfig(
             .drop(1)
             .debounce(500)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
@@ -150,7 +150,7 @@ class WebtoonConfig(
             .drop(1)
             .debounce(500)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
@@ -159,7 +159,7 @@ class WebtoonConfig(
             .drop(1)
             .debounce(500)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
@@ -167,7 +167,7 @@ class WebtoonConfig(
         readerPreferences.realCuganResizeLargeImage().changes()
             .drop(1)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get())
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(Injekt.get<Application>())
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
