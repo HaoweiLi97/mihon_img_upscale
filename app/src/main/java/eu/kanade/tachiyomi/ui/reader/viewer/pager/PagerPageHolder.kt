@@ -374,6 +374,46 @@ class PagerPageHolder(
         }
     }
 
+    private fun setTransitionTargetPage(targetPage: ReaderPage?) {
+        if (extraPage == null || targetPage == null) {
+            processedTransitionStartFraction = 0f
+            processedTransitionEndFraction = 1f
+            return
+        }
+
+        val leftPage = if (viewer is R2LPagerViewer) extraPage else page
+        val isLeftHalf = targetPage == leftPage
+        if (isLeftHalf) {
+            processedTransitionStartFraction = 0f
+            processedTransitionEndFraction = 0.5f
+        } else {
+            processedTransitionStartFraction = 0.5f
+            processedTransitionEndFraction = 1f
+        }
+    }
+
+    private fun smoothRefreshCombinedDisplay() {
+        val secondaryPage = extraPage ?: return
+        val primaryEnhancedFile = currentEnhancedFile(page)
+        val secondaryEnhancedFile = currentEnhancedFile(secondaryPage)
+        val anchorFile = primaryEnhancedFile ?: secondaryEnhancedFile ?: return
+
+        val transformedSource =
+            if (primaryEnhancedFile != null) {
+                buildEnhancedDisplaySource(primaryEnhancedFile)
+            } else {
+                val primaryStream = currentDisplayStream(page) ?: return
+                primaryStream.use { s1 ->
+                    val extraStream = currentDisplayStream(secondaryPage) ?: return
+                    extraStream.use { s2 ->
+                        mergeOrSplitPages(Buffer().readFrom(s1), Buffer().readFrom(s2))
+                    }
+                }
+            } ?: return
+        setTransitionTargetPage(secondaryPage)
+        setProcessedSource(anchorFile, transformedSource = transformedSource)
+    }
+
     private fun startExtraEnhancementWatcherIfNeeded() {
         val targetPage = extraPage ?: return
         if (!usesTransformedEnhancedDisplay() || !readerPreferences.realCuganEnabled().get()) return
@@ -395,7 +435,9 @@ class PagerPageHolder(
                         page.status == Page.State.Ready &&
                         targetPage.status == Page.State.Ready
                     ) {
-                        setImage()
+                        withUIContext {
+                            smoothRefreshCombinedDisplay()
+                        }
                     }
                 }
                 delay(500)
@@ -588,6 +630,7 @@ class PagerPageHolder(
     }
 
     override fun onPageSelected(forward: Boolean) {
+        setTransitionTargetPage(page)
         super.onPageSelected(forward)
         ImageEnhancer.reprioritizeAround(
             pageIndex = page.index,

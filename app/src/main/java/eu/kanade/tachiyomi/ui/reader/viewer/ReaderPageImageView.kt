@@ -1,9 +1,12 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
 import android.content.Context
+import android.animation.ValueAnimator
 import android.graphics.Bitmap
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
@@ -23,6 +26,7 @@ import androidx.annotation.AttrRes
 import androidx.annotation.CallSuper
 import androidx.annotation.StyleRes
 import androidx.appcompat.widget.AppCompatImageView
+import androidx.core.animation.doOnEnd
 import androidx.core.os.postDelayed
 import androidx.core.view.isVisible
 import coil3.BitmapImage
@@ -166,6 +170,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     
     private var processingJob: Job? = null
     private var enhancedBitmap: Bitmap? = null
+    private var processedSwapView: SubsamplingScaleImageView? = null
 
     var onImageLoaded: (() -> Unit)? = null
     var onImageLoadError: ((Throwable?) -> Unit)? = null
@@ -179,6 +184,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     var readerPage: ReaderPage? = null
     var enhancementVariantOverride: String? = null
     var enhancementStreamOverride: (() -> java.io.InputStream)? = null
+    var processedTransitionStartFraction: Float = 0f
+    var processedTransitionEndFraction: Float = 1f
 
     private val statusView: TextView by lazy {
         TextView(context).apply {
@@ -200,6 +207,27 @@ open class ReaderPageImageView @JvmOverloads constructor(
         AppCompatImageView(context).apply {
             layoutParams = LayoutParams(MATCH_PARENT, MATCH_PARENT)
             scaleType = ImageView.ScaleType.FIT_CENTER
+            isVisible = false
+            this@ReaderPageImageView.addView(this)
+        }
+    }
+
+    private val transitionDivider: View by lazy {
+        View(context).apply {
+            val scannerHeight = (context.resources.displayMetrics.density * 28).toInt().coerceAtLeast(12)
+            layoutParams = LayoutParams(MATCH_PARENT, scannerHeight)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    0x00D8D8D8,
+                    0x16DCDCDC,
+                    0x33E6E6E6,
+                    0x16DCDCDC,
+                    0x00D8D8D8,
+                ),
+            )
+            alpha = 0.45f
+            elevation = 100f
             isVisible = false
             this@ReaderPageImageView.addView(this)
         }
@@ -329,7 +357,168 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    private fun setProcessedSource(
+    private fun createSubsamplingPageView(): SubsamplingScaleImageView {
+        return if (isWebtoon) {
+            WebtoonSubsamplingImageView(context)
+        } else {
+            SubsamplingScaleImageView(context)
+        }.apply {
+            setMaxTileSize(ImageUtil.hardwareBitmapThreshold)
+            setDoubleTapZoomStyle(SubsamplingScaleImageView.ZOOM_FOCUS_CENTER)
+            setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_INSIDE)
+            setMinimumTileDpi(180)
+            setOnStateChangedListener(
+                object : SubsamplingScaleImageView.OnStateChangedListener {
+                    override fun onScaleChanged(newScale: Float, origin: Int) {
+                        this@ReaderPageImageView.onScaleChanged(newScale)
+                    }
+
+                    override fun onCenterChanged(newCenter: PointF?, origin: Int) {
+                        // Not used
+                    }
+                },
+            )
+            setOnClickListener { this@ReaderPageImageView.onViewClicked() }
+        }
+    }
+
+    private fun clearProcessedSwapView() {
+        processedSwapView?.let { swapView ->
+            swapView.recycle()
+            removeView(swapView)
+        }
+        processedSwapView = null
+    }
+
+    private fun displayedImageRect(view: SubsamplingScaleImageView): RectF? {
+        val center = view.center ?: return null
+        val scale = view.scale
+        val sourceWidth = view.sWidth
+        val sourceHeight = view.sHeight
+        if (scale <= 0f || sourceWidth <= 0 || sourceHeight <= 0 || view.width <= 0 || view.height <= 0) {
+            return null
+        }
+
+        val left = view.width / 2f - center.x * scale
+        val top = view.height / 2f - center.y * scale
+        return RectF(
+            left,
+            top,
+            left + sourceWidth * scale,
+            top + sourceHeight * scale,
+        )
+    }
+
+    private fun animateProcessedSwap(
+        activeView: SubsamplingScaleImageView,
+        targetConfig: Config?,
+        setImageBlock: SubsamplingScaleImageView.() -> Unit,
+    ) {
+        clearProcessedSwapView()
+
+        val targetScale = activeView.scale
+        val targetCenter = activeView.center?.let { PointF(it.x, it.y) }
+        val targetMinScale = activeView.minScale
+        val targetWidth = activeView.sWidth
+        val targetHeight = activeView.sHeight
+        val swapView = createSubsamplingPageView().apply {
+            alpha = 0f
+            isVisible = true
+            setDoubleTapZoomDuration((targetConfig?.zoomDuration ?: 500).getSystemScaledDuration())
+            setMinimumScaleType(targetConfig?.minimumScaleType ?: SCALE_TYPE_CENTER_INSIDE)
+            setMinimumDpi(1)
+            setCropBorders(targetConfig?.cropBorders ?: false)
+            setOnImageEventListener(
+                object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
+                    override fun onReady() {
+                        setupZoom(targetConfig)
+
+                        val wasZoomed =
+                            targetScale > 0f &&
+                                targetCenter != null &&
+                                targetMinScale > 0f &&
+                                targetWidth > 0 &&
+                                targetHeight > 0 &&
+                                targetScale > targetMinScale + 0.01f
+
+                        if (wasZoomed && targetCenter != null) {
+                            val zoomFactor = targetScale / targetMinScale
+                            val mappedCenter = PointF(
+                                (targetCenter.x / targetWidth) * sWidth,
+                                (targetCenter.y / targetHeight) * sHeight,
+                            )
+                            val mappedScale = (minScale * zoomFactor).coerceIn(minScale, maxScale)
+                            setScaleAndCenter(mappedScale, mappedCenter)
+                        } else if (isVisibleOnScreen()) {
+                            landscapeZoom(true)
+                        }
+
+                        bringToFront()
+                        statusView.bringToFront()
+                        pageView = this@apply
+                        alpha = 1f
+                        val revealStart = processedTransitionStartFraction.coerceIn(0f, 1f)
+                        val revealEnd = processedTransitionEndFraction.coerceIn(revealStart, 1f)
+                        val clipLeft = (width * revealStart).toInt()
+                        val clipRight = (width * revealEnd).toInt().coerceAtLeast(clipLeft + 1)
+                        clipBounds = Rect(clipLeft, 0, clipRight, 0)
+                        val imageRect = displayedImageRect(this@apply)
+                        val dividerLayoutParams = transitionDivider.layoutParams as LayoutParams
+                        if (imageRect != null) {
+                            val contentLeft =
+                                imageRect.left + imageRect.width() * revealStart
+                            val contentRight =
+                                imageRect.left + imageRect.width() * revealEnd
+                            dividerLayoutParams.width =
+                                (contentRight - contentLeft).toInt().coerceAtLeast(1)
+                            dividerLayoutParams.leftMargin = contentLeft.toInt()
+                        } else {
+                            dividerLayoutParams.width = (clipRight - clipLeft).coerceAtLeast(1)
+                            dividerLayoutParams.leftMargin = clipLeft
+                        }
+                        transitionDivider.layoutParams = dividerLayoutParams
+                        transitionDivider.bringToFront()
+                        statusView.bringToFront()
+                        transitionDivider.translationY = imageRect?.top ?: 0f
+                        transitionDivider.isVisible = true
+                        ValueAnimator.ofInt(0, height).apply {
+                            duration = 800
+                            addUpdateListener { animator ->
+                                val scannerBottom = animator.animatedValue as Int
+                                val scannerHeight = transitionDivider.height.coerceAtLeast(1)
+                                val revealedHeight = (scannerBottom - scannerHeight / 2).coerceAtLeast(0)
+                                clipBounds = Rect(clipLeft, 0, clipRight, revealedHeight)
+                                val baseTop = imageRect?.top ?: 0f
+                                val bottom = imageRect?.bottom ?: height.toFloat()
+                                transitionDivider.translationY =
+                                    (baseTop + scannerBottom - transitionDivider.height)
+                                        .coerceIn(baseTop, bottom - transitionDivider.height.toFloat())
+                            }
+                            doOnEnd {
+                                clipBounds = null
+                                transitionDivider.isVisible = false
+                                activeView.recycle()
+                                removeView(activeView)
+                                processedSwapView = null
+                                this@ReaderPageImageView.onImageLoaded()
+                            }
+                            start()
+                        }
+                    }
+
+                    override fun onImageLoadError(e: Exception) {
+                        clearProcessedSwapView()
+                        this@ReaderPageImageView.onImageLoadError(e)
+                    }
+                },
+            )
+        }
+        processedSwapView = swapView
+        addView(swapView, 0, LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        swapView.setImageBlock()
+    }
+
+    protected fun setProcessedSource(
         file: java.io.File,
         bitmap: Bitmap? = null,
         transformedSource: BufferedSource? = null,
@@ -338,38 +527,55 @@ open class ReaderPageImageView @JvmOverloads constructor(
         updateStatus(context.stringResource(MR.strings.reader_status_processed))
 
         if (transformedSource != null) {
-            val previewBitmap = try {
-                android.graphics.BitmapFactory.decodeStream(transformedSource.peek().inputStream())
-            } catch (_: Exception) {
-                null
-            }
-
-            if (previewBitmap != null) {
-                enhancedOverlay.bringToFront()
-                enhancedOverlay.setImageBitmap(previewBitmap)
-                enhancedOverlay.alpha = 1f
-                enhancedOverlay.isVisible = true
-                statusView.bringToFront()
-                enhancedBitmap = previewBitmap
-                isSettingProcessedImage = true
-                pageView?.alpha = 0f
+            val activeView = pageView as? SubsamplingScaleImageView
+            if (activeView != null) {
+                animateProcessedSwap(activeView, config) {
+                    setImage(ImageSource.inputStream(transformedSource.inputStream()))
+                }
             } else {
-                pageView?.alpha = 1f
-                enhancedOverlay.animate().cancel()
-                enhancedOverlay.setImageBitmap(null)
-                enhancedOverlay.isVisible = false
-                enhancedBitmap?.recycle()
-                enhancedBitmap = null
-                isSettingProcessedImage = false
-            }
+                val previewBitmap = try {
+                    android.graphics.BitmapFactory.decodeStream(transformedSource.peek().inputStream())
+                } catch (_: Exception) {
+                    null
+                }
 
-            (pageView as? SubsamplingScaleImageView)?.setImage(ImageSource.inputStream(transformedSource.inputStream()))
+                if (previewBitmap != null) {
+                    enhancedOverlay.scaleType = ImageView.ScaleType.FIT_CENTER
+                    enhancedOverlay.bringToFront()
+                    enhancedOverlay.setImageBitmap(previewBitmap)
+                    enhancedOverlay.alpha = 1f
+                    enhancedOverlay.isVisible = true
+                    statusView.bringToFront()
+                    enhancedBitmap = previewBitmap
+                    isSettingProcessedImage = true
+                    pageView?.alpha = 0f
+                } else {
+                    pageView?.alpha = 1f
+                    enhancedOverlay.animate().cancel()
+                    enhancedOverlay.setImageBitmap(null)
+                    enhancedOverlay.isVisible = false
+                    enhancedBitmap?.recycle()
+                    enhancedBitmap = null
+                    isSettingProcessedImage = false
+                }
+            }
             currentLoadedUri = uriString
             isVisible = true
             return
         }
 
         if (bitmap != null) {
+            val activeView = pageView as? SubsamplingScaleImageView
+            if (activeView != null) {
+                animateProcessedSwap(activeView, config) {
+                    val uri = android.net.Uri.fromFile(file)
+                    setImage(ImageSource.uri(context, uri))
+                }
+                currentLoadedUri = uriString
+                isVisible = true
+                return
+            }
+            enhancedOverlay.scaleType = ImageView.ScaleType.FIT_CENTER
             enhancedOverlay.bringToFront()
             enhancedOverlay.setImageBitmap(bitmap)
             enhancedOverlay.alpha = 1f
@@ -710,30 +916,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun prepareNonAnimatedImageView() {
         if (pageView is SubsamplingScaleImageView) return
+        clearProcessedSwapView()
         removeView(pageView)
 
-        pageView = if (isWebtoon) {
-            WebtoonSubsamplingImageView(context)
-        } else {
-            SubsamplingScaleImageView(context)
-        }.apply {
-            setMaxTileSize(ImageUtil.hardwareBitmapThreshold)
-            setDoubleTapZoomStyle(SubsamplingScaleImageView.ZOOM_FOCUS_CENTER)
-            setPanLimit(SubsamplingScaleImageView.PAN_LIMIT_INSIDE)
-            setMinimumTileDpi(180)
-            setOnStateChangedListener(
-                object : SubsamplingScaleImageView.OnStateChangedListener {
-                    override fun onScaleChanged(newScale: Float, origin: Int) {
-                        this@ReaderPageImageView.onScaleChanged(newScale)
-                    }
-
-                    override fun onCenterChanged(newCenter: PointF?, origin: Int) {
-                        // Not used
-                    }
-                },
-            )
-            setOnClickListener { this@ReaderPageImageView.onViewClicked() }
-        }
+        pageView = createSubsamplingPageView()
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
     }
 
@@ -996,6 +1182,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun prepareAnimatedImageView() {
         if (pageView is AppCompatImageView) return
+        clearProcessedSwapView()
         removeView(pageView)
 
         pageView = if (isWebtoon) {
@@ -1111,6 +1298,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         enhancedBitmap?.recycle()
         enhancedBitmap = null
         isSettingProcessedImage = false
+        clearProcessedSwapView()
     } 
 
     companion object {
