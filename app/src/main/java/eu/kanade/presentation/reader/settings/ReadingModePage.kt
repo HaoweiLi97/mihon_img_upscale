@@ -122,6 +122,18 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
         }
     }
 
+    if (pageLayout == PageLayout.DOUBLE_PAGES.value || pageLayout == PageLayout.AUTOMATIC.value) {
+        val hingeGapSize by screenModel.preferences.hingeGapSize().collectAsState()
+        SliderItem(
+            value = hingeGapSize,
+            valueRange = 0..200,
+            label = stringResource(MR.strings.pref_hinge_gap_size),
+            valueString = "${hingeGapSize}px",
+            onChange = { screenModel.preferences.hingeGapSize().set(it) },
+            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        )
+    }
+
     val dualPageRotateToFit by screenModel.preferences.dualPageRotateToFit().collectAsState()
     CheckboxItem(
         label = stringResource(MR.strings.pref_page_rotate),

@@ -1,13 +1,17 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Rect
 import android.view.LayoutInflater
 import android.view.Gravity
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.util.TypedValue
 import android.widget.TextView
+import androidx.core.graphics.applyCanvas
+import androidx.core.graphics.createBitmap
 import androidx.core.view.isVisible
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
@@ -42,6 +46,8 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.math.min
+import eu.kanade.tachiyomi.util.system.isNightMode
 
 /**
  * View of the ViewPager that contains a page of a chapter.
@@ -547,15 +553,83 @@ class PagerPageHolder(
         }
 
         val isLTR = viewer !is R2LPagerViewer
-        val background = if (viewer.config.readerTheme == 2) Color.WHITE else Color.BLACK
+        val grayBackground = Color.rgb(0x20, 0x21, 0x25)
+        val background =
+            when (viewer.config.readerTheme) {
+                0 -> Color.WHITE
+                2 -> grayBackground
+                3 -> if (context.isNightMode()) grayBackground else Color.WHITE
+                else -> Color.BLACK
+            }
 
-        val mergedSource = ImageUtil.mergeBitmaps(bitmap1, bitmap2, isLTR, background, viewer.config.hingeGapSize, viewer.activity)
+        val mergedSource = mergeBitmapsPerHalf(bitmap1, bitmap2, isLTR, background)
 
         // Clean up old bitmaps
         bitmap1.recycle()
         bitmap2.recycle()
 
         return mergedSource
+    }
+
+    private fun mergeBitmapsPerHalf(
+        firstBitmap: Bitmap,
+        secondBitmap: Bitmap,
+        isLTR: Boolean,
+        background: Int,
+    ): BufferedSource {
+        val metrics = context.resources.displayMetrics
+        val viewportWidth =
+            when {
+                width > 0 -> width
+                viewer.pager.width > 0 -> viewer.pager.width
+                else -> metrics.widthPixels
+            }.coerceAtLeast(2)
+        val viewportHeight =
+            when {
+                height > 0 -> height
+                viewer.pager.height > 0 -> viewer.pager.height
+                else -> metrics.heightPixels
+            }.coerceAtLeast(1)
+
+        val adjustedHingeGap = viewer.config.hingeGapSize.coerceAtLeast(0)
+        val cellWidth = ((viewportWidth - adjustedHingeGap).coerceAtLeast(2)) / 2
+        val result = createBitmap((cellWidth * 2) + adjustedHingeGap, viewportHeight)
+
+        result.applyCanvas {
+            drawColor(background)
+
+            fun drawFitted(bitmap: Bitmap, cellLeft: Int, alignToCenter: Boolean) {
+                val scale = min(
+                    cellWidth / bitmap.width.toFloat(),
+                    viewportHeight / bitmap.height.toFloat(),
+                )
+                val destWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
+                val destHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
+                val left =
+                    if (alignToCenter) {
+                        cellLeft + (cellWidth - destWidth)
+                    } else {
+                        cellLeft
+                    }
+                val top = (viewportHeight - destHeight) / 2
+                val dest = Rect(left, top, left + destWidth, top + destHeight)
+                drawBitmap(bitmap, null, dest, null)
+            }
+
+            val leftCellStart = 0
+            val rightCellStart = cellWidth + adjustedHingeGap
+            if (isLTR) {
+                drawFitted(firstBitmap, leftCellStart, alignToCenter = true)
+                drawFitted(secondBitmap, rightCellStart, alignToCenter = false)
+            } else {
+                drawFitted(secondBitmap, leftCellStart, alignToCenter = true)
+                drawFitted(firstBitmap, rightCellStart, alignToCenter = false)
+            }
+        }
+
+        val output = Buffer()
+        result.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
+        return output
     }
 
     private fun process(item: Any, imageSource: BufferedSource): BufferedSource {

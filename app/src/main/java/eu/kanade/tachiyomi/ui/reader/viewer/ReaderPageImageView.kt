@@ -186,6 +186,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     var enhancementStreamOverride: (() -> java.io.InputStream)? = null
     var processedTransitionStartFraction: Float = 0f
     var processedTransitionEndFraction: Float = 1f
+    var controlsCurrentPageSelection: Boolean = true
 
     private val statusView: TextView by lazy {
         TextView(context).apply {
@@ -711,9 +712,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val pIdx = readerPage?.index ?: pageIndex
 
         // Update global current page index to help other instances decide if they should self-heal
-        if (pIdx >= 0) {
-             currentGlobalPageIndex = pIdx
-             ImageEnhancer.reprioritizeAround(pIdx, enhancementVariant())
+        if (controlsCurrentPageSelection && pIdx >= 0) {
+            currentGlobalPageIndex = pIdx
+            ImageEnhancer.reprioritizeAround(pIdx, enhancementVariant())
         }
 
         if (pIdx >= 0 && mId != -1L && cId != -1L) {
@@ -858,6 +859,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         enhancedBitmap?.recycle()
         enhancedBitmap = null
         isSettingProcessedImage = false
+        currentLoadedUri = null
     }
 
     /**
@@ -1276,7 +1278,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         super.onDetachedFromWindow()
         processingJob?.cancel()
         processingJob = null
-        viewScope.cancel()
         
         // Cancel enhancement if this view is detached/recycled
         // Use readerPage as primary source, falling back to properties
@@ -1298,6 +1299,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         enhancedBitmap?.recycle()
         enhancedBitmap = null
         isSettingProcessedImage = false
+        currentLoadedUri = null
         clearProcessedSwapView()
     } 
 

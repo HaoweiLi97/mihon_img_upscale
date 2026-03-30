@@ -97,9 +97,17 @@ class WebtoonPageHolder(
         frame.mangaId = viewer.activity.viewModel.manga?.id ?: -1L
         frame.chapterId = page.chapter.chapter.id ?: -1L
         frame.readerPage = page
+        frame.controlsCurrentPageSelection = false
         loadJob?.cancel()
         loadJob = scope.launch { loadPageAndProcessStatus() }
         refreshLayoutParams()
+        if (page.index == ReaderPageImageView.currentGlobalPageIndex) {
+            frame.post {
+                if (this.page?.index == ReaderPageImageView.currentGlobalPageIndex) {
+                    frame.onPageSelected(true)
+                }
+            }
+        }
     }
 
     fun boundPage(): ReaderPage? = page
