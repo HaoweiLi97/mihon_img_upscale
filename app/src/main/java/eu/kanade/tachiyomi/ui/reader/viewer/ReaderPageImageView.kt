@@ -657,6 +657,32 @@ open class ReaderPageImageView @JvmOverloads constructor(
         )
     }
 
+    fun promoteEnhancementRequest(highPriority: Boolean = true) {
+        if (!realCuganEnabled) return
+
+        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
+        val cId = readerPage?.chapter?.chapter?.id ?: chapterId
+        val pIdx = readerPage?.index ?: pageIndex
+        if (pIdx < 0 || mId == -1L || cId == -1L) return
+
+        ImageEnhancementCache.init(context)
+        val configHash = ImageEnhancementCache.getConfigHash(
+            realCuganNoiseLevel,
+            realCuganScale,
+            realCuganInputScale,
+            realCuganModel,
+            realCuganMaxSizeWidth,
+            realCuganMaxSizeHeight,
+            realCuganResizeLargeImage,
+        )
+        val pageVariant = enhancementVariant()
+
+        if (ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant) != null) return
+        if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash, pageVariant)) return
+
+        enqueueEnhancement(mId, cId, pIdx, highPriority)
+    }
+
     private fun requeueEnhancement(
         mId: Long,
         cId: Long,

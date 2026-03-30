@@ -18,9 +18,6 @@ class AppUpdateChecker {
         //     return GetApplicationRelease.Result.OsTooOld
         // }
 
-        // Update check disabled by user request
-        return GetApplicationRelease.Result.NoNewUpdate
-/*
         return withIOContext {
             val result = getApplicationRelease.await(
                 GetApplicationRelease.Arguments(
@@ -40,15 +37,11 @@ class AppUpdateChecker {
 
             result
         }
-*/    }
+    }
 }
 
 val GITHUB_REPO: String by lazy {
-    if (isPreviewBuildType) {
-        "mihonapp/mihon-preview"
-    } else {
-        "mihonapp/mihon"
-    }
+    "HaoweiLi97/mihon_img_upscale"
 }
 
 val RELEASE_TAG: String by lazy {

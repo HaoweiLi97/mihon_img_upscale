@@ -130,6 +130,10 @@ class WebtoonPageHolder(
         pendingSelectionSequence = null
     }
 
+    fun preloadLeadingSegment() {
+        segmentFrames.firstOrNull()?.promoteEnhancementRequest(highPriority = true)
+    }
+
     private fun refreshLayoutParams() {
         frame.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
             if (!viewer.isContinuous) {

@@ -34,6 +34,15 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 ### Other
 - Enable logcat logging on stable and debug builds without enabling verbose logging ([@NGB-Was-Taken](https://github.com/NGB-Was-Taken)) ([#2836](https://github.com/mihonapp/mihon/pull/2836))
 
+## [v1.1.4] - 2026-03-30
+### Fixed
+- Fix Webtoon next logical page leading segment staying queued until the page is reached
+- Improve Webtoon long-image segmentation enhancement preheating
+
+### Changed
+- Re-enable in-app update detection
+- Point release checks and update links to `HaoweiLi97/mihon_img_upscale`
+
 ## [v1.1.3] - 2026-03-30
 ### Fixed
 - Fix Webtoon reader handling for long-image segmentation

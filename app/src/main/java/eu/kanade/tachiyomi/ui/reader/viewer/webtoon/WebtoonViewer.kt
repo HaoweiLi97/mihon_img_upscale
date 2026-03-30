@@ -221,6 +221,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         activity.onPageSelected(page)
         pageSelectionSequence++
         dispatchPageSelectedToHolder(page, pageSelectionSequence)
+        preloadNextLogicalPageLeadingSegment(page)
 
         // Preload next chapter once we're within the last 5 pages of the current chapter
         val inPreloadRange = pages.size - page.number < 5
@@ -367,6 +368,25 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         recycler.post { notifyHolder() }
         recycler.postDelayed(120) { notifyHolder() }
         recycler.postDelayed(350) { notifyHolder() }
+    }
+
+    private fun preloadNextLogicalPageLeadingSegment(page: ReaderPage) {
+        val nextPage = findNextReaderPage(page) ?: return
+        val preloadHolder = {
+            findAttachedHolderForPage(nextPage)?.preloadLeadingSegment()
+        }
+        preloadHolder()
+        recycler.post { preloadHolder() }
+        recycler.postDelayed(120) { preloadHolder() }
+        recycler.postDelayed(350) { preloadHolder() }
+    }
+
+    private fun findNextReaderPage(page: ReaderPage): ReaderPage? {
+        val startIndex = adapter.items.indexOf(page)
+        if (startIndex == -1) return null
+        return adapter.items
+            .drop(startIndex + 1)
+            .firstOrNull { it is ReaderPage } as? ReaderPage
     }
 
     private fun findAttachedHolderForPage(page: ReaderPage): WebtoonPageHolder? {
