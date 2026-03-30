@@ -7,9 +7,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.core.app.ActivityCompat
+import androidx.core.view.children
+import androidx.core.view.postDelayed
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.RecyclerView.NO_POSITION
 import androidx.recyclerview.widget.WebtoonLayoutManager
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -17,8 +20,10 @@ import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import tachiyomi.core.common.util.system.logcat
@@ -210,13 +215,10 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
     private fun onPageSelected(page: ReaderPage, allowPreload: Boolean) {
         val pages = page.chapter.pages ?: return
         logcat { "onPageSelected: ${page.number}/${pages.size}" }
+        ReaderPageImageView.currentGlobalPageIndex = page.index
+        ImageEnhancer.reprioritizeAround(page.index, page.enhancementKeySuffix)
         activity.onPageSelected(page)
-
-        // Check if current page needs enhancement (might have been skipped during fast scrolling)
-        val currentHolder = recycler.findViewHolderForAdapterPosition(
-            layoutManager.findFirstVisibleItemPosition()
-        ) as? WebtoonPageHolder
-        currentHolder?.frame?.onPageSelected(true)
+        dispatchPageSelectedToHolder(page)
 
         // Preload next chapter once we're within the last 5 pages of the current chapter
         val inPreloadRange = pages.size - page.number < 5
@@ -266,7 +268,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         val position = adapter.items.indexOf(page)
         if (position != -1) {
             layoutManager.scrollToPositionWithOffset(position, 0)
-            if (layoutManager.findLastEndVisibleItemPosition() == -1) {
+            if (findActiveItemPosition() == NO_POSITION) {
                 onScrolled(pos = position)
             }
         } else {
@@ -275,7 +277,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
     }
 
     fun onScrolled(pos: Int? = null) {
-        val position = pos ?: layoutManager.findLastEndVisibleItemPosition()
+        val position = pos ?: findActiveItemPosition()
         val item = adapter.items.getOrNull(position)
         val allowPreload = checkAllowPreload(item as? ReaderPage)
         if (item != null && currentPage != item) {
@@ -353,6 +355,45 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      */
     override fun handleGenericMotionEvent(event: MotionEvent): Boolean {
         return false
+    }
+
+    private fun dispatchPageSelectedToHolder(page: ReaderPage) {
+        val notifyHolder = {
+            findAttachedHolderForPage(page)?.frame?.onPageSelected(true)
+        }
+        notifyHolder()
+        recycler.post { notifyHolder() }
+        recycler.postDelayed(120) { notifyHolder() }
+        recycler.postDelayed(350) { notifyHolder() }
+    }
+
+    private fun findAttachedHolderForPage(page: ReaderPage): WebtoonPageHolder? {
+        return recycler.findViewHolderForAdapterPosition(adapter.items.indexOf(page)) as? WebtoonPageHolder
+            ?: recycler.children
+                .mapNotNull { recycler.getChildViewHolder(it) as? WebtoonPageHolder }
+                .firstOrNull { holder -> holder.boundPage()?.isFromSamePage(page) == true }
+    }
+
+    private fun findActiveItemPosition(): Int {
+        var bestPosition = NO_POSITION
+        var bestVisibleHeight = -1
+
+        for (child in recycler.children) {
+            val top = max(child.top, recycler.paddingTop)
+            val bottom = min(child.bottom, recycler.height - recycler.paddingBottom)
+            val visibleHeight = (bottom - top).coerceAtLeast(0)
+            if (visibleHeight <= 0) continue
+
+            val position = recycler.getChildAdapterPosition(child)
+            if (position == NO_POSITION) continue
+
+            if (visibleHeight > bestVisibleHeight) {
+                bestVisibleHeight = visibleHeight
+                bestPosition = position
+            }
+        }
+
+        return bestPosition
     }
 
     /**

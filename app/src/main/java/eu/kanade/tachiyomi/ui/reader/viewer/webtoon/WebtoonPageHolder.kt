@@ -102,6 +102,8 @@ class WebtoonPageHolder(
         refreshLayoutParams()
     }
 
+    fun boundPage(): ReaderPage? = page
+
     private fun refreshLayoutParams() {
         frame.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
             if (!viewer.isContinuous) {
