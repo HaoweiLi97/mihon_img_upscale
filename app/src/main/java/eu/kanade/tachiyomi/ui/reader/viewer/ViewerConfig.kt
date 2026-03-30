@@ -120,7 +120,9 @@ abstract class ViewerConfig(
             })
 
         readerPreferences.automaticSplitsPage()
-            .register({ autoSplitPages = it })
+            .register({ autoSplitPages = it }, {
+                reloadChapterListener?.invoke(doublePages)
+            })
 
         readerPreferences.readerTheme()
             .register({ readerTheme = it })

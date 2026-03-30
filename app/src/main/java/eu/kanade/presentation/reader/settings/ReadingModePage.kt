@@ -100,9 +100,34 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
         pref = screenModel.preferences.cropBorders(),
     )
 
+    val pageLayout by screenModel.preferences.pageLayout().collectAsState()
+
+    val splitWidePages by screenModel.preferences.automaticSplitsPage().collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_dual_page_split),
+        pref = screenModel.preferences.automaticSplitsPage(),
+    )
+
+    if (pageLayout == PageLayout.SINGLE_PAGE.value && splitWidePages) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_dual_page_invert),
+            pref = screenModel.preferences.dualPageInvertPaged(),
+        )
+    }
+
     CheckboxItem(
         label = stringResource(MR.strings.pref_landscape_zoom),
         pref = screenModel.preferences.landscapeZoom(),
+    )
+
+    val pagerVerticalPadding by screenModel.preferences.pagerVerticalPadding().collectAsState()
+    SliderItem(
+        value = pagerVerticalPadding,
+        valueRange = ReaderPreferences.PAGER_VERTICAL_PADDING_MIN..ReaderPreferences.PAGER_VERTICAL_PADDING_MAX,
+        label = stringResource(MR.strings.pref_pager_page_inset),
+        valueString = "${pagerVerticalPadding}dp",
+        onChange = { screenModel.preferences.pagerVerticalPadding().set(it) },
+        pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
     )
 
     CheckboxItem(
@@ -110,7 +135,6 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
         pref = screenModel.preferences.navigateToPan(),
     )
 
-    val pageLayout by screenModel.preferences.pageLayout().collectAsState()
     SettingsChipRow(MR.strings.pref_page_layout) {
         PageLayout.entries
             .map {

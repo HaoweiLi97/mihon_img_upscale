@@ -37,9 +37,17 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 ## [v1.1.2] - 2026-03-29
 ### Added
 - Add adjustable page gap for double-page layout
+- Add option to split wide pages in single-page mode
+- Add adjustable page inset for pager reader
 
 ### Fixed
 - Fix long strip reader issues
+- Fix split-page placement for right-to-left reading
+- Fix reader not refreshing immediately after toggling wide-page split
+- Fix border cropping when composing enhanced double-page images
+
+### Improved
+- Add smoother page transition animation in pager reader
 
 ## [v0.19.3] - 2025-11-07
 ### Improved

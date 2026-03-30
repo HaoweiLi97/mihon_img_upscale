@@ -21,6 +21,9 @@ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
 import kotlin.math.min
@@ -104,6 +107,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.offscreenPageLimit = if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
         pager.id = R.id.reader_pager
         pager.adapter = adapter
+        updatePageTransformer(preferences.pageTransitions().get())
         pager.addOnPageChangeListener(pagerListener)
         pager.tapListener = { event ->
             val viewPosition = IntArray(2)
@@ -145,6 +149,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             val showOnStart = config.navigationOverlayOnStart || config.forceNavigationOverlay
             activity.binding.navigationOverlay.setNavigation(config.navigator, showOnStart)
         }
+
+        preferences.pageTransitions().changes()
+            .drop(1)
+            .onEach { enabled -> updatePageTransformer(enabled) }
+            .launchIn(scope)
     }
 
     override fun destroy() {
@@ -156,6 +165,16 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Creates a new ViewPager.
      */
     abstract fun createPager(): Pager
+
+    private fun updatePageTransformer(enabled: Boolean) {
+        val transformer =
+            if (enabled && this !is VerticalPagerViewer) {
+                DiagonalWrapPageTransformer(this)
+            } else {
+                null
+            }
+        pager.setPageTransformer(false, transformer)
+    }
 
     /**
      * Returns the view this viewer uses.

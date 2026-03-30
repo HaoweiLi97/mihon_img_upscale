@@ -57,6 +57,8 @@ class ReaderPreferences(
 
     fun cropBorders() = preferenceStore.getBoolean("crop_borders", false)
 
+    fun pagerVerticalPadding() = preferenceStore.getInt("pager_vertical_padding", 0)
+
     fun navigateToPan() = preferenceStore.getBoolean("navigate_pan", true)
 
     fun landscapeZoom() = preferenceStore.getBoolean("landscape_zoom", true)
@@ -214,6 +216,8 @@ class ReaderPreferences(
     companion object {
         const val WEBTOON_PADDING_MIN = 0
         const val WEBTOON_PADDING_MAX = 25
+        const val PAGER_VERTICAL_PADDING_MIN = 0
+        const val PAGER_VERTICAL_PADDING_MAX = 64
 
         const val MILLI_CONVERSION = 100
 

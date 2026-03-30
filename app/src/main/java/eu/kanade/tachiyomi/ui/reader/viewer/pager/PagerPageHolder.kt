@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+import eu.kanade.tachiyomi.util.system.dpToPx
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.MainScope
@@ -46,6 +47,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.math.max
 import kotlin.math.min
 import eu.kanade.tachiyomi.util.system.isNightMode
 
@@ -104,8 +106,10 @@ class PagerPageHolder(
         chapterId = page.chapter.chapter.id ?: -1L
         refreshEnhancementTargets()
         readerPage = page
+        val pageInset = viewer.config.verticalPaddingDp.dpToPx
+        setPadding(pageInset, pageInset, pageInset, pageInset)
         suppressDefaultStatus = extraPage != null
-        if (usesTransformedEnhancedDisplay()) {
+        if (usesEnhancedDisplayTransform()) {
             enhancedImageSourceFactory = { buildEnhancedDisplaySource(it) }
         }
         loadJob = scope.launch { loadPageAndProcessStatus() }
@@ -288,6 +292,10 @@ class PagerPageHolder(
 
     private fun usesTransformedEnhancedDisplay(): Boolean {
         return extraPage != null || viewer.config.dualPageRotateToFit
+    }
+
+    private fun usesEnhancedDisplayTransform(): Boolean {
+        return usesTransformedEnhancedDisplay() || viewer.config.splitPages || viewer.config.autoSplitPages
     }
 
     private fun refreshEnhancementTargets() {
@@ -577,6 +585,8 @@ class PagerPageHolder(
         isLTR: Boolean,
         background: Int,
     ): BufferedSource {
+        val fittedFirstBitmap = trimBitmapBorders(firstBitmap)
+        val fittedSecondBitmap = trimBitmapBorders(secondBitmap)
         val metrics = context.resources.displayMetrics
         val viewportWidth =
             when {
@@ -619,17 +629,115 @@ class PagerPageHolder(
             val leftCellStart = 0
             val rightCellStart = cellWidth + adjustedHingeGap
             if (isLTR) {
-                drawFitted(firstBitmap, leftCellStart, alignToCenter = true)
-                drawFitted(secondBitmap, rightCellStart, alignToCenter = false)
+                drawFitted(fittedFirstBitmap, leftCellStart, alignToCenter = true)
+                drawFitted(fittedSecondBitmap, rightCellStart, alignToCenter = false)
             } else {
-                drawFitted(secondBitmap, leftCellStart, alignToCenter = true)
-                drawFitted(firstBitmap, rightCellStart, alignToCenter = false)
+                drawFitted(fittedSecondBitmap, leftCellStart, alignToCenter = true)
+                drawFitted(fittedFirstBitmap, rightCellStart, alignToCenter = false)
             }
+        }
+
+        if (fittedFirstBitmap !== firstBitmap) {
+            fittedFirstBitmap.recycle()
+        }
+        if (fittedSecondBitmap !== secondBitmap) {
+            fittedSecondBitmap.recycle()
         }
 
         val output = Buffer()
         result.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
         return output
+    }
+
+    private fun trimBitmapBorders(bitmap: Bitmap): Bitmap {
+        if (!viewer.config.imageCropBorders || bitmap.width <= 2 || bitmap.height <= 2) {
+            return bitmap
+        }
+
+        val cropRect = detectContentRect(bitmap)
+        if (
+            cropRect.left <= 0 &&
+            cropRect.top <= 0 &&
+            cropRect.right >= bitmap.width &&
+            cropRect.bottom >= bitmap.height
+        ) {
+            return bitmap
+        }
+
+        val croppedWidth = (cropRect.right - cropRect.left).coerceAtLeast(1)
+        val croppedHeight = (cropRect.bottom - cropRect.top).coerceAtLeast(1)
+        return Bitmap.createBitmap(bitmap, cropRect.left, cropRect.top, croppedWidth, croppedHeight)
+    }
+
+    private fun detectContentRect(bitmap: Bitmap): Rect {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        fun colorsAreSimilar(first: Int, second: Int, tolerance: Int = 24): Boolean {
+            return kotlin.math.abs(Color.red(first) - Color.red(second)) <= tolerance &&
+                kotlin.math.abs(Color.green(first) - Color.green(second)) <= tolerance &&
+                kotlin.math.abs(Color.blue(first) - Color.blue(second)) <= tolerance
+        }
+
+        val corners = listOf(
+            bitmap.getPixel(0, 0),
+            bitmap.getPixel(width - 1, 0),
+            bitmap.getPixel(0, height - 1),
+            bitmap.getPixel(width - 1, height - 1),
+        )
+        val backgroundColor =
+            corners.maxByOrNull { candidate ->
+                corners.count { colorsAreSimilar(candidate, it) }
+            } ?: corners.first()
+
+        val sampleStepY = max(1, height / 160)
+        val sampleStepX = max(1, width / 160)
+        val maxColumnMismatches = max(2, ((height / sampleStepY) * 0.08f).toInt())
+        val maxRowMismatches = max(2, ((width / sampleStepX) * 0.08f).toInt())
+
+        fun isBackgroundColumn(x: Int): Boolean {
+            var mismatches = 0
+            for (y in 0 until height step sampleStepY) {
+                if (!colorsAreSimilar(bitmap.getPixel(x, y), backgroundColor)) {
+                    mismatches++
+                    if (mismatches > maxColumnMismatches) return false
+                }
+            }
+            return true
+        }
+
+        fun isBackgroundRow(y: Int): Boolean {
+            var mismatches = 0
+            for (x in 0 until width step sampleStepX) {
+                if (!colorsAreSimilar(bitmap.getPixel(x, y), backgroundColor)) {
+                    mismatches++
+                    if (mismatches > maxRowMismatches) return false
+                }
+            }
+            return true
+        }
+
+        var left = 0
+        while (left < width - 1 && isBackgroundColumn(left)) {
+            left++
+        }
+
+        var right = width - 1
+        while (right > left && isBackgroundColumn(right)) {
+            right--
+        }
+
+        var top = 0
+        while (top < height - 1 && isBackgroundRow(top)) {
+            top++
+        }
+
+        var bottom = height - 1
+        while (bottom > top && isBackgroundRow(bottom)) {
+            bottom--
+        }
+
+        return Rect(left, top, right + 1, bottom + 1)
     }
 
     private fun process(item: Any, imageSource: BufferedSource): BufferedSource {
@@ -639,6 +747,12 @@ class PagerPageHolder(
         }
 
         if (!viewer.config.doublePages) {
+            if ((viewer.config.splitPages || viewer.config.autoSplitPages) && isWideImage(imageSource)) {
+                if (page !is InsertPage) {
+                    onPageSplit(page)
+                }
+                return splitInHalf(imageSource, page)
+            }
             return imageSource
         }
 
@@ -664,10 +778,12 @@ class PagerPageHolder(
 
     private fun splitSideFor(targetPage: ReaderPage): ImageUtil.Side {
         var side = when {
+            viewer is R2LPagerViewer && targetPage is InsertPage -> ImageUtil.Side.RIGHT
+            viewer is R2LPagerViewer && targetPage !is InsertPage -> ImageUtil.Side.LEFT
             viewer is L2RPagerViewer && targetPage is InsertPage -> ImageUtil.Side.RIGHT
-            viewer !is L2RPagerViewer && targetPage is InsertPage -> ImageUtil.Side.LEFT
             viewer is L2RPagerViewer && targetPage !is InsertPage -> ImageUtil.Side.LEFT
-            viewer !is L2RPagerViewer && targetPage !is InsertPage -> ImageUtil.Side.RIGHT
+            targetPage is InsertPage -> ImageUtil.Side.RIGHT
+            targetPage !is InsertPage -> ImageUtil.Side.LEFT
             else -> error("We should choose a side!")
         }
 

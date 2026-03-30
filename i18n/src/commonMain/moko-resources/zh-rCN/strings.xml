@@ -452,7 +452,8 @@
     <string name="page_layout_double">双页</string>
     <string name="page_layout_automatic">自动</string>
     <string name="page_layout_split">拆页</string>
-    <string name="pref_dual_page_split">拆分双页</string>
+    <string name="pref_dual_page_split">拆分宽图（仅单页）</string>
+    <string name="pref_pager_page_inset">边缘缩进</string>
     <string name="pref_dual_page_invert">拆分双页时交换顺序</string>
     <string name="pref_dual_page_invert_summary">拆分双页的顺序与阅读方向不符时可以开启</string>
     <string name="backup_restore_content_full">可能需要安装缺失的插件并重新登录进度记录平台。</string>

@@ -84,6 +84,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
+import kotlin.math.roundToInt
 
 /**
  * A wrapper view for showing page image.
@@ -374,9 +375,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         this@ReaderPageImageView.onScaleChanged(newScale)
                     }
 
-                    override fun onCenterChanged(newCenter: PointF?, origin: Int) {
-                        // Not used
-                    }
+                    override fun onCenterChanged(newCenter: PointF?, origin: Int) = Unit
                 },
             )
             setOnClickListener { this@ReaderPageImageView.onViewClicked() }
@@ -408,6 +407,19 @@ open class ReaderPageImageView @JvmOverloads constructor(
             left + sourceWidth * scale,
             top + sourceHeight * scale,
         )
+    }
+
+    private fun displayedImageRect(view: ImageView): RectF? {
+        val drawable = view.drawable ?: return null
+        val drawableWidth = drawable.intrinsicWidth
+        val drawableHeight = drawable.intrinsicHeight
+        if (drawableWidth <= 0 || drawableHeight <= 0 || view.width <= 0 || view.height <= 0) {
+            return null
+        }
+
+        return RectF(0f, 0f, drawableWidth.toFloat(), drawableHeight.toFloat()).apply {
+            view.imageMatrix.mapRect(this)
+        }
     }
 
     private fun animateProcessedSwap(
@@ -860,6 +872,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         enhancedBitmap = null
         isSettingProcessedImage = false
         currentLoadedUri = null
+        invalidate()
     }
 
     /**
