@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
 import androidx.compose.material.icons.outlined.Delete
@@ -55,6 +56,7 @@ fun MangaChapterListItem(
     bookmark: Boolean,
     selected: Boolean,
     downloadIndicatorEnabled: Boolean,
+    cloudUploaded: Boolean,
     downloadStateProvider: () -> Download.State,
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
@@ -171,13 +173,25 @@ fun MangaChapterListItem(
                 }
             }
 
-            ChapterDownloadIndicator(
-                enabled = downloadIndicatorEnabled,
-                modifier = Modifier.padding(start = 4.dp),
-                downloadStateProvider = downloadStateProvider,
-                downloadProgressProvider = downloadProgressProvider,
-                onClick = { onDownloadClick?.invoke(it) },
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (cloudUploaded) {
+                    Icon(
+                        imageVector = Icons.Outlined.CloudDone,
+                        contentDescription = null,
+                        modifier = Modifier.padding(start = 4.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = SECONDARY_ALPHA),
+                    )
+                }
+                ChapterDownloadIndicator(
+                    enabled = downloadIndicatorEnabled,
+                    modifier = Modifier.padding(start = 4.dp),
+                    downloadStateProvider = downloadStateProvider,
+                    downloadProgressProvider = downloadProgressProvider,
+                    onClick = { onDownloadClick?.invoke(it) },
+                )
+            }
         }
     }
 }

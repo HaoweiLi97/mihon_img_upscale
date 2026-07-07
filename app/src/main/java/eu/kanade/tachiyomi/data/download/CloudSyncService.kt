@@ -182,10 +182,29 @@ class CloudSyncService(
         private val mediaType: MediaType,
         private val onProgress: (Int) -> Unit,
     ) : RequestBody() {
+        private var resolvedContentLength = Long.MIN_VALUE
 
         override fun contentType(): MediaType = mediaType
 
-        override fun contentLength(): Long = file.length().takeIf { it >= 0 } ?: -1L
+        override fun contentLength(): Long {
+            if (resolvedContentLength != Long.MIN_VALUE) {
+                return resolvedContentLength
+            }
+
+            resolvedContentLength = file.length().takeIf { it >= 0 } ?: file.openInputStream().source().use { source ->
+                var total = 0L
+                val buffer = Buffer()
+                while (true) {
+                    val read = source.read(buffer, SEGMENT_SIZE)
+                    if (read == -1L) break
+                    total += read
+                    buffer.clear()
+                }
+                total
+            }
+
+            return resolvedContentLength
+        }
 
         override fun writeTo(sink: BufferedSink) {
             val total = contentLength()

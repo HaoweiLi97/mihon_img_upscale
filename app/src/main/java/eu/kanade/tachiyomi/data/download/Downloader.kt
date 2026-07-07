@@ -418,7 +418,10 @@ class Downloader(
             DiskUtil.createNoMediaFile(tmpDir, context)
 
             if (downloadedChapter != null) {
-                syncDownloadedChapter(download, downloadedChapter)
+                val removedAfterUpload = syncDownloadedChapter(download, downloadedChapter)
+                if (removedAfterUpload) {
+                    return
+                }
             }
 
             download.status = Download.State.DOWNLOADED
@@ -621,9 +624,9 @@ class Downloader(
     private suspend fun syncDownloadedChapter(
         download: Download,
         chapterFile: UniFile,
-    ) {
-        if (!downloadPreferences.saveChaptersAsCBZ().get()) return
-        if (!downloadPreferences.cloudSyncEnabled().get()) return
+    ): Boolean {
+        if (!downloadPreferences.saveChaptersAsCBZ().get()) return false
+        if (!downloadPreferences.cloudSyncEnabled().get()) return false
 
         val config = CloudSyncConfig(
             url = downloadPreferences.cloudSyncUrl().get(),
@@ -631,7 +634,7 @@ class Downloader(
             password = downloadPreferences.cloudSyncPassword().get(),
         )
         val destination = downloadPreferences.cloudSyncDestination().get()
-        if (!config.isValid || destination.isBlank()) return
+        if (!config.isValid || destination.isBlank()) return false
 
         download.uploadProgress = 0
         download.status = Download.State.UPLOADING
@@ -652,6 +655,11 @@ class Downloader(
             chapterFile.delete()
             cache.removeChapter(download.chapter, download.manga)
         }
+
+        downloadPreferences.markChapterUploadedToCloud(download.chapter.id)
+        download.status = Download.State.DOWNLOADED
+        removeFromQueue(download)
+        return true
     }
 
     /**

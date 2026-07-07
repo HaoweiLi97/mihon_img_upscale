@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -143,7 +144,7 @@ class CloudSyncDestinationScreen : Screen() {
                     CloudSyncDirectoryListRow(
                         row = row,
                         selected = normalizePath(selectedPath) == row.directory.path,
-                        expanded = row.directory.path in expandedPaths,
+                        expanded = row.loading || row.directory.path in expandedPaths,
                         onToggle = {
                             val path = row.directory.path
                             if (path in childrenByPath) {
@@ -184,11 +185,18 @@ private fun CloudSyncDirectoryListRow(
             .padding(start = (row.depth * 24).dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onToggle) {
-            Icon(
-                imageVector = if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
-                contentDescription = null,
+        if (row.loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.padding(12.dp).width(24.dp),
+                strokeWidth = 2.dp,
             )
+        } else {
+            IconButton(onClick = onToggle) {
+                Icon(
+                    imageVector = if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
+                    contentDescription = null,
+                )
+            }
         }
         Icon(imageVector = Icons.Outlined.Folder, contentDescription = null)
         Spacer(modifier = Modifier.width(16.dp))
@@ -207,6 +215,7 @@ private fun CloudSyncDirectoryListRow(
 private data class CloudSyncDirectoryRow(
     val directory: CloudSyncDirectory,
     val depth: Int,
+    val loading: Boolean,
 )
 
 private fun buildDirectoryRows(
@@ -220,7 +229,11 @@ private fun buildDirectoryRows(
         depth: Int,
         rows: MutableList<CloudSyncDirectoryRow>,
     ) {
-        rows += CloudSyncDirectoryRow(directory, depth)
+        rows += CloudSyncDirectoryRow(
+            directory = directory,
+            depth = depth,
+            loading = directory.path in loadingPaths,
+        )
         if (directory.path !in expandedPaths) return
 
         val children = childrenByPath[directory.path].orEmpty()
@@ -231,10 +244,5 @@ private fun buildDirectoryRows(
 
     return buildList {
         addRows(root, 0, this)
-        loadingPaths.forEach { path ->
-            if (path !in childrenByPath && path != root.path) {
-                add(CloudSyncDirectoryRow(CloudSyncDirectory(name = path, path = path), 1))
-            }
-        }
     }
 }

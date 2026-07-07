@@ -25,6 +25,16 @@ class DownloadPreferences(
 
     fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
 
+    fun cloudUploadedChapterIds() = preferenceStore.getStringSet(CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY, emptySet())
+
+    fun isChapterUploadedToCloud(chapterId: Long): Boolean {
+        return chapterId.toString() in cloudUploadedChapterIds().get()
+    }
+
+    fun markChapterUploadedToCloud(chapterId: Long) {
+        cloudUploadedChapterIds().set(cloudUploadedChapterIds().get() + chapterId.toString())
+    }
+
     fun splitTallImages() = preferenceStore.getBoolean("split_tall_images", true)
 
     fun autoDownloadWhileReading() = preferenceStore.getInt("auto_download_while_reading", 0)
@@ -57,6 +67,7 @@ class DownloadPreferences(
         private const val REMOVE_EXCLUDE_CATEGORIES_PREF_KEY = "remove_exclude_categories"
         private const val DOWNLOAD_NEW_CATEGORIES_PREF_KEY = "download_new_categories"
         private const val DOWNLOAD_NEW_CATEGORIES_EXCLUDE_PREF_KEY = "download_new_categories_exclude"
+        private const val CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY = "cloud_uploaded_chapter_ids"
         val categoryPreferenceKeys = setOf(
             REMOVE_EXCLUDE_CATEGORIES_PREF_KEY,
             DOWNLOAD_NEW_CATEGORIES_PREF_KEY,

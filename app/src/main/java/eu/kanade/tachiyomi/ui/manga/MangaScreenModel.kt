@@ -75,6 +75,7 @@ import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.chapter.service.calculateChapterGap
 import tachiyomi.domain.chapter.service.getChapterSort
+import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
 import tachiyomi.domain.manga.interactor.GetMangaWithChapters
@@ -102,6 +103,7 @@ class MangaScreenModel(
     private val trackerManager: TrackerManager = Injekt.get(),
     private val trackChapter: TrackChapter = Injekt.get(),
     private val downloadManager: DownloadManager = Injekt.get(),
+    private val downloadPreferences: DownloadPreferences = Injekt.get(),
     private val downloadCache: DownloadCache = Injekt.get(),
     private val getMangaAndChapters: GetMangaWithChapters = Injekt.get(),
     private val getDuplicateLibraryManga: GetDuplicateLibraryManga = Injekt.get(),
@@ -509,7 +511,11 @@ class MangaScreenModel(
 
             val newChapters = successState.chapters.toMutableList().apply {
                 val item = removeAt(modifiedIndex)
-                    .copy(downloadState = download.status, downloadProgress = download.progress)
+                    .copy(
+                        downloadState = download.status,
+                        downloadProgress = download.progress,
+                        isUploadedToCloud = downloadPreferences.isChapterUploadedToCloud(download.chapter.id),
+                    )
                 add(modifiedIndex, item)
             }
             successState.copy(chapters = newChapters)
@@ -545,6 +551,7 @@ class MangaScreenModel(
                 chapter = chapter,
                 downloadState = downloadState,
                 downloadProgress = activeDownload?.progress ?: 0,
+                isUploadedToCloud = downloadPreferences.isChapterUploadedToCloud(chapter.id),
                 selected = chapter.id in selectedChapterIds,
             )
         }
@@ -1213,6 +1220,7 @@ sealed class ChapterList {
         val chapter: Chapter,
         val downloadState: Download.State,
         val downloadProgress: Int,
+        val isUploadedToCloud: Boolean,
         val selected: Boolean = false,
     ) : ChapterList() {
         val id = chapter.id
