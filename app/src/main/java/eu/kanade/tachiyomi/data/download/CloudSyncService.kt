@@ -11,12 +11,15 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import logcat.LogPriority
+import logcat.logcat
 import okhttp3.Credentials
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -29,11 +32,19 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
 
 class CloudSyncService(
     private val networkHelper: NetworkHelper = Injekt.get(),
 ) {
+    private val uploadClient: OkHttpClient by lazy {
+        networkHelper.client.newBuilder()
+            .readTimeout(UPLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+            .writeTimeout(UPLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+            .callTimeout(UPLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+            .build()
+    }
 
     suspend fun testConnection(config: CloudSyncConfig) {
         listDirectories(config, "/")
@@ -67,11 +78,12 @@ class CloudSyncService(
         val fileName = file.name ?: error("Missing upload file name")
         var alistFailure: Throwable? = null
 
-        config.alistApiBaseUrlOrNull()?.let { alistApiBaseUrl ->
+        config.alistEndpointOrNull()?.let { alistEndpoint ->
             val result = runCatching {
+                logcat(LogPriority.INFO) { "CloudSync: uploading via aList API" }
                 uploadAlistApiCbz(
                     config = config,
-                    alistApiBaseUrl = alistApiBaseUrl,
+                    alistEndpoint = alistEndpoint,
                     remoteDirectory = remoteDirectory,
                     fileName = fileName,
                     file = file,
@@ -79,12 +91,17 @@ class CloudSyncService(
                 )
             }
             if (result.isSuccess) {
+                logcat(LogPriority.INFO) { "CloudSync: aList API upload completed" }
                 return@withIOContext
             }
             alistFailure = result.exceptionOrNull()
+            logcat(LogPriority.WARN) {
+                "CloudSync: aList API upload failed, falling back to WebDAV: ${alistFailure?.message}"
+            }
         }
 
         runCatching {
+            logcat(LogPriority.INFO) { "CloudSync: uploading via WebDAV" }
             uploadWebDavCbz(
                 config = config,
                 remoteDirectory = remoteDirectory,
@@ -95,6 +112,7 @@ class CloudSyncService(
         }.onFailure { error ->
             alistFailure?.let(error::addSuppressed)
         }.getOrThrow()
+        logcat(LogPriority.INFO) { "CloudSync: WebDAV upload completed" }
     }
 
     private suspend fun uploadWebDavCbz(
@@ -113,7 +131,7 @@ class CloudSyncService(
             .put(UniFileRequestBody(file, CBZ_MEDIA_TYPE, onProgress))
             .build()
 
-        networkHelper.client.newCall(request).await().use { response ->
+        uploadClient.newCall(request).await().use { response ->
             if (response.code !in SUCCESS_CODES) {
                 throw IllegalStateException("WebDAV upload failed: HTTP ${response.code}")
             }
@@ -123,7 +141,7 @@ class CloudSyncService(
 
     private suspend fun uploadAlistApiCbz(
         config: CloudSyncConfig,
-        alistApiBaseUrl: HttpUrl,
+        alistEndpoint: AlistEndpoint,
         remoteDirectory: String,
         fileName: String,
         file: UniFile,
@@ -131,20 +149,20 @@ class CloudSyncService(
     ) {
         ensureDirectory(config, remoteDirectory)
 
-        val token = loginAlist(config, alistApiBaseUrl)
+        val token = loginAlist(config, alistEndpoint.apiBaseUrl)
         val requestBody = UniFileRequestBody(file, CBZ_MEDIA_TYPE, onProgress)
-        val remoteFilePath = normalizePath("${normalizePath(remoteDirectory)}/$fileName")
+        val remoteFilePath = normalizePath("${alistEndpoint.rootPath}/${normalizePath(remoteDirectory).trim('/')}/$fileName")
 
         onProgress(0)
         val request = Request.Builder()
-            .url(alistApiBaseUrl.resolveAlistApi("fs", "put"))
+            .url(alistEndpoint.apiBaseUrl.resolveAlistApi("fs", "put"))
             .header("Authorization", token)
             .header("File-Path", remoteFilePath.urlEncode())
             .header("Content-Length", requestBody.contentLength().toString())
             .put(requestBody)
             .build()
 
-        networkHelper.client.newCall(request).await().use { response ->
+        uploadClient.newCall(request).await().use { response ->
             if (!response.isSuccessful) {
                 throw IllegalStateException("aList upload failed: HTTP ${response.code}")
             }
@@ -273,7 +291,7 @@ class CloudSyncService(
             .build()
     }
 
-    private fun CloudSyncConfig.alistApiBaseUrlOrNull(): HttpUrl? {
+    private fun CloudSyncConfig.alistEndpointOrNull(): AlistEndpoint? {
         val base = url.toHttpUrl()
         val pathSegments = base.pathSegments.filter { it.isNotBlank() }
         val davIndex = pathSegments.indexOfFirst { it.equals("dav", ignoreCase = true) }
@@ -285,10 +303,16 @@ class CloudSyncService(
         } else {
             pathSegments
         }
-        return base.newBuilder()
+        val apiBaseUrl = base.newBuilder()
             .encodedPath("/")
             .apply { apiBaseSegments.forEach(::addPathSegment) }
             .build()
+        val rootPath = if (davIndex >= 0) {
+            normalizePath(pathSegments.drop(davIndex + 1).joinToString("/", prefix = "/"))
+        } else {
+            "/"
+        }
+        return AlistEndpoint(apiBaseUrl = apiBaseUrl, rootPath = rootPath)
     }
 
     private fun HttpUrl.resolveAlistApi(vararg pathSegments: String): HttpUrl {
@@ -391,9 +415,15 @@ class CloudSyncService(
         private val SUCCESS_CODES = setOf(200, 201, 204)
         private val MKCOL_SUCCESS_CODES = setOf(200, 201, 204, 405)
         private const val ALIST_SUCCESS_CODE = 200
+        private const val UPLOAD_TIMEOUT_MINUTES = 15L
         private const val SEGMENT_SIZE = 8L * 1024L
     }
 }
+
+private data class AlistEndpoint(
+    val apiBaseUrl: HttpUrl,
+    val rootPath: String,
+)
 
 data class CloudSyncConfig(
     val url: String,
