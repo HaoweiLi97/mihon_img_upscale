@@ -26,6 +26,7 @@ class DownloadPreferences(
     fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
 
     fun cloudUploadedChapterIds() = preferenceStore.getStringSet(CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY, emptySet())
+    fun cloudUploadedMetaInfoHashes() = preferenceStore.getStringSet(CLOUD_UPLOADED_META_INFO_HASHES_PREF_KEY, emptySet())
 
     fun isChapterUploadedToCloud(chapterId: Long): Boolean {
         return chapterId.toString() in cloudUploadedChapterIds().get()
@@ -33,6 +34,21 @@ class DownloadPreferences(
 
     fun markChapterUploadedToCloud(chapterId: Long) {
         cloudUploadedChapterIds().set(cloudUploadedChapterIds().get() + chapterId.toString())
+    }
+
+    fun uploadedMetaInfoHash(mangaId: Long): String? {
+        return cloudUploadedMetaInfoHashes().get()
+            .firstOrNull { it.substringBefore(':') == mangaId.toString() }
+            ?.substringAfter(':', "")
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    fun markMetaInfoUploadedToCloud(mangaId: Long, contentHash: String) {
+        val prefix = "${mangaId}:"
+        val updated = cloudUploadedMetaInfoHashes().get()
+            .filterNot { it.startsWith(prefix) }
+            .toSet() + "${mangaId}:${contentHash}"
+        cloudUploadedMetaInfoHashes().set(updated)
     }
 
     fun splitTallImages() = preferenceStore.getBoolean("split_tall_images", true)
@@ -68,6 +84,7 @@ class DownloadPreferences(
         private const val DOWNLOAD_NEW_CATEGORIES_PREF_KEY = "download_new_categories"
         private const val DOWNLOAD_NEW_CATEGORIES_EXCLUDE_PREF_KEY = "download_new_categories_exclude"
         private const val CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY = "cloud_uploaded_chapter_ids"
+        private const val CLOUD_UPLOADED_META_INFO_HASHES_PREF_KEY = "cloud_uploaded_meta_info_hashes"
         val categoryPreferenceKeys = setOf(
             REMOVE_EXCLUDE_CATEGORIES_PREF_KEY,
             DOWNLOAD_NEW_CATEGORIES_PREF_KEY,

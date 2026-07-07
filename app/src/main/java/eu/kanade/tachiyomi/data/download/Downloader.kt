@@ -4,12 +4,16 @@ import android.content.Context
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.getComicInfo
+import eu.kanade.domain.manga.model.toSManga
+import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
+import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
@@ -37,6 +41,9 @@ import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import mihon.core.archive.ZipWriter
 import nl.adaptivity.xmlutil.serialization.XML
@@ -50,8 +57,10 @@ import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
 import tachiyomi.core.metadata.comicinfo.ComicInfo
-import tachiyomi.domain.category.interactor.GetCategories
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.service.getChapterSort
+import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
@@ -60,6 +69,7 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 
 /**
@@ -73,9 +83,11 @@ class Downloader(
     private val cache: DownloadCache,
     private val sourceManager: SourceManager = Injekt.get(),
     private val chapterCache: ChapterCache = Injekt.get(),
+    private val coverCache: CoverCache = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
     private val cloudSyncService: CloudSyncService = Injekt.get(),
     private val xml: XML = Injekt.get(),
+    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
 ) {
@@ -95,6 +107,12 @@ class Downloader(
      * Notifier for the downloader state and progress.
      */
     private val notifier by lazy { DownloadNotifier(context) }
+    private val json by lazy {
+        Json {
+            encodeDefaults = true
+            explicitNulls = false
+        }
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloaderJob: Job? = null
@@ -339,6 +357,9 @@ class Downloader(
             )
             return
         }
+
+        val metaInfoFile = createMetaInfoFile(mangaDir, download.manga, download.source)
+        maybeUploadMetaInfo(download, mangaDir, metaInfoFile)
 
         val chapterDirname = provider.getChapterDirName(
             download.chapter.name,
@@ -621,6 +642,47 @@ class Downloader(
         return mangaDir.findFile("$dirname.cbz")
     }
 
+    private suspend fun maybeUploadMetaInfo(
+        download: Download,
+        mangaDir: UniFile,
+        metaInfoFile: UniFile,
+    ) {
+        if (!downloadPreferences.cloudSyncEnabled().get()) return
+
+        val config = CloudSyncConfig(
+            url = downloadPreferences.cloudSyncUrl().get(),
+            username = downloadPreferences.cloudSyncUsername().get(),
+            password = downloadPreferences.cloudSyncPassword().get(),
+        )
+        val destination = downloadPreferences.cloudSyncDestination().get()
+        if (!config.isValid || destination.isBlank()) return
+
+        val contentHash = metaInfoFile.sha256()
+        if (downloadPreferences.uploadedMetaInfoHash(download.manga.id) == contentHash) {
+            return
+        }
+
+        val remoteDirectory = combineRemotePath(
+            destination,
+            provider.getSourceDirName(download.source),
+            provider.getMangaDirName(download.manga.title),
+        )
+
+        runCatching {
+            cloudSyncService.uploadFile(
+                config = config,
+                remoteDirectory = remoteDirectory,
+                file = metaInfoFile,
+                overwrite = true,
+                onProgress = {},
+            )
+        }.onSuccess {
+            downloadPreferences.markMetaInfoUploadedToCloud(download.manga.id, contentHash)
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "Failed to upload meta.info for ${download.manga.title}" }
+        }
+    }
+
     private suspend fun syncDownloadedChapter(
         download: Download,
         chapterFile: UniFile,
@@ -692,6 +754,101 @@ class Downloader(
         dir.createFile(COMIC_INFO_FILE)!!.openOutputStream().use {
             val comicInfoString = xml.encodeToString(ComicInfo.serializer(), comicInfo)
             it.write(comicInfoString.toByteArray())
+        }
+    }
+
+    private suspend fun createMetaInfoFile(
+        mangaDir: UniFile,
+        manga: Manga,
+        source: HttpSource,
+    ): UniFile {
+        val chapters = getChaptersByMangaId.await(manga.id, applyScanlatorFilter = false)
+            .sortedWith(getChapterSort(manga))
+        val coverAsset = resolveMetaInfoCoverAsset(manga, source)
+        val manifest = MetaInfoManifest(
+            schemaVersion = 1,
+            manga = MetaInfoManga(
+                id = manga.id,
+                title = manga.title,
+                author = manga.author,
+                artist = manga.artist,
+                status = manga.status.toMetaInfoStatus(),
+                description = manga.description,
+                tags = manga.genre.orEmpty(),
+                source = source.name,
+                url = source.getMangaUrl(manga.toSManga()).trim(),
+                cover = coverAsset?.entryName,
+            ),
+            chapters = chapters.map { chapter ->
+                MetaInfoChapter(
+                    id = chapter.id,
+                    title = chapter.name,
+                    chapterNumber = chapter.chapterNumber.takeIf { it >= 0 },
+                    scanlator = chapter.scanlator,
+                    url = source.getChapterUrl(chapter.toSChapter()).trim(),
+                    sourceOrder = chapter.sourceOrder,
+                    file = provider.chapterOutputName(chapter, downloadPreferences.saveChaptersAsCBZ().get()),
+                )
+            },
+        )
+
+        val tempDirName = META_INFO_FILE_NAME + TMP_DIR_SUFFIX
+        mangaDir.findFile(tempDirName)?.delete()
+        val tempDir = mangaDir.createDirectory(tempDirName) ?: error("Failed to create meta.info temp directory")
+        val manifestFile = tempDir.createFile(META_INFO_MANIFEST_FILE_NAME) ?: error("Failed to create manifest.json")
+        manifestFile.openOutputStream().use { output ->
+            output.write(json.encodeToString(manifest).toByteArray())
+        }
+
+        coverAsset?.let { asset ->
+            tempDir.findFile(asset.entryName)?.delete()
+            tempDir.createFile(asset.entryName)?.openOutputStream()?.use { output ->
+                asset.openStream().use { input -> input.copyTo(output) }
+            }
+        }
+
+        mangaDir.findFile(META_INFO_TEMP_FILE_NAME)?.delete()
+        mangaDir.findFile(META_INFO_FILE_NAME)?.delete()
+        val tempArchive = mangaDir.createFile(META_INFO_TEMP_FILE_NAME) ?: error("Failed to create meta.info archive")
+        ZipWriter(context, tempArchive).use { writer ->
+            writer.write(manifestFile)
+            coverAsset?.let { asset ->
+                tempDir.findFile(asset.entryName)?.let(writer::write)
+            }
+        }
+        tempArchive.renameTo(META_INFO_FILE_NAME)
+        tempDir.delete()
+
+        return mangaDir.findFile(META_INFO_FILE_NAME) ?: error("Failed to finalize meta.info")
+    }
+
+    private suspend fun resolveMetaInfoCoverAsset(
+        manga: Manga,
+        source: HttpSource,
+    ): MetaInfoCoverAsset? {
+        val customCoverFile = coverCache.getCustomCoverFile(manga.id)
+        if (customCoverFile.exists()) {
+            val extension = ImageUtil.findImageType(customCoverFile.inputStream())?.extension ?: "jpg"
+            return MetaInfoCoverAsset("cover.$extension") { customCoverFile.inputStream() }
+        }
+
+        val cachedCoverFile = coverCache.getCoverFile(manga.thumbnailUrl)
+        if (cachedCoverFile?.exists() == true) {
+            val extension = ImageUtil.findImageType(cachedCoverFile.inputStream())?.extension ?: "jpg"
+            return MetaInfoCoverAsset("cover.$extension") { cachedCoverFile.inputStream() }
+        }
+
+        val coverUrl = manga.thumbnailUrl?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            source.client.newCall(GET(coverUrl, source.headers)).execute().use { response ->
+                if (!response.isSuccessful) return@runCatching null
+                val bytes = response.body.bytes()
+                val extension = ImageUtil.getExtensionFromMimeType(response.body.contentType()?.toString()) { bytes.inputStream() }
+                MetaInfoCoverAsset("cover.$extension") { bytes.inputStream() }
+            }
+        }.getOrElse { error ->
+            logcat(LogPriority.WARN, error) { "Failed to fetch cover for meta.info: ${manga.title}" }
+            null
         }
     }
 
@@ -791,6 +948,9 @@ class Downloader(
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
+        private const val META_INFO_FILE_NAME = "meta.info"
+        private const val META_INFO_TEMP_FILE_NAME = "meta.info.tmp"
+        private const val META_INFO_MANIFEST_FILE_NAME = "manifest.json"
     }
 }
 
@@ -800,3 +960,63 @@ private const val MIN_DISK_SPACE = 200L * 1024 * 1024
 private fun combineRemotePath(vararg parts: String): String {
     return normalizePath(parts.joinToString("/") { it.trim('/') })
 }
+
+private fun UniFile.sha256(): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    openInputStream().use { input ->
+        while (true) {
+            val read = input.read(buffer)
+            if (read == -1) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
+private fun Long.toMetaInfoStatus(): String = when (toInt()) {
+    SManga.ONGOING -> "ongoing"
+    SManga.COMPLETED -> "completed"
+    SManga.LICENSED -> "licensed"
+    SManga.PUBLISHING_FINISHED -> "publishing_finished"
+    SManga.CANCELLED -> "cancelled"
+    SManga.ON_HIATUS -> "on_hiatus"
+    else -> "unknown"
+}
+
+@Serializable
+private data class MetaInfoManifest(
+    val schemaVersion: Int,
+    val manga: MetaInfoManga,
+    val chapters: List<MetaInfoChapter>,
+)
+
+@Serializable
+private data class MetaInfoManga(
+    val id: Long,
+    val title: String,
+    val author: String? = null,
+    val artist: String? = null,
+    val status: String,
+    val description: String? = null,
+    val tags: List<String> = emptyList(),
+    val source: String,
+    val url: String,
+    val cover: String? = null,
+)
+
+@Serializable
+private data class MetaInfoChapter(
+    val id: Long,
+    val title: String,
+    val chapterNumber: Double? = null,
+    val scanlator: String? = null,
+    val url: String,
+    val sourceOrder: Long,
+    val file: String,
+)
+
+private data class MetaInfoCoverAsset(
+    val entryName: String,
+    val openStream: () -> java.io.InputStream,
+)

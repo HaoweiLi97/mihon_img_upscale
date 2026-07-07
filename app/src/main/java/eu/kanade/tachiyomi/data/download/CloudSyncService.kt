@@ -32,6 +32,8 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.security.MessageDigest
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -74,6 +76,22 @@ class CloudSyncService(
         remoteDirectory: String,
         file: UniFile,
         onProgress: (Int) -> Unit,
+    ) = uploadFile(
+        config = config,
+        remoteDirectory = remoteDirectory,
+        file = file,
+        mediaType = CBZ_MEDIA_TYPE,
+        overwrite = false,
+        onProgress = onProgress,
+    )
+
+    suspend fun uploadFile(
+        config: CloudSyncConfig,
+        remoteDirectory: String,
+        file: UniFile,
+        mediaType: MediaType = GENERIC_BINARY_MEDIA_TYPE,
+        overwrite: Boolean = false,
+        onProgress: (Int) -> Unit,
     ) = withIOContext {
         val fileName = file.name ?: error("Missing upload file name")
         var alistFailure: Throwable? = null
@@ -87,6 +105,8 @@ class CloudSyncService(
                     remoteDirectory = remoteDirectory,
                     fileName = fileName,
                     file = file,
+                    mediaType = mediaType,
+                    overwrite = overwrite,
                     onProgress = onProgress,
                 )
             }
@@ -107,6 +127,8 @@ class CloudSyncService(
                 remoteDirectory = remoteDirectory,
                 fileName = fileName,
                 file = file,
+                mediaType = mediaType,
+                overwrite = overwrite,
                 onProgress = onProgress,
             )
         }.onFailure { error ->
@@ -120,6 +142,8 @@ class CloudSyncService(
         remoteDirectory: String,
         fileName: String,
         file: UniFile,
+        mediaType: MediaType,
+        overwrite: Boolean,
         onProgress: (Int) -> Unit,
     ) {
         ensureDirectory(config, remoteDirectory)
@@ -128,7 +152,7 @@ class CloudSyncService(
         val request = Request.Builder()
             .url(config.resolveUrl(remoteDirectory, fileName))
             .headers(config.authHeaders())
-            .put(UniFileRequestBody(file, CBZ_MEDIA_TYPE, onProgress))
+            .put(UniFileRequestBody(file, mediaType, onProgress))
             .build()
 
         uploadClient.newCall(request).await().use { response ->
@@ -145,24 +169,40 @@ class CloudSyncService(
         remoteDirectory: String,
         fileName: String,
         file: UniFile,
+        mediaType: MediaType,
+        overwrite: Boolean,
         onProgress: (Int) -> Unit,
     ) {
         ensureDirectory(config, remoteDirectory)
 
         val token = loginAlist(config, alistEndpoint.apiBaseUrl)
-        val requestBody = UniFileRequestBody(file, CBZ_MEDIA_TYPE, onProgress)
+        val requestBody = UniFileRequestBody(file, mediaType, onProgress)
+        onProgress(0)
+        logcat(LogPriority.INFO) {
+            "CloudSync: computing file digests for aList upload path=$remoteDirectory/$fileName size=${requestBody.contentLength()}"
+        }
+        val fileDigests = file.computeDigests()
         val remoteFilePath = normalizePath("${alistEndpoint.rootPath}/${normalizePath(remoteDirectory).trim('/')}/$fileName")
 
-        onProgress(0)
+        logcat(LogPriority.INFO) { "CloudSync: starting aList PUT path=$remoteFilePath" }
         val request = Request.Builder()
             .url(alistEndpoint.apiBaseUrl.resolveAlistApi("fs", "put"))
+            .header("Accept", "application/json, text/plain, */*")
             .header("Authorization", token)
+            .header("Client-Id", UUID.randomUUID().toString())
             .header("File-Path", remoteFilePath.urlEncode())
+            .header("Last-Modified", file.lastModified().takeIf { it > 0L }?.toString() ?: System.currentTimeMillis().toString())
+            .header("Overwrite", overwrite.toString())
+            .header("Password", "")
+            .header("X-File-MD5", fileDigests.md5)
+            .header("X-File-SHA1", fileDigests.sha1)
+            .header("X-File-SHA256", fileDigests.sha256)
             .header("Content-Length", requestBody.contentLength().toString())
             .put(requestBody)
             .build()
 
         uploadClient.newCall(request).await().use { response ->
+            logcat(LogPriority.INFO) { "CloudSync: aList PUT response code=${response.code}" }
             if (!response.isSuccessful) {
                 throw IllegalStateException("aList upload failed: HTTP ${response.code}")
             }
@@ -352,6 +392,33 @@ class CloudSyncService(
         throw IllegalStateException("$messagePrefix: $message")
     }
 
+    private fun UniFile.computeDigests(): FileDigests {
+        val md5 = MessageDigest.getInstance("MD5")
+        val sha1 = MessageDigest.getInstance("SHA-1")
+        val sha256 = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+
+        openInputStream().use { input ->
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
+                md5.update(buffer, 0, read)
+                sha1.update(buffer, 0, read)
+                sha256.update(buffer, 0, read)
+            }
+        }
+
+        return FileDigests(
+            md5 = md5.digest().toHexString(),
+            sha1 = sha1.digest().toHexString(),
+            sha256 = sha256.digest().toHexString(),
+        )
+    }
+
+    private fun ByteArray.toHexString(): String {
+        return joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
+
     private class UniFileRequestBody(
         private val file: UniFile,
         private val mediaType: MediaType,
@@ -412,6 +479,7 @@ class CloudSyncService(
         """.trimIndent().toRequestBody("application/xml; charset=utf-8".toMediaType())
         private val EMPTY_BODY = ByteArray(0).toRequestBody(null)
         private val CBZ_MEDIA_TYPE = "application/vnd.comicbook+zip".toMediaType()
+        private val GENERIC_BINARY_MEDIA_TYPE = "application/octet-stream".toMediaType()
         private val SUCCESS_CODES = setOf(200, 201, 204)
         private val MKCOL_SUCCESS_CODES = setOf(200, 201, 204, 405)
         private const val ALIST_SUCCESS_CODE = 200
@@ -423,6 +491,12 @@ class CloudSyncService(
 private data class AlistEndpoint(
     val apiBaseUrl: HttpUrl,
     val rootPath: String,
+)
+
+private data class FileDigests(
+    val md5: String,
+    val sha1: String,
+    val sha256: String,
 )
 
 data class CloudSyncConfig(

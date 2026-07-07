@@ -165,14 +165,12 @@ class DownloadProvider(
         chapterUrl: String,
         disallowNonAsciiFilenames: Boolean = libraryPreferences.disallowNonAsciiFilenames().get(),
     ): String {
-        var dirName = sanitizeChapterName(chapterName)
-        if (!chapterScanlator.isNullOrBlank()) {
-            dirName = chapterScanlator + "_" + dirName
-        }
-        // Subtract 7 bytes for hash and underscore, 4 bytes for .cbz
-        dirName = DiskUtil.buildValidFilename(dirName, DiskUtil.MAX_FILE_NAME_BYTES - 11, disallowNonAsciiFilenames)
-        dirName += "_" + md5(chapterUrl).take(6)
-        return dirName
+        return buildChapterDirName(
+            chapterName = chapterName,
+            chapterScanlator = chapterScanlator,
+            disallowNonAsciiFilenames = disallowNonAsciiFilenames,
+            reserveBytes = 4,
+        )
     }
 
     /**
@@ -189,12 +187,16 @@ class DownloadProvider(
         chapterScanlator: String?,
         chapterUrl: String,
     ): List<String> {
-        val sanitizedChapterName = sanitizeChapterName(chapterName)
-        val chapterNameV1 = DiskUtil.buildValidFilename(
-            when {
-                !chapterScanlator.isNullOrBlank() -> "${chapterScanlator}_$sanitizedChapterName"
-                else -> sanitizedChapterName
-            },
+        val chapterNameV1 = buildChapterDirName(
+            chapterName = chapterName,
+            chapterScanlator = chapterScanlator,
+            disallowNonAsciiFilenames = false,
+        )
+        val hashedChapterDirName = buildHashedChapterDirName(
+            chapterName = chapterName,
+            chapterScanlator = chapterScanlator,
+            chapterUrl = chapterUrl,
+            disallowNonAsciiFilenames = libraryPreferences.disallowNonAsciiFilenames().get(),
         )
 
         // Get the filename that would be generated if the user were
@@ -208,13 +210,51 @@ class DownloadProvider(
                 chapterUrl,
                 !libraryPreferences.disallowNonAsciiFilenames().get(),
             )
+        val otherHashedChapterDirName = buildHashedChapterDirName(
+            chapterName = chapterName,
+            chapterScanlator = chapterScanlator,
+            chapterUrl = chapterUrl,
+            disallowNonAsciiFilenames = !libraryPreferences.disallowNonAsciiFilenames().get(),
+        )
 
-        return buildList(2) {
-            // Chapter name without hash (unable to handle duplicate
-            // chapter names)
+        return buildList(4) {
             add(chapterNameV1)
             add(otherChapterDirName)
+            add(hashedChapterDirName)
+            add(otherHashedChapterDirName)
         }
+    }
+
+    private fun buildChapterDirName(
+        chapterName: String,
+        chapterScanlator: String?,
+        disallowNonAsciiFilenames: Boolean,
+        reserveBytes: Int = 0,
+    ): String {
+        var dirName = sanitizeChapterName(chapterName)
+        if (!chapterScanlator.isNullOrBlank()) {
+            dirName = chapterScanlator + "_" + dirName
+        }
+        return DiskUtil.buildValidFilename(
+            dirName,
+            DiskUtil.MAX_FILE_NAME_BYTES - reserveBytes,
+            disallowNonAsciiFilenames,
+        )
+    }
+
+    private fun buildHashedChapterDirName(
+        chapterName: String,
+        chapterScanlator: String?,
+        chapterUrl: String,
+        disallowNonAsciiFilenames: Boolean,
+    ): String {
+        val baseName = buildChapterDirName(
+            chapterName = chapterName,
+            chapterScanlator = chapterScanlator,
+            disallowNonAsciiFilenames = disallowNonAsciiFilenames,
+            reserveBytes = 11,
+        )
+        return "${baseName}_${md5(chapterUrl).take(6)}"
     }
 
     /**
@@ -254,5 +294,10 @@ class DownloadProvider(
                 add("$it.cbz")
             }
         }
+    }
+
+    fun chapterOutputName(chapter: Chapter, saveAsCbz: Boolean): String {
+        val baseName = getChapterDirName(chapter.name, chapter.scanlator, chapter.url)
+        return if (saveAsCbz) "$baseName.cbz" else baseName
     }
 }
