@@ -11,6 +11,7 @@ import eu.kanade.domain.track.store.DelayedTrackingStore
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.download.CloudSyncService
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -121,6 +122,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { ExtensionManager(app) }
 
         addSingletonFactory { DownloadProvider(app) }
+        addSingletonFactory { CloudSyncService() }
         addSingletonFactory { DownloadManager(app) }
         addSingletonFactory { DownloadCache(app) }
 

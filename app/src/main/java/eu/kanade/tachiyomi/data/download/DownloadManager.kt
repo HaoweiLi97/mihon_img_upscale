@@ -425,7 +425,9 @@ class DownloadManager(
         }
         .onStart {
             emitAll(
-                queueState.value.filter { download -> download.status == Download.State.DOWNLOADING }.asFlow(),
+                queueState.value.filter { download ->
+                    download.status == Download.State.DOWNLOADING || download.status == Download.State.UPLOADING
+                }.asFlow(),
             )
         }
 
@@ -439,7 +441,9 @@ class DownloadManager(
         }
         .onStart {
             emitAll(
-                queueState.value.filter { download -> download.status == Download.State.DOWNLOADING }
+                queueState.value.filter { download ->
+                    download.status == Download.State.DOWNLOADING || download.status == Download.State.UPLOADING
+                }
                     .asFlow(),
             )
         }

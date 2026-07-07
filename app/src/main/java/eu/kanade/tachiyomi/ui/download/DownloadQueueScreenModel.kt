@@ -187,7 +187,9 @@ class DownloadQueueScreenModel(
      */
     fun onStatusChange(download: Download) {
         when (download.status) {
-            Download.State.DOWNLOADING -> {
+            Download.State.DOWNLOADING,
+            Download.State.UPLOADING,
+            -> {
                 launchProgressJob(download)
                 // Initial update of the downloaded pages
                 onUpdateDownloadedPages(download)
@@ -211,6 +213,16 @@ class DownloadQueueScreenModel(
      */
     private fun launchProgressJob(download: Download) {
         val job = screenModelScope.launch {
+            if (download.status == Download.State.UPLOADING) {
+                download.uploadProgressFlow
+                    .debounce(50)
+                    .collectLatest {
+                        onUpdateProgress(download)
+                        onUpdateDownloadedPages(download)
+                    }
+                return@launch
+            }
+
             while (download.pages == null) {
                 delay(50)
             }

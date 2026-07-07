@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.databinding.DownloadItemBinding
 import eu.kanade.tachiyomi.util.view.popupMenu
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.MR
 
 /**
  * Class used to hold the data of a download.
@@ -42,7 +44,11 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
 
         // Update the progress bar and the number of downloaded pages
         val pages = download.pages
-        if (pages == null) {
+        if (download.status == Download.State.UPLOADING) {
+            binding.downloadProgress.progress = download.uploadProgress
+            binding.downloadProgress.max = 100
+            notifyDownloadedPages()
+        } else if (pages == null) {
             binding.downloadProgress.progress = 0
             binding.downloadProgress.max = 1
             binding.downloadProgressText.text = ""
@@ -57,6 +63,11 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      * Updates the progress bar of the download.
      */
     fun notifyProgress() {
+        if (download.status == Download.State.UPLOADING) {
+            binding.downloadProgress.max = 100
+            binding.downloadProgress.setProgressCompat(download.uploadProgress, true)
+            return
+        }
         val pages = download.pages ?: return
         if (binding.downloadProgress.max == 1) {
             binding.downloadProgress.max = pages.size * 100
@@ -68,6 +79,13 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      * Updates the text field of the number of downloaded pages.
      */
     fun notifyDownloadedPages() {
+        if (download.status == Download.State.UPLOADING) {
+            binding.downloadProgressText.text = view.context.stringResource(
+                MR.strings.cloud_sync_uploading_progress,
+                download.uploadProgress,
+            )
+            return
+        }
         val pages = download.pages ?: return
         binding.downloadProgressText.text = "${download.downloadedImages}/${pages.size}"
     }

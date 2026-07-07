@@ -74,6 +74,7 @@ class Downloader(
     private val sourceManager: SourceManager = Injekt.get(),
     private val chapterCache: ChapterCache = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val cloudSyncService: CloudSyncService = Injekt.get(),
     private val xml: XML = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
@@ -144,7 +145,7 @@ class Downloader(
     fun stop(reason: String? = null) {
         cancelDownloaderJob()
         queueState.value
-            .filter { it.status == Download.State.DOWNLOADING }
+            .filter { it.status == Download.State.DOWNLOADING || it.status == Download.State.UPLOADING }
             .forEach { it.status = Download.State.ERROR }
 
         if (reason != null) {
@@ -169,7 +170,7 @@ class Downloader(
     fun pause() {
         cancelDownloaderJob()
         queueState.value
-            .filter { it.status == Download.State.DOWNLOADING }
+            .filter { it.status == Download.State.DOWNLOADING || it.status == Download.State.UPLOADING }
             .forEach { it.status = Download.State.QUEUE }
         isPaused = true
     }
@@ -198,7 +199,7 @@ class Downloader(
                 while (true) {
                     val activeDownloads = queue.asSequence()
                         // Ignore completed downloads, leave them in the queue
-                        .filter { it.status.value <= Download.State.DOWNLOADING.value }
+                        .filter { it.status.value <= Download.State.UPLOADING.value }
                         .groupBy { it.source }
                         .toList()
                         .take(parallelCount)
@@ -406,14 +407,19 @@ class Downloader(
             )
 
             // Only rename the directory if it's downloaded
-            if (downloadPreferences.saveChaptersAsCBZ().get()) {
+            val downloadedChapter = if (downloadPreferences.saveChaptersAsCBZ().get()) {
                 archiveChapter(mangaDir, chapterDirname, tmpDir)
             } else {
                 tmpDir.renameTo(chapterDirname)
+                mangaDir.findFile(chapterDirname)
             }
             cache.addChapter(chapterDirname, mangaDir, download.manga)
 
             DiskUtil.createNoMediaFile(tmpDir, context)
+
+            if (downloadedChapter != null) {
+                syncDownloadedChapter(download, downloadedChapter)
+            }
 
             download.status = Download.State.DOWNLOADED
         } catch (error: Throwable) {
@@ -600,7 +606,7 @@ class Downloader(
         mangaDir: UniFile,
         dirname: String,
         tmpDir: UniFile,
-    ) {
+    ): UniFile? {
         val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")!!
         ZipWriter(context, zip).use { writer ->
             tmpDir.listFiles()?.forEach { file ->
@@ -609,6 +615,43 @@ class Downloader(
         }
         zip.renameTo("$dirname.cbz")
         tmpDir.delete()
+        return mangaDir.findFile("$dirname.cbz")
+    }
+
+    private suspend fun syncDownloadedChapter(
+        download: Download,
+        chapterFile: UniFile,
+    ) {
+        if (!downloadPreferences.saveChaptersAsCBZ().get()) return
+        if (!downloadPreferences.cloudSyncEnabled().get()) return
+
+        val config = CloudSyncConfig(
+            url = downloadPreferences.cloudSyncUrl().get(),
+            username = downloadPreferences.cloudSyncUsername().get(),
+            password = downloadPreferences.cloudSyncPassword().get(),
+        )
+        val destination = downloadPreferences.cloudSyncDestination().get()
+        if (!config.isValid || destination.isBlank()) return
+
+        download.uploadProgress = 0
+        download.status = Download.State.UPLOADING
+
+        val remoteDirectory = combineRemotePath(
+            destination,
+            provider.getSourceDirName(download.source),
+            provider.getMangaDirName(download.manga.title),
+        )
+        cloudSyncService.uploadCbz(
+            config = config,
+            remoteDirectory = remoteDirectory,
+            file = chapterFile,
+            onProgress = { download.uploadProgress = it },
+        )
+
+        if (downloadPreferences.cloudSyncDeleteAfterUpload().get()) {
+            chapterFile.delete()
+            cache.removeChapter(download.chapter, download.manga)
+        }
     }
 
     /**
@@ -648,7 +691,7 @@ class Downloader(
      * Returns true if all the queued downloads are in DOWNLOADED or ERROR state.
      */
     private fun areAllDownloadsFinished(): Boolean {
-        return queueState.value.none { it.status.value <= Download.State.DOWNLOADING.value }
+        return queueState.value.none { it.status.value <= Download.State.UPLOADING.value }
     }
 
     private fun addAllToQueue(downloads: List<Download>) {
@@ -664,7 +707,11 @@ class Downloader(
     private fun removeFromQueue(download: Download) {
         _queueState.update {
             store.remove(download)
-            if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
+            if (
+                download.status == Download.State.DOWNLOADING ||
+                download.status == Download.State.UPLOADING ||
+                download.status == Download.State.QUEUE
+            ) {
                 download.status = Download.State.NOT_DOWNLOADED
             }
             it - download
@@ -676,7 +723,11 @@ class Downloader(
             val downloads = queue.filter { predicate(it) }
             store.removeAll(downloads)
             downloads.forEach { download ->
-                if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
+                if (
+                    download.status == Download.State.DOWNLOADING ||
+                    download.status == Download.State.UPLOADING ||
+                    download.status == Download.State.QUEUE
+                ) {
                     download.status = Download.State.NOT_DOWNLOADED
                 }
             }
@@ -696,7 +747,11 @@ class Downloader(
     private fun internalClearQueue() {
         _queueState.update {
             it.forEach { download ->
-                if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
+                if (
+                    download.status == Download.State.DOWNLOADING ||
+                    download.status == Download.State.UPLOADING ||
+                    download.status == Download.State.QUEUE
+                ) {
                     download.status = Download.State.NOT_DOWNLOADED
                 }
             }
@@ -733,3 +788,7 @@ class Downloader(
 
 // Arbitrary minimum required space to start a download: 200 MB
 private const val MIN_DISK_SPACE = 200L * 1024 * 1024
+
+private fun combineRemotePath(vararg parts: String): String {
+    return normalizePath(parts.joinToString("/") { it.trim('/') })
+}

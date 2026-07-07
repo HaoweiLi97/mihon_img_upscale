@@ -13,6 +13,18 @@ class DownloadPreferences(
 
     fun saveChaptersAsCBZ() = preferenceStore.getBoolean("save_chapter_as_cbz", true)
 
+    fun cloudSyncEnabled() = preferenceStore.getBoolean("cloud_sync_enabled", false)
+
+    fun cloudSyncUrl() = preferenceStore.getString("cloud_sync_url", "")
+
+    fun cloudSyncUsername() = preferenceStore.getString("cloud_sync_username", "")
+
+    fun cloudSyncPassword() = preferenceStore.getString("cloud_sync_password", "")
+
+    fun cloudSyncDestination() = preferenceStore.getString("cloud_sync_destination", "")
+
+    fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
+
     fun splitTallImages() = preferenceStore.getBoolean("split_tall_images", true)
 
     fun autoDownloadWhileReading() = preferenceStore.getInt("auto_download_while_reading", 0)

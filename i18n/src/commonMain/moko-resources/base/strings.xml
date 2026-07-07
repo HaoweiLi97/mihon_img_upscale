@@ -78,6 +78,7 @@
     <string name="action_global_search">Global search</string>
     <string name="action_select_all">Select all</string>
     <string name="action_select_inverse">Select inverse</string>
+    <string name="action_select">Select</string>
     <string name="action_mark_as_read">Mark as read</string>
     <string name="action_mark_as_unread">Mark as unread</string>
     <string name="action_mark_previous_as_read">Mark previous as read</string>
@@ -530,6 +531,19 @@
     <string name="auto_download_while_reading">Auto download while reading</string>
     <string name="download_ahead_info">Only works if the current chapter + the next one are already downloaded.</string>
     <string name="save_chapter_as_cbz">Save as CBZ archive</string>
+    <string name="cloud_sync">Cloud sync</string>
+    <string name="cloud_sync_login">Cloud sync login</string>
+    <string name="cloud_sync_webdav_url">WebDAV address</string>
+    <string name="cloud_sync_test_connection">Test connection</string>
+    <string name="cloud_sync_connection_success">Cloud sync connected</string>
+    <string name="cloud_sync_connection_failed">Cloud sync connection failed</string>
+    <string name="cloud_sync_not_configured">Not configured</string>
+    <string name="cloud_sync_connected">Connected as %s</string>
+    <string name="cloud_sync_requires_cbz">Enable CBZ archive saving to use cloud sync</string>
+    <string name="cloud_sync_destination">Sync destination</string>
+    <string name="cloud_sync_no_destination">No destination selected</string>
+    <string name="cloud_sync_delete_after_upload">Delete local file after sync</string>
+    <string name="cloud_sync_uploading_progress">Uploading %1$d%%</string>
     <string name="split_tall_images">Split tall images</string>
     <string name="split_tall_images_summary">Improves reader performance</string>
     <string name="pref_download_concurrent_sources">Concurrent source downloads</string>

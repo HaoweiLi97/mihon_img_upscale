@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.interactor.GetManga
@@ -32,6 +34,17 @@ data class Download(
         get() = pages?.count { it.status == Page.State.Ready } ?: 0
 
     @Transient
+    private val _uploadProgressFlow = MutableStateFlow(0)
+
+    @Transient
+    val uploadProgressFlow = _uploadProgressFlow.asStateFlow()
+    var uploadProgress: Int
+        get() = _uploadProgressFlow.value
+        set(progress) {
+            _uploadProgressFlow.value = progress.coerceIn(0, 100)
+        }
+
+    @Transient
     private val _statusFlow = MutableStateFlow(State.NOT_DOWNLOADED)
 
     @Transient
@@ -51,14 +64,20 @@ data class Download(
             }
         }
 
-        val progressFlows = pages!!.map(Page::progressFlow)
-        emitAll(combine(progressFlows) { it.average().toInt() })
+        val pageProgressFlow = combine(pages!!.map(Page::progressFlow)) { it.average().toInt() }
+        emitAll(
+            merge(
+                pageProgressFlow,
+                uploadProgressFlow.map { it },
+            ),
+        )
     }
         .distinctUntilChanged()
         .debounce(50)
 
     val progress: Int
         get() {
+            if (status == State.UPLOADING) return uploadProgress
             val pages = pages ?: return 0
             return pages.map(Page::progress).average().toInt()
         }
@@ -67,8 +86,9 @@ data class Download(
         NOT_DOWNLOADED(0),
         QUEUE(1),
         DOWNLOADING(2),
-        DOWNLOADED(3),
-        ERROR(4),
+        UPLOADING(3),
+        DOWNLOADED(4),
+        ERROR(5),
     }
 
     companion object {

@@ -60,7 +60,7 @@ fun ChapterDownloadIndicator(
             modifier = modifier,
             onClick = onClick,
         )
-        Download.State.QUEUE, Download.State.DOWNLOADING -> DownloadingIndicator(
+        Download.State.QUEUE, Download.State.DOWNLOADING, Download.State.UPLOADING -> DownloadingIndicator(
             enabled = enabled,
             modifier = modifier,
             downloadState = downloadState,
@@ -131,7 +131,7 @@ private fun DownloadingIndicator(
         val strokeColor = MaterialTheme.colorScheme.onSurfaceVariant
         val downloadProgress = downloadProgressProvider()
         val indeterminate = downloadState == Download.State.QUEUE ||
-            (downloadState == Download.State.DOWNLOADING && downloadProgress == 0)
+            ((downloadState == Download.State.DOWNLOADING || downloadState == Download.State.UPLOADING) && downloadProgress == 0)
         if (indeterminate) {
             arrowColor = strokeColor
             CircularProgressIndicator(
