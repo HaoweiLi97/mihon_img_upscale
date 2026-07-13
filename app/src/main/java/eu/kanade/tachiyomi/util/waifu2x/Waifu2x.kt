@@ -14,6 +14,9 @@ import java.util.zip.ZipInputStream
  */
 object Waifu2x {
 
+    // Bump when bundled model assets change so existing installations refresh their cache.
+    private const val BUNDLED_MODEL_CACHE_VERSION = "2"
+
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
     @Volatile private var isRealEsrganInitialized = false
@@ -542,16 +545,22 @@ object Waifu2x {
 
             val assetManager = context.assets
             val modelFiles = assetManager.list(assetPath).orEmpty()
+            val assetVersionFile = File(cacheDir, ".bundled-model-version")
+            val refreshBundledModels = modelFiles.isNotEmpty() &&
+                assetVersionFile.takeIf(File::exists)?.readText() != BUNDLED_MODEL_CACHE_VERSION
 
             for (filename in modelFiles) {
                 val outFile = File(cacheDir, filename)
-                if (!outFile.exists()) {
+                if (refreshBundledModels || !outFile.exists()) {
                     assetManager.open("$assetPath/$filename").use { input ->
                         outFile.outputStream().use { output ->
                             input.copyTo(output)
                         }
                     }
                 }
+            }
+            if (refreshBundledModels) {
+                assetVersionFile.writeText(BUNDLED_MODEL_CACHE_VERSION)
             }
 
             if (!cacheDir.hasNcnnModels()) {

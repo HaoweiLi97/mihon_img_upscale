@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag name to publish, for example v1.2.0
+        description: Tag name to publish, for example v1.2.1
         required: true
         type: string
 
@@ -159,7 +159,7 @@ jobs:
           tag_name: ${{ needs.get_tag.outputs.tag }}
           name: Mihon Img Upscale ${{ needs.get_tag.outputs.tag }}
           body: |
-            ## v1.2.0
+            ## v1.2.1
 
             This release adds WebDAV cloud sync for downloads, including:
             - Uploading downloaded chapter CBZ files to WebDAV or aList-backed WebDAV

@@ -554,6 +554,9 @@
     <string name="save_chapter_as_cbz">以 CBZ 封存檔格式儲存</string>
     <string name="add_random_nonce_to_cbz">隨機化 CBZ 檔案雜湊值</string>
     <string name="add_random_nonce_to_cbz_summary">加入隱藏的隨機標記，讓相同章節檔案產生不同雜湊值</string>
+    <string name="cloud_sync">雲端同步</string>
+    <string name="cloud_sync_destination">同步目的地</string>
+    <string name="cloud_sync_delete_after_upload">同步後刪除本機檔案</string>
     <string name="pref_cloud_sync_concurrent_uploads">並行雲端上傳數</string>
     <string name="on_hiatus">休刊中</string>
     <string name="cancelled">已取消</string>
