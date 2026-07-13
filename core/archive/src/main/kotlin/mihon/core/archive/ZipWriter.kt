@@ -47,6 +47,23 @@ class ZipWriter(val context: Context, file: UniFile) : Closeable {
         }
     }
 
+    fun writeBytes(name: String, bytes: ByteArray) {
+        ArchiveEntry.clear(entry)
+        ArchiveEntry.setPathnameUtf8(entry, name)
+        ArchiveEntry.setFiletype(entry, ArchiveEntry.AE_IFREG)
+        ArchiveEntry.setPerm(entry, OWNER_READ_WRITE_PERMISSIONS)
+        ArchiveEntry.setSize(entry, bytes.size.toLong())
+        ArchiveEntry.setMtime(entry, System.currentTimeMillis() / 1000, 0)
+        Archive.writeHeader(archive, entry)
+        if (bytes.isNotEmpty()) {
+            val data = ByteBuffer.allocateDirect(bytes.size)
+            data.put(bytes)
+            data.flip()
+            Archive.writeData(archive, data)
+        }
+        Archive.writeFinishEntry(archive)
+    }
+
     override fun close() {
         ArchiveEntry.free(entry)
         Archive.writeFree(archive)
@@ -71,3 +88,5 @@ private fun StructStat.toArchiveStat() = ArchiveEntry.StructStat().apply {
 }
 
 private fun Long.toTimespec() = ArchiveEntry.StructTimespec().also { it.tvSec = this }
+
+private const val OWNER_READ_WRITE_PERMISSIONS = 384

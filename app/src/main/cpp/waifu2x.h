@@ -14,7 +14,8 @@
 
 class Waifu2x {
 public:
-  Waifu2x(int gpuid, bool tta_mode = false, int num_threads = 1);
+  Waifu2x(int gpuid, bool tta_mode = false, int num_threads = 1,
+          int precision_mode = 0);
   ~Waifu2x();
 
   int load(const std::string &parampath, const std::string &modelpath);
@@ -39,6 +40,8 @@ public:
   int tile_sleep_ms = 0; // Sleep between tiles for cooling (0 = full speed)
   bool is_snapdragon = false;
   bool disable_grayscale_check = false;
+  int num_threads = 1;
+  int precision_mode = 0; // 0 = fp16, 1 = fp32, 2 = int8, 3 = bf16
 
 private:
   ncnn::VulkanDevice *vkdev;

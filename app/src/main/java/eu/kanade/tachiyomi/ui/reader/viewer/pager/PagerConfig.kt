@@ -112,6 +112,7 @@ class PagerConfig(
         readerPreferences.realCuganEnabled().changes()
             .drop(1)
             .onEach { 
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganEnabled changed")
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
                 imagePropertyChangedListener?.invoke() 
             }
@@ -120,6 +121,7 @@ class PagerConfig(
         readerPreferences.realCuganModel().changes()
             .drop(1)
             .onEach { 
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganModel changed")
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
                 imagePropertyChangedListener?.invoke() 
             }
@@ -127,6 +129,7 @@ class PagerConfig(
 
         readerPreferences.realCuganNoiseLevel().changes()
             .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganNoiseLevel changed") }
             .debounce(500)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
@@ -136,6 +139,7 @@ class PagerConfig(
 
         readerPreferences.realCuganScale().changes()
             .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganScale changed") }
             .debounce(500)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
@@ -145,6 +149,7 @@ class PagerConfig(
 
         readerPreferences.realCuganInputScale().changes()
             .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganInputScale changed") }
             .debounce(500)
             .onEach { 
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
@@ -154,6 +159,7 @@ class PagerConfig(
 
         readerPreferences.realCuganMaxSizeWidth().changes()
             .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganMaxSizeWidth changed") }
             .debounce(500)
             .onEach {
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
@@ -163,6 +169,57 @@ class PagerConfig(
 
         readerPreferences.realCuganMaxSizeHeight().changes()
             .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganMaxSizeHeight changed") }
+            .debounce(500)
+            .onEach {
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganSkipMaxSizeWidth().changes()
+            .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganSkipMaxSizeWidth changed") }
+            .debounce(500)
+            .onEach {
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganSkipMaxSizeHeight().changes()
+            .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganSkipMaxSizeHeight changed") }
+            .debounce(500)
+            .onEach {
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganTileSize().changes()
+            .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganTileSize changed") }
+            .debounce(500)
+            .onEach {
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganJobs().changes()
+            .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganJobs changed") }
+            .debounce(500)
+            .onEach {
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
+        readerPreferences.realCuganPrecision().changes()
+            .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganPrecision changed") }
             .debounce(500)
             .onEach {
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
@@ -173,6 +230,7 @@ class PagerConfig(
         readerPreferences.realCuganResizeLargeImage().changes()
             .drop(1)
             .onEach {
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganResizeLargeImage changed")
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
                 imagePropertyChangedListener?.invoke()
             }

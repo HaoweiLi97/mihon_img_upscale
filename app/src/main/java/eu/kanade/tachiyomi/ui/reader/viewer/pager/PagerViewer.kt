@@ -149,6 +149,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     override fun destroy() {
         super.destroy()
+        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("pager viewer destroyed")
         scope.cancel()
     }
 

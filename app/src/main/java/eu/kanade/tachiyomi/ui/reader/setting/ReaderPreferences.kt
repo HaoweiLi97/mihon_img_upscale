@@ -95,7 +95,7 @@ class ReaderPreferences(
 
     fun realCuganInputScale() = preferenceStore.getInt("pref_realcugan_input_scale", 100) // 100 = 1.0x, 75 = 0.75x, 50 = 0.5x
 
-    fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", 0) // 0: Real-CUGAN, 1: Real-ESRGAN, 2: Waifu2x-Nose
+    fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", 0)
 
     fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 3)
 
@@ -103,9 +103,19 @@ class ReaderPreferences(
 
     fun realCuganPerformanceMode() = preferenceStore.getInt("pref_realcugan_performance_mode", 0) // 0: 90%, 1: 50%, 2: 30%
 
+    fun realCuganTileSize() = preferenceStore.getInt("pref_realcugan_tile_size", 128)
+
+    fun realCuganJobs() = preferenceStore.getInt("pref_realcugan_jobs", 3)
+
+    fun realCuganPrecision() = preferenceStore.getInt("pref_realcugan_precision", 0) // 0: FP16, 1: FP32, 2: INT8, 3: BF16
+
     fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 1600)
 
     fun realCuganMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_max_size_height", 1600)
+
+    fun realCuganSkipMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_skip_max_size_width", 0)
+
+    fun realCuganSkipMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_skip_max_size_height", 0)
     
     fun realCuganResizeLargeImage() = preferenceStore.getBoolean("pref_realcugan_resize_large_image", true)
 

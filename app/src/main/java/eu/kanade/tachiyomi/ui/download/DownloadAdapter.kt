@@ -16,6 +16,8 @@ class DownloadAdapter(val downloadItemListener: DownloadItemListener) : Flexible
 ) {
 
     override fun shouldMove(fromPosition: Int, toPosition: Int): Boolean {
+        if ((getItem(fromPosition) as? DownloadItem)?.isUpload == true) return false
+        if ((getItem(toPosition) as? DownloadItem)?.isUpload == true) return false
         // Don't let sub-items changing group
         return getHeaderOf(getItem(fromPosition)) == getHeaderOf(getItem(toPosition))
     }

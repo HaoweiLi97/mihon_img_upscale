@@ -133,6 +133,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private val realCuganMaxSizeHeight: Int
         get() = preferences.realCuganMaxSizeHeight().get()
+
+    private val realCuganSkipMaxSizeWidth: Int
+        get() = preferences.realCuganSkipMaxSizeWidth().get()
+
+    private val realCuganSkipMaxSizeHeight: Int
+        get() = preferences.realCuganSkipMaxSizeHeight().get()
         
     private val realCuganResizeLargeImage: Boolean
         get() = true
@@ -153,12 +159,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
 
     private val tileSize: Int
-        get() = when (realCuganPerformanceMode) {
-            0 -> 128  // 性能模式 - 大块处理
-            1 -> 96   // 平衡模式 - 中等块，增加调度频率
-            2 -> 64   // 节能模式 - 小块处理，更频繁的 sleep
-            else -> 128
-        }
+        get() = preferences.realCuganTileSize().get().coerceAtLeast(32)
 
     private var pageView: View? = null
     private var currentLoadedUri: String? = null
@@ -244,20 +245,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
             preferences.realCuganPerformanceMode().changes()
                 .collect { mode ->
-                    // Need to recalculate sleep ms based on new mode
                     val sleepMs = when (mode) {
-                        0 -> 0 
-                        1 -> 15 
-                        2 -> 15 
+                        0 -> 0
+                        1 -> 15
+                        2 -> 15
                         else -> 0
                     }
-                    val size = when (mode) {
-                        0 -> 128
-                        1 -> 96
-                        2 -> 64
-                        else -> 128
-                    }
-                    eu.kanade.tachiyomi.util.waifu2x.Waifu2x.updatePerformance(sleepMs, size)
+                    eu.kanade.tachiyomi.util.waifu2x.Waifu2x.updatePerformance(sleepMs, tileSize)
+                }
+        }
+
+        viewScope.launchIO {
+            preferences.realCuganTileSize().changes()
+                .collect { size ->
+                    eu.kanade.tachiyomi.util.waifu2x.Waifu2x.updatePerformance(tileSleepMs, size.coerceAtLeast(32))
                 }
         }
 
@@ -353,7 +354,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun decodeEnhancedBitmap(file: java.io.File): Bitmap? {
         return try {
-            android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+            val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath) ?: return null
+            if (ImageEnhancementCache.isDisplayable(bitmap)) {
+                bitmap
+            } else {
+                android.util.Log.w("ReaderPageImageView", "Ignoring invalid enhanced cache: ${file.absolutePath}")
+                bitmap.recycle()
+                null
+            }
         } catch (_: Exception) {
             null
         }
@@ -667,13 +675,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
         ImageEnhancementCache.init(context)
         val configHash = ImageEnhancementCache.getConfigHash(
-            realCuganNoiseLevel,
-            realCuganScale,
-            realCuganInputScale,
-            realCuganModel,
-            realCuganMaxSizeWidth,
-            realCuganMaxSizeHeight,
-            realCuganResizeLargeImage,
+            noise = realCuganNoiseLevel,
+            scale = realCuganScale,
+            inputScale = realCuganInputScale,
+            model = realCuganModel,
+            maxWidth = realCuganMaxSizeWidth,
+            maxHeight = realCuganMaxSizeHeight,
+            skipMaxWidth = realCuganSkipMaxSizeWidth,
+            skipMaxHeight = realCuganSkipMaxSizeHeight,
+            resizeEnabled = realCuganResizeLargeImage,
+            tileSize = tileSize,
+            precision = preferences.realCuganPrecision().get(),
         )
         val pageVariant = enhancementVariant()
 
@@ -760,9 +772,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
              if (realCuganEnabled) {
                  ImageEnhancementCache.init(context)
                 val configHash = ImageEnhancementCache.getConfigHash(
-                     realCuganNoiseLevel, realCuganScale, realCuganInputScale,
-                     realCuganModel, realCuganMaxSizeWidth, realCuganMaxSizeHeight, realCuganResizeLargeImage
-                 )
+                    noise = realCuganNoiseLevel,
+                    scale = realCuganScale,
+                    inputScale = realCuganInputScale,
+                    model = realCuganModel,
+                    maxWidth = realCuganMaxSizeWidth,
+                    maxHeight = realCuganMaxSizeHeight,
+                    skipMaxWidth = realCuganSkipMaxSizeWidth,
+                    skipMaxHeight = realCuganSkipMaxSizeHeight,
+                    resizeEnabled = realCuganResizeLargeImage,
+                    tileSize = tileSize,
+                    precision = preferences.realCuganPrecision().get(),
+                )
                  val pageVariant = enhancementVariant()
                  
                  val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
@@ -1044,13 +1065,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
         ImageEnhancementCache.init(context)
         val configHash = ImageEnhancementCache.getConfigHash(
-            realCuganNoiseLevel, 
-            realCuganScale, 
-            realCuganInputScale,
-            realCuganModel,
-            realCuganMaxSizeWidth,
-            realCuganMaxSizeHeight,
-            realCuganResizeLargeImage
+            noise = realCuganNoiseLevel,
+            scale = realCuganScale,
+            inputScale = realCuganInputScale,
+            model = realCuganModel,
+            maxWidth = realCuganMaxSizeWidth,
+            maxHeight = realCuganMaxSizeHeight,
+            skipMaxWidth = realCuganSkipMaxSizeWidth,
+            skipMaxHeight = realCuganSkipMaxSizeHeight,
+            resizeEnabled = realCuganResizeLargeImage,
+            tileSize = tileSize,
+            precision = preferences.realCuganPrecision().get(),
         )
         val pageVariant = enhancementVariant()
 

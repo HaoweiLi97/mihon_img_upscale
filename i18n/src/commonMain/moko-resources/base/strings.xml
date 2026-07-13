@@ -531,6 +531,8 @@
     <string name="auto_download_while_reading">Auto download while reading</string>
     <string name="download_ahead_info">Only works if the current chapter + the next one are already downloaded.</string>
     <string name="save_chapter_as_cbz">Save as CBZ archive</string>
+    <string name="add_random_nonce_to_cbz">Randomize CBZ file hash</string>
+    <string name="add_random_nonce_to_cbz_summary">Adds a hidden random marker so identical chapter files generate different hashes</string>
     <string name="cloud_sync">Cloud sync</string>
     <string name="cloud_sync_login">Cloud sync login</string>
     <string name="cloud_sync_webdav_url">WebDAV address</string>
@@ -543,6 +545,7 @@
     <string name="cloud_sync_destination">Sync destination</string>
     <string name="cloud_sync_no_destination">No destination selected</string>
     <string name="cloud_sync_delete_after_upload">Delete local file after sync</string>
+    <string name="pref_cloud_sync_concurrent_uploads">Concurrent cloud uploads</string>
     <string name="cloud_sync_uploading_progress">Uploading %1$d%%</string>
     <string name="split_tall_images">Split tall images</string>
     <string name="split_tall_images_summary">Improves reader performance</string>
@@ -1080,6 +1083,17 @@
     <string name="reader_gpu_performance_high">Performance 90%</string>
     <string name="reader_gpu_performance_balanced">Balanced 50%</string>
     <string name="reader_gpu_performance_power_saving">Power saving 30%</string>
+    <string name="reader_tile_size">Tile size</string>
+    <string name="reader_processing_jobs">Processing jobs</string>
+    <string name="reader_precision">Precision</string>
+    <string name="reader_precision_fp16">FP16</string>
+    <string name="reader_precision_fp32">FP32</string>
+    <string name="reader_precision_int8">INT8</string>
+    <string name="reader_precision_bf16">BF16</string>
+    <string name="reader_processing_resolution">Max processing resolution</string>
+    <string name="reader_max_resolution">Max resolution</string>
+    <string name="reader_resolution_width">Width (0 unlimited)</string>
+    <string name="reader_resolution_height">Height (0 unlimited)</string>
     <string name="reader_target_resolution">Target resolution</string>
     <string name="reader_target_width">Target width</string>
     <string name="reader_target_height">Target height</string>

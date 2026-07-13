@@ -560,6 +560,9 @@
     <string name="pref_update_only_completely_read">跳过有未读章节的作品</string>
     <string name="library_errors_help">关于书架更新出错的解决方法，请参阅 %1$s</string>
     <string name="save_chapter_as_cbz">保存为 CBZ 压缩包</string>
+    <string name="add_random_nonce_to_cbz">随机化 CBZ 文件哈希值</string>
+    <string name="add_random_nonce_to_cbz_summary">添加隐藏的随机标记，使相同章节文件生成不同哈希值</string>
+    <string name="pref_cloud_sync_concurrent_uploads">并行云上传数</string>
     <string name="publishing_finished">出版完毕</string>
     <string name="cancelled">已中止</string>
     <string name="on_hiatus">休刊中</string>
@@ -928,6 +931,17 @@
     <string name="reader_gpu_performance_high">性能 90%</string>
     <string name="reader_gpu_performance_balanced">平衡 50%</string>
     <string name="reader_gpu_performance_power_saving">节能 30%</string>
+    <string name="reader_tile_size">分块大小</string>
+    <string name="reader_processing_jobs">处理线程</string>
+    <string name="reader_precision">精度</string>
+    <string name="reader_precision_fp16">FP16</string>
+    <string name="reader_precision_fp32">FP32</string>
+    <string name="reader_precision_int8">INT8</string>
+    <string name="reader_precision_bf16">BF16</string>
+    <string name="reader_processing_resolution">最大处理分辨率</string>
+    <string name="reader_max_resolution">最大分辨率</string>
+    <string name="reader_resolution_width">宽度（0 不限）</string>
+    <string name="reader_resolution_height">高度（0 不限）</string>
     <string name="reader_target_resolution">目标分辨率</string>
     <string name="reader_target_width">目标宽度</string>
     <string name="reader_target_height">目标高度</string>

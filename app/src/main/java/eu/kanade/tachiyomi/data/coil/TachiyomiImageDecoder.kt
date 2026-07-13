@@ -125,13 +125,17 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                 ImageEnhancementCache.init(context)
 
                                 val configHash = ImageEnhancementCache.getConfigHash(
-                                    preferences.realCuganNoiseLevel().get(),
-                                    preferences.realCuganScale().get(),
-                                    preferences.realCuganInputScale().get(),
-                                    preferences.realCuganModel().get(),
-                                    preferences.realCuganMaxSizeWidth().get(),
-                                    preferences.realCuganMaxSizeHeight().get(),
-                                    true
+                                    noise = preferences.realCuganNoiseLevel().get(),
+                                    scale = preferences.realCuganScale().get(),
+                                    inputScale = preferences.realCuganInputScale().get(),
+                                    model = preferences.realCuganModel().get(),
+                                    maxWidth = preferences.realCuganMaxSizeWidth().get(),
+                                    maxHeight = preferences.realCuganMaxSizeHeight().get(),
+                                    skipMaxWidth = preferences.realCuganSkipMaxSizeWidth().get(),
+                                    skipMaxHeight = preferences.realCuganSkipMaxSizeHeight().get(),
+                                    resizeEnabled = true,
+                                    tileSize = preferences.realCuganTileSize().get(),
+                                    precision = preferences.realCuganPrecision().get(),
                                 )
                                 logcat(LogPriority.DEBUG) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant configHash=$configHash" }
 
@@ -142,10 +146,14 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                     logcat(LogPriority.DEBUG) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant found in cache: ${cachedFile.absolutePath}" }
                                     try {
                                         val cachedBitmap = BitmapFactory.decodeFile(cachedFile.absolutePath)
-                                        if (cachedBitmap != null) {
+                                        if (cachedBitmap != null && ImageEnhancementCache.isDisplayable(cachedBitmap)) {
                                             bitmap.recycle()
                                             bitmap = cachedBitmap
                                             usedCache = true
+                                        } else {
+                                            cachedBitmap?.recycle()
+                                            ImageEnhancementCache.removeCachedImage(mangaId, chapterId, pageIndex, configHash, pageVariant)
+                                            logcat(LogPriority.WARN) { "TachiyomiImageDecoder: Removed invalid enhanced cache for page $pageIndex/$pageVariant" }
                                         }
                                     } catch (e: Exception) {
                                         logcat(LogPriority.ERROR, e) { "TachiyomiImageDecoder: Failed to decode cached enhanced image" }
@@ -160,23 +168,22 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                         val noise = preferences.realCuganNoiseLevel().get()
                                         var scale = preferences.realCuganScale().get()
 
-                                        // --- Target Resolution Check / Prescale ---
-                                        val maxWidth = preferences.realCuganMaxSizeWidth().get()
-                                        val maxHeight = preferences.realCuganMaxSizeHeight().get()
-                                        val shouldResize = true
+                                        // --- Resolution Limits / Prescale ---
+                                        val processMaxWidth = preferences.realCuganMaxSizeWidth().get()
+                                        val processMaxHeight = preferences.realCuganMaxSizeHeight().get()
+                                        val skipMaxWidth = preferences.realCuganSkipMaxSizeWidth().get()
+                                        val skipMaxHeight = preferences.realCuganSkipMaxSizeHeight().get()
                                         var shouldSkipEnhancement = false
 
-                                        val targetWidth = if (maxWidth > 0) maxWidth else Int.MAX_VALUE
-                                        val targetHeight = if (maxHeight > 0) maxHeight else Int.MAX_VALUE
-                                        val hasTargetResolution = maxWidth > 0 || maxHeight > 0
-                                        val exceedsLimit = hasTargetResolution &&
-                                            (bitmap.width > targetWidth || bitmap.height > targetHeight)
+                                        val exceedsSkipLimit =
+                                            (skipMaxWidth > 0 && bitmap.width > skipMaxWidth) ||
+                                                (skipMaxHeight > 0 && bitmap.height > skipMaxHeight)
 
-                                        if (exceedsLimit) {
+                                        if (exceedsSkipLimit) {
                                             logcat(LogPriority.DEBUG) {
-                                                "TachiyomiImageDecoder: Skipping enhancement for page $pageIndex - source ${bitmap.width}x${bitmap.height} exceeds target ${maxWidth}x${maxHeight}"
+                                                "TachiyomiImageDecoder: Skipping enhancement for page $pageIndex - source ${bitmap.width}x${bitmap.height} exceeds max resolution ${skipMaxWidth}x${skipMaxHeight}"
                                             }
-                                            ImageEnhancementCache.saveSkippedToCache(mangaId, chapterId, pageIndex!!, configHash, pageVariant)
+                                            ImageEnhancementCache.saveSkippedToCache(mangaId, chapterId, pageIndex, configHash, pageVariant)
                                             shouldSkipEnhancement = true
                                         }
 
@@ -186,35 +193,38 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                             1, 2 -> 15
                                             else -> 0
                                         }
-                                        val tileSize = when (perfMode) {
-                                            1 -> 96
-                                            2 -> 64
-                                            else -> 128
-                                        }
+                                        val tileSize = preferences.realCuganTileSize().get().coerceAtLeast(32)
+                                        val jobs = preferences.realCuganJobs().get().coerceIn(1, 8)
+                                        val precision = preferences.realCuganPrecision().get().coerceIn(0, 3)
                                         
                                         // Validate scale based on model capabilities
-                                        val effectiveScale = when (model) {
-                                            3 -> 2 // Nose: fixed 2x
-                                            5 -> 2 // Waifu2x Upconv7: only supports 2x
-                                            else -> scale
-                                        }
+                                        val effectiveScale = ImageEnhancementCache.getEffectiveScale(model, scale)
                                         if (effectiveScale != scale) {
                                             logcat(LogPriority.DEBUG) { "TachiyomiImageDecoder: Model $model only supports ${effectiveScale}x, clamping from ${scale}x" }
                                         }
 
-                                        if (!shouldSkipEnhancement && shouldResize && hasTargetResolution) {
-                                            val finalWidthAtScale = bitmap.width * effectiveScale.toFloat()
-                                            val finalHeightAtScale = bitmap.height * effectiveScale.toFloat()
+                                        val hasProcessMaxResolution = processMaxWidth > 0 || processMaxHeight > 0
+                                        if (!shouldSkipEnhancement && hasProcessMaxResolution) {
+                                            val widthRatio = if (processMaxWidth > 0) {
+                                                processMaxWidth / bitmap.width.toFloat()
+                                            } else {
+                                                Float.POSITIVE_INFINITY
+                                            }
+                                            val heightRatio = if (processMaxHeight > 0) {
+                                                processMaxHeight / bitmap.height.toFloat()
+                                            } else {
+                                                Float.POSITIVE_INFINITY
+                                            }
                                             val ratio = min(
-                                                targetWidth / finalWidthAtScale,
-                                                targetHeight / finalHeightAtScale,
+                                                widthRatio,
+                                                heightRatio,
                                             )
 
                                             if (ratio in 0f..<1f) {
                                                 val newWidth = max(1, (bitmap.width * ratio).roundToInt())
                                                 val newHeight = max(1, (bitmap.height * ratio).roundToInt())
                                                 logcat(LogPriority.DEBUG) {
-                                                    "TachiyomiImageDecoder: Prescaling page $pageIndex with native scaling ${bitmap.width}x${bitmap.height} -> ${newWidth}x${newHeight}, target=${maxWidth}x${maxHeight}, scale=${effectiveScale}x"
+                                                    "TachiyomiImageDecoder: Prescaling page $pageIndex input with native scaling ${bitmap.width}x${bitmap.height} -> ${newWidth}x${newHeight}, processingMax=${processMaxWidth}x${processMaxHeight}, outputScale=${effectiveScale}x"
                                                 }
                                                 val scaledBitmap = nativeScaleBitmap(bitmap, newWidth, newHeight)
                                                 if (scaledBitmap != bitmap) {
@@ -223,20 +233,21 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                                 }
                                             }
                                         }
-                                        // --- End Target Resolution Check / Prescale ---
+                                        // --- End Resolution Limits / Prescale ---
                                         
                                         if (shouldSkipEnhancement) {
                                             // Don't process, just use the original bitmap
                                         } else {
 
                                         val initialized = when (model) {
-                                            0 -> Waifu2x.initRealCugan(context, noise, effectiveScale, isPro = false, tileSleepMs = tileSleepMs, tileSize = tileSize)
-                                            1 -> Waifu2x.initRealCugan(context, noise, effectiveScale, isPro = true, tileSleepMs = tileSleepMs, tileSize = tileSize)
-                                            2 -> Waifu2x.initRealESRGAN(context, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize)
-                                            3 -> Waifu2x.initNose(context, tileSleepMs = tileSleepMs, tileSize = tileSize)
-                                            4 -> Waifu2x.initWaifu2x(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize)
-                                            5 -> Waifu2x.initWaifu2xUpconv7(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize)
-                                            else -> Waifu2x.initRealCugan(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize)
+                                            0 -> Waifu2x.initRealCugan(context, noise, effectiveScale, isPro = false, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
+                                            1 -> Waifu2x.initRealCugan(context, noise, effectiveScale, isPro = true, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
+                                            2 -> Waifu2x.initRealESRGAN(context, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
+                                            3 -> Waifu2x.initNose(context, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
+                                            4 -> Waifu2x.initWaifu2x(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
+                                            5 -> Waifu2x.initWaifu2xUpconv7(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
+                                            6, 7, 8, 9, 10, 11, 12, 13, 14, 15 -> Waifu2x.initW2xEx(context, model, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
+                                            else -> Waifu2x.initRealCugan(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, jobs = jobs, precision = precision)
                                         }
                                         
                                         if (initialized) {
@@ -245,6 +256,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                                 2 -> Waifu2x.processRealESRGAN(bitmap, pageIndex)
                                                 3 -> Waifu2x.processNose(bitmap, pageIndex)
                                                 4, 5 -> Waifu2x.processWaifu2x(bitmap, pageIndex)
+                                                6, 7, 8, 9, 10, 11, 12, 13, 14, 15 -> Waifu2x.processW2xEx(bitmap, pageIndex)
                                                 else -> Waifu2x.processRealCugan(bitmap, pageIndex)
                                             }
                                             
@@ -272,14 +284,19 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                                 }
                                                 // --- End Output Resolution Limit ---
                                                 
-                                                val savedFile = ImageEnhancementCache.saveToCache(mangaId, chapterId, pageIndex, configHash, result, pageVariant)
-                                                if (savedFile != null) {
-                                                    logcat(LogPriority.DEBUG) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant saved to cache: ${savedFile.absolutePath}" }
+                                                if (ImageEnhancementCache.isDisplayable(result)) {
+                                                    val savedFile = ImageEnhancementCache.saveToCache(mangaId, chapterId, pageIndex, configHash, result, pageVariant)
+                                                    if (savedFile != null) {
+                                                        logcat(LogPriority.DEBUG) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant saved to cache: ${savedFile.absolutePath}" }
+                                                    } else {
+                                                        logcat(LogPriority.ERROR) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant FAILED to save to cache" }
+                                                    }
+                                                    if (bitmap != result) bitmap.recycle()
+                                                    bitmap = result
                                                 } else {
-                                                    logcat(LogPriority.ERROR) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant FAILED to save to cache" }
+                                                    logcat(LogPriority.ERROR) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant produced a nearly transparent result, keeping original image" }
+                                                    if (bitmap != result) result.recycle()
                                                 }
-                                                if (bitmap != result) bitmap.recycle()
-                                                bitmap = result
                                             }
                                         }
                                     } // end else (shouldSkipEnhancement)

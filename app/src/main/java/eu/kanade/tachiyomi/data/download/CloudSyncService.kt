@@ -3,14 +3,6 @@ package eu.kanade.tachiyomi.data.download
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
-import eu.kanade.tachiyomi.network.jsonMime
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import logcat.LogPriority
 import logcat.logcat
 import okhttp3.Credentials
@@ -31,9 +23,7 @@ import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
-import java.net.URLEncoder
 import java.security.MessageDigest
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -75,11 +65,13 @@ class CloudSyncService(
         config: CloudSyncConfig,
         remoteDirectory: String,
         file: UniFile,
+        fileName: String = file.name ?: error("Missing upload file name"),
         onProgress: (Int) -> Unit,
     ) = uploadFile(
         config = config,
         remoteDirectory = remoteDirectory,
         file = file,
+        fileName = fileName,
         mediaType = CBZ_MEDIA_TYPE,
         overwrite = false,
         onProgress = onProgress,
@@ -89,52 +81,73 @@ class CloudSyncService(
         config: CloudSyncConfig,
         remoteDirectory: String,
         file: UniFile,
+        fileName: String = file.name ?: error("Missing upload file name"),
         mediaType: MediaType = GENERIC_BINARY_MEDIA_TYPE,
         overwrite: Boolean = false,
         onProgress: (Int) -> Unit,
     ) = withIOContext {
-        val fileName = file.name ?: error("Missing upload file name")
-        var alistFailure: Throwable? = null
+        logcat(LogPriority.INFO) { "CloudSync: uploading via WebDAV" }
+        uploadWebDavCbz(
+            config = config,
+            remoteDirectory = remoteDirectory,
+            fileName = fileName,
+            file = file,
+            mediaType = mediaType,
+            overwrite = overwrite,
+            onProgress = onProgress,
+        )
+        logcat(LogPriority.INFO) { "CloudSync: WebDAV upload completed" }
+    }
 
-        config.alistEndpointOrNull()?.let { alistEndpoint ->
-            val result = runCatching {
-                logcat(LogPriority.INFO) { "CloudSync: uploading via aList API" }
-                uploadAlistApiCbz(
-                    config = config,
-                    alistEndpoint = alistEndpoint,
-                    remoteDirectory = remoteDirectory,
-                    fileName = fileName,
-                    file = file,
-                    mediaType = mediaType,
-                    overwrite = overwrite,
-                    onProgress = onProgress,
-                )
+    suspend fun remoteFileSha256OrNull(
+        config: CloudSyncConfig,
+        remoteDirectory: String,
+        fileName: String,
+    ): String? = withIOContext {
+        val effectiveRemoteDirectory = normalizePath(remoteDirectory)
+        val request = Request.Builder()
+            .url(config.resolveUrl(effectiveRemoteDirectory, fileName))
+            .headers(config.authHeaders())
+            .get()
+            .build()
+
+        networkHelper.client.newCall(request).await().use { response ->
+            if (response.code == 404) return@withIOContext null
+            if (!response.isSuccessful) {
+                throw IllegalStateException("WebDAV file lookup failed: HTTP ${response.code}")
             }
-            if (result.isSuccess) {
-                logcat(LogPriority.INFO) { "CloudSync: aList API upload completed" }
-                return@withIOContext
+
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            response.body.byteStream().use { input ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    digest.update(buffer, 0, read)
+                }
             }
-            alistFailure = result.exceptionOrNull()
-            logcat(LogPriority.WARN) {
-                "CloudSync: aList API upload failed, falling back to WebDAV: ${alistFailure?.message}"
+            digest.digest().toHexString()
+        }
+    }
+
+    suspend fun deleteRemoteFile(
+        config: CloudSyncConfig,
+        remoteDirectory: String,
+        fileName: String,
+    ) = withIOContext {
+        val effectiveRemoteDirectory = normalizePath(remoteDirectory)
+        val request = Request.Builder()
+            .url(config.resolveUrl(effectiveRemoteDirectory, fileName))
+            .headers(config.authHeaders())
+            .delete()
+            .build()
+
+        networkHelper.client.newCall(request).await().use { response ->
+            if (response.code == 404) return@withIOContext
+            if (response.code !in SUCCESS_CODES) {
+                throw IllegalStateException("WebDAV delete failed: HTTP ${response.code}")
             }
         }
-
-        runCatching {
-            logcat(LogPriority.INFO) { "CloudSync: uploading via WebDAV" }
-            uploadWebDavCbz(
-                config = config,
-                remoteDirectory = remoteDirectory,
-                fileName = fileName,
-                file = file,
-                mediaType = mediaType,
-                overwrite = overwrite,
-                onProgress = onProgress,
-            )
-        }.onFailure { error ->
-            alistFailure?.let(error::addSuppressed)
-        }.getOrThrow()
-        logcat(LogPriority.INFO) { "CloudSync: WebDAV upload completed" }
     }
 
     private suspend fun uploadWebDavCbz(
@@ -146,11 +159,11 @@ class CloudSyncService(
         overwrite: Boolean,
         onProgress: (Int) -> Unit,
     ) {
-        ensureDirectory(config, remoteDirectory)
+        val effectiveRemoteDirectory = ensureDirectory(config, remoteDirectory)
 
         onProgress(0)
         val request = Request.Builder()
-            .url(config.resolveUrl(remoteDirectory, fileName))
+            .url(config.resolveUrl(effectiveRemoteDirectory, fileName))
             .headers(config.authHeaders())
             .put(UniFileRequestBody(file, mediaType, onProgress))
             .build()
@@ -163,96 +176,51 @@ class CloudSyncService(
         onProgress(100)
     }
 
-    private suspend fun uploadAlistApiCbz(
-        config: CloudSyncConfig,
-        alistEndpoint: AlistEndpoint,
-        remoteDirectory: String,
-        fileName: String,
-        file: UniFile,
-        mediaType: MediaType,
-        overwrite: Boolean,
-        onProgress: (Int) -> Unit,
-    ) {
-        ensureDirectory(config, remoteDirectory)
-
-        val token = loginAlist(config, alistEndpoint.apiBaseUrl)
-        val requestBody = UniFileRequestBody(file, mediaType, onProgress)
-        onProgress(0)
-        logcat(LogPriority.INFO) {
-            "CloudSync: computing file digests for aList upload path=$remoteDirectory/$fileName size=${requestBody.contentLength()}"
-        }
-        val fileDigests = file.computeDigests()
-        val remoteFilePath = normalizePath("${alistEndpoint.rootPath}/${normalizePath(remoteDirectory).trim('/')}/$fileName")
-
-        logcat(LogPriority.INFO) { "CloudSync: starting aList PUT path=$remoteFilePath" }
-        val request = Request.Builder()
-            .url(alistEndpoint.apiBaseUrl.resolveAlistApi("fs", "put"))
-            .header("Accept", "application/json, text/plain, */*")
-            .header("Authorization", token)
-            .header("Client-Id", UUID.randomUUID().toString())
-            .header("File-Path", remoteFilePath.urlEncode())
-            .header("Last-Modified", file.lastModified().takeIf { it > 0L }?.toString() ?: System.currentTimeMillis().toString())
-            .header("Overwrite", overwrite.toString())
-            .header("Password", "")
-            .header("X-File-MD5", fileDigests.md5)
-            .header("X-File-SHA1", fileDigests.sha1)
-            .header("X-File-SHA256", fileDigests.sha256)
-            .header("Content-Length", requestBody.contentLength().toString())
-            .put(requestBody)
-            .build()
-
-        uploadClient.newCall(request).await().use { response ->
-            logcat(LogPriority.INFO) { "CloudSync: aList PUT response code=${response.code}" }
-            if (!response.isSuccessful) {
-                throw IllegalStateException("aList upload failed: HTTP ${response.code}")
-            }
-            response.body.string().throwIfAlistApiFailed("aList upload failed")
-        }
-        onProgress(100)
-    }
-
-    private suspend fun loginAlist(config: CloudSyncConfig, alistApiBaseUrl: HttpUrl): String {
-        val payload = buildJsonObject {
-            put("username", config.username)
-            put("password", config.password)
-        }
-        val request = Request.Builder()
-            .url(alistApiBaseUrl.resolveAlistApi("auth", "login"))
-            .post(payload.toString().toRequestBody(jsonMime))
-            .build()
-
-        networkHelper.client.newCall(request).await().use { response ->
-            if (!response.isSuccessful) {
-                throw IllegalStateException("aList login failed: HTTP ${response.code}")
-            }
-
-            val body = response.body.string()
-            body.throwIfAlistApiFailed("aList login failed")
-
-            val token = Json.parseToJsonElement(body)
-                .jsonObject["data"]
-                ?.jsonObject
-                ?.get("token")
-                ?.jsonPrimitive
-                ?.contentOrNull
-
-            return token?.takeIf { it.isNotBlank() } ?: throw IllegalStateException("aList login failed: missing token")
-        }
-    }
-
-    private suspend fun ensureDirectory(config: CloudSyncConfig, path: String) {
+    private suspend fun ensureDirectory(config: CloudSyncConfig, path: String): String {
         var currentPath = ""
         normalizePath(path)
             .trim('/')
             .split('/')
             .filter { it.isNotBlank() }
             .forEach { segment ->
-                currentPath = normalizePath("$currentPath/$segment")
-                mkcol(config, currentPath)
+                val targetPath = normalizePath("$currentPath/$segment")
+                when (val result = mkcol(config, targetPath)) {
+                    is MkcolResult.Success -> currentPath = targetPath
+                    is MkcolResult.Failure -> {
+                        if (directoryExists(config, targetPath)) {
+                            currentPath = targetPath
+                        } else {
+                            throw IllegalStateException(
+                                "WebDAV MKCOL failed: HTTP ${result.code} for ${result.path}",
+                            ).apply {
+                                result.message?.let { addSuppressed(IllegalStateException(it)) }
+                            }
+                        }
+                    }
+                }
             }
+        return currentPath.ifBlank { "/" }
     }
 
-    private suspend fun mkcol(config: CloudSyncConfig, path: String) {
+    private suspend fun directoryExists(config: CloudSyncConfig, path: String): Boolean {
+        val request = Request.Builder()
+            .url(config.resolveUrl(path, trailingSlash = true))
+            .headers(config.authHeaders())
+            .header("Depth", "0")
+            .method("PROPFIND", PROPFIND_BODY)
+            .build()
+
+        networkHelper.client.newCall(request).await().use { response ->
+            return when {
+                response.isSuccessful -> true
+                response.code == 404 -> false
+                response.code in AUTH_FAILURE_CODES -> throw IllegalStateException("WebDAV PROPFIND failed: HTTP ${response.code}")
+                else -> false
+            }
+        }
+    }
+
+    private suspend fun mkcol(config: CloudSyncConfig, path: String): MkcolResult {
         val request = Request.Builder()
             .url(config.resolveUrl(path, trailingSlash = true))
             .headers(config.authHeaders())
@@ -260,8 +228,14 @@ class CloudSyncService(
             .build()
 
         networkHelper.client.newCall(request).await().use { response ->
-            if (response.code !in MKCOL_SUCCESS_CODES) {
-                throw IllegalStateException("WebDAV MKCOL failed: HTTP ${response.code}")
+            return when {
+                response.code in MKCOL_SUCCESS_CODES -> MkcolResult.Success
+                response.code in AUTH_FAILURE_CODES -> throw IllegalStateException("WebDAV MKCOL failed: HTTP ${response.code}")
+                else -> MkcolResult.Failure(
+                    path = path,
+                    code = response.code,
+                    message = response.body.string().takeIf { it.isNotBlank() },
+                )
             }
         }
     }
@@ -331,37 +305,6 @@ class CloudSyncService(
             .build()
     }
 
-    private fun CloudSyncConfig.alistEndpointOrNull(): AlistEndpoint? {
-        val base = url.toHttpUrl()
-        val pathSegments = base.pathSegments.filter { it.isNotBlank() }
-        val davIndex = pathSegments.indexOfFirst { it.equals("dav", ignoreCase = true) }
-        val looksLikeAlist = davIndex >= 0 || base.host.contains("alist", ignoreCase = true)
-        if (!looksLikeAlist) return null
-
-        val apiBaseSegments = if (davIndex >= 0) {
-            pathSegments.take(davIndex)
-        } else {
-            pathSegments
-        }
-        val apiBaseUrl = base.newBuilder()
-            .encodedPath("/")
-            .apply { apiBaseSegments.forEach(::addPathSegment) }
-            .build()
-        val rootPath = if (davIndex >= 0) {
-            normalizePath(pathSegments.drop(davIndex + 1).joinToString("/", prefix = "/"))
-        } else {
-            "/"
-        }
-        return AlistEndpoint(apiBaseUrl = apiBaseUrl, rootPath = rootPath)
-    }
-
-    private fun HttpUrl.resolveAlistApi(vararg pathSegments: String): HttpUrl {
-        return newBuilder()
-            .addPathSegment("api")
-            .apply { pathSegments.forEach(::addPathSegment) }
-            .build()
-    }
-
     private fun CloudSyncConfig.relativePathFromHref(href: String): String {
         val hrefPath = runCatching {
             URLDecoder.decode(java.net.URI(href).path ?: href, Charsets.UTF_8.name())
@@ -373,46 +316,6 @@ class CloudSyncService(
             .removePrefix(basePath)
             .trim('/')
         return normalizePath(relativePath)
-    }
-
-    private fun String.urlEncode(): String {
-        return URLEncoder.encode(this, Charsets.UTF_8.name()).replace("+", "%20")
-    }
-
-    private fun String.throwIfAlistApiFailed(messagePrefix: String) {
-        if (isBlank()) return
-
-        val jsonObject = runCatching { Json.parseToJsonElement(this).jsonObject }.getOrNull() ?: return
-        val code = jsonObject["code"]?.jsonPrimitive?.intOrNull ?: return
-        if (code == ALIST_SUCCESS_CODE) return
-
-        val message = jsonObject["message"]?.jsonPrimitive?.contentOrNull
-            ?.takeIf { it.isNotBlank() }
-            ?: "code $code"
-        throw IllegalStateException("$messagePrefix: $message")
-    }
-
-    private fun UniFile.computeDigests(): FileDigests {
-        val md5 = MessageDigest.getInstance("MD5")
-        val sha1 = MessageDigest.getInstance("SHA-1")
-        val sha256 = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-
-        openInputStream().use { input ->
-            while (true) {
-                val read = input.read(buffer)
-                if (read == -1) break
-                md5.update(buffer, 0, read)
-                sha1.update(buffer, 0, read)
-                sha256.update(buffer, 0, read)
-            }
-        }
-
-        return FileDigests(
-            md5 = md5.digest().toHexString(),
-            sha1 = sha1.digest().toHexString(),
-            sha256 = sha256.digest().toHexString(),
-        )
     }
 
     private fun ByteArray.toHexString(): String {
@@ -482,22 +385,21 @@ class CloudSyncService(
         private val GENERIC_BINARY_MEDIA_TYPE = "application/octet-stream".toMediaType()
         private val SUCCESS_CODES = setOf(200, 201, 204)
         private val MKCOL_SUCCESS_CODES = setOf(200, 201, 204, 405)
-        private const val ALIST_SUCCESS_CODE = 200
+        private val AUTH_FAILURE_CODES = setOf(401, 407)
         private const val UPLOAD_TIMEOUT_MINUTES = 15L
         private const val SEGMENT_SIZE = 8L * 1024L
     }
 }
 
-private data class AlistEndpoint(
-    val apiBaseUrl: HttpUrl,
-    val rootPath: String,
-)
+private sealed class MkcolResult {
+    data object Success : MkcolResult()
 
-private data class FileDigests(
-    val md5: String,
-    val sha1: String,
-    val sha256: String,
-)
+    data class Failure(
+        val path: String,
+        val code: Int,
+        val message: String?,
+    ) : MkcolResult()
+}
 
 data class CloudSyncConfig(
     val url: String,

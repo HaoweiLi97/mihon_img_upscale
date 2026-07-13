@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 class DownloadItem(
     val download: Download,
     header: DownloadHeaderItem,
+    val isUpload: Boolean = false,
 ) : AbstractSectionableItem<DownloadHolder, DownloadHeaderItem>(header) {
 
     override fun getLayoutRes(): Int {
@@ -44,25 +45,29 @@ class DownloadItem(
         position: Int,
         payloads: MutableList<Any>,
     ) {
-        holder.bind(download)
+        holder.bind(download, isUpload)
     }
 
     /**
      * Returns true if this item is draggable.
      */
     override fun isDraggable(): Boolean {
-        return true
+        return !isUpload
     }
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other is DownloadItem) {
-            return download.chapter.id == other.download.chapter.id
+            return download.chapter.id == other.download.chapter.id && isUpload == other.isUpload
         }
         return false
     }
 
     override fun hashCode(): Int {
-        return download.chapter.id.toInt()
+        return if (isUpload) {
+            "upload-${download.chapter.id}".hashCode()
+        } else {
+            download.chapter.id.toInt()
+        }
     }
 }

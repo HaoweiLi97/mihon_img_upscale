@@ -370,13 +370,17 @@ class PagerPageHolder(
         val chapterId = targetPage.chapter.chapter.id ?: return null
         ImageEnhancementCache.init(context)
         val configHash = ImageEnhancementCache.getConfigHash(
-            readerPreferences.realCuganNoiseLevel().get(),
-            readerPreferences.realCuganScale().get(),
-            readerPreferences.realCuganInputScale().get(),
-            readerPreferences.realCuganModel().get(),
-            readerPreferences.realCuganMaxSizeWidth().get(),
-            readerPreferences.realCuganMaxSizeHeight().get(),
-            true,
+            noise = readerPreferences.realCuganNoiseLevel().get(),
+            scale = readerPreferences.realCuganScale().get(),
+            inputScale = readerPreferences.realCuganInputScale().get(),
+            model = readerPreferences.realCuganModel().get(),
+            maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
+            maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
+            skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
+            skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
+            resizeEnabled = true,
+            tileSize = readerPreferences.realCuganTileSize().get(),
+            precision = readerPreferences.realCuganPrecision().get(),
         )
         return ImageEnhancementCache.getCachedImage(mangaId, chapterId, targetPage.index, configHash, enhancementVariantFor(targetPage))
     }
@@ -387,13 +391,17 @@ class PagerPageHolder(
         val chapterId = targetPage.chapter.chapter.id ?: return "missing-chapter"
         ImageEnhancementCache.init(context)
         val configHash = ImageEnhancementCache.getConfigHash(
-            readerPreferences.realCuganNoiseLevel().get(),
-            readerPreferences.realCuganScale().get(),
-            readerPreferences.realCuganInputScale().get(),
-            readerPreferences.realCuganModel().get(),
-            readerPreferences.realCuganMaxSizeWidth().get(),
-            readerPreferences.realCuganMaxSizeHeight().get(),
-            true,
+            noise = readerPreferences.realCuganNoiseLevel().get(),
+            scale = readerPreferences.realCuganScale().get(),
+            inputScale = readerPreferences.realCuganInputScale().get(),
+            model = readerPreferences.realCuganModel().get(),
+            maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
+            maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
+            skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
+            skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
+            resizeEnabled = true,
+            tileSize = readerPreferences.realCuganTileSize().get(),
+            precision = readerPreferences.realCuganPrecision().get(),
         )
         return when {
             ImageEnhancementCache.isSkipped(mangaId, chapterId, targetPage.index, configHash, enhancementVariantFor(targetPage)) -> "skipped"
@@ -533,13 +541,17 @@ class PagerPageHolder(
         val chapterId = targetPage.chapter.chapter.id ?: return null
         ImageEnhancementCache.init(context)
         val configHash = ImageEnhancementCache.getConfigHash(
-            readerPreferences.realCuganNoiseLevel().get(),
-            readerPreferences.realCuganScale().get(),
-            readerPreferences.realCuganInputScale().get(),
-            readerPreferences.realCuganModel().get(),
-            readerPreferences.realCuganMaxSizeWidth().get(),
-            readerPreferences.realCuganMaxSizeHeight().get(),
-            true,
+            noise = readerPreferences.realCuganNoiseLevel().get(),
+            scale = readerPreferences.realCuganScale().get(),
+            inputScale = readerPreferences.realCuganInputScale().get(),
+            model = readerPreferences.realCuganModel().get(),
+            maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
+            maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
+            skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
+            skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
+            resizeEnabled = true,
+            tileSize = readerPreferences.realCuganTileSize().get(),
+            precision = readerPreferences.realCuganPrecision().get(),
         )
 
         return when {
@@ -931,13 +943,17 @@ class PagerPageHolder(
 
         ImageEnhancementCache.init(context)
         val configHash = ImageEnhancementCache.getConfigHash(
-            readerPreferences.realCuganNoiseLevel().get(),
-            readerPreferences.realCuganScale().get(),
-            readerPreferences.realCuganInputScale().get(),
-            readerPreferences.realCuganModel().get(),
-            readerPreferences.realCuganMaxSizeWidth().get(),
-            readerPreferences.realCuganMaxSizeHeight().get(),
-            true,
+            noise = readerPreferences.realCuganNoiseLevel().get(),
+            scale = readerPreferences.realCuganScale().get(),
+            inputScale = readerPreferences.realCuganInputScale().get(),
+            model = readerPreferences.realCuganModel().get(),
+            maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
+            maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
+            skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
+            skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
+            resizeEnabled = true,
+            tileSize = readerPreferences.realCuganTileSize().get(),
+            precision = readerPreferences.realCuganPrecision().get(),
         )
 
         val pageVariant = enhancementVariantFor(targetPage)

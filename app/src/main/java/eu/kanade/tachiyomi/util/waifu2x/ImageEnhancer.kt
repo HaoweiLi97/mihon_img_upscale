@@ -11,7 +11,9 @@ import eu.kanade.tachiyomi.data.coil.pageVariant
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.util.system.logcat
@@ -25,7 +27,7 @@ import coil3.request.CachePolicy
 
 object ImageEnhancer {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val pendingRequests = ConcurrentHashMap<String, Unit>()
+    private val pendingRequests = ConcurrentHashMap<String, Int>()
     
     // Priority Queue order:
     // 1. Current visible primary page
@@ -35,6 +37,7 @@ object ImageEnhancer {
     // Then Distance from Target ASC, Seq ASC
     private val queue = PriorityBlockingQueue<EnhanceRequest>()
     private val seqGenerator = AtomicInteger(0)
+    private val generation = AtomicInteger(0)
 
     @Volatile
     private var lastResetTime = 0L
@@ -57,6 +60,12 @@ object ImageEnhancer {
     @Volatile
     private var activePageVariant = ""
 
+    @Volatile
+    private var activeJob: Job? = null
+
+    @Volatile
+    private var nativeResetJob: Job? = null
+
     // Current page the user is viewing. Used to prioritize requests closest to this page.
     @Volatile
     var targetPageIndex: Int = 0
@@ -78,6 +87,7 @@ object ImageEnhancer {
         val pageVariant: String,
         val data: Any,
         val priority: Int, // 1 = promoted/high priority, 0 = preload
+        val generation: Int,
         val seq: Int = 0
     ) : Comparable<EnhanceRequest> {
         private fun effectivePriority(): Int {
@@ -122,9 +132,13 @@ object ImageEnhancer {
                     }
 
                     val req = runInterruptible { queue.take() }
-                    processRequest(req)
+                    if (req.generation == generation.get()) {
+                        processRequest(req)
+                    } else {
+                        pendingRequests.remove(req.key, req.generation)
+                    }
                 } catch (e: Exception) {
-                    if (e !is InterruptedException) {
+                    if (e !is InterruptedException && e !is CancellationException) {
                         logcat(LogPriority.ERROR, e) { "ImageEnhancer: Worker loop error" }
                     }
                 }
@@ -168,17 +182,23 @@ object ImageEnhancer {
         }
 
         val effectiveHighPriority = highPriority || isInitialTargetRequest
-        val requestKey = "${mangaId}_${chapterId}_${pageIndex}_${pageVariant}"
+        val requestKey = requestKey(mangaId, chapterId, pageIndex, pageVariant)
+        val requestGeneration = generation.get()
         
-        if (pendingRequests.containsKey(requestKey)) {
+        val existingGeneration = pendingRequests[requestKey]
+        if (existingGeneration != null) {
             if (effectiveHighPriority) {
                  // Upgrade priority: Remove existing (likely Low) and re-add as High
                  val removed = queue.removeIf { 
-                     it.mangaId == mangaId && it.chapterId == chapterId && it.pageIndex == pageIndex && it.pageVariant == pageVariant
+                     it.mangaId == mangaId &&
+                         it.chapterId == chapterId &&
+                         it.pageIndex == pageIndex &&
+                         it.pageVariant == pageVariant &&
+                         it.generation == existingGeneration
                  }
                  if (removed) {
                      logcat(LogPriority.DEBUG) { "ImageEnhancer: Upgrading page $pageIndex/$pageVariant to High Priority" }
-                     pendingRequests.remove(requestKey)
+                     pendingRequests.remove(requestKey, existingGeneration)
                      // Proceed to add below
                  } else {
                      // Already processing or failed to remove, skip
@@ -190,20 +210,21 @@ object ImageEnhancer {
             }
         }
 
-        if (pendingRequests.putIfAbsent(requestKey, Unit) != null) return
+        if (pendingRequests.putIfAbsent(requestKey, requestGeneration) != null) return
 
         if (isInitialTargetRequest) {
             initialTargetEnqueued = true
         }
 
         val priorityLevel = if (effectiveHighPriority) 1 else 0
-        val req = EnhanceRequest(context, mangaId, chapterId, pageIndex, pageVariant, data, priorityLevel, seqGenerator.getAndIncrement())
+        val req = EnhanceRequest(context, mangaId, chapterId, pageIndex, pageVariant, data, priorityLevel, requestGeneration, seqGenerator.getAndIncrement())
         queue.offer(req)
         
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Enqueued page $pageIndex/$pageVariant (priority=$priorityLevel)" }
     }
 
     fun reset(initialPageIndex: Int = 0) {
+        cancelAll(reason = "reset")
         queue.clear()
         pendingRequests.clear()
         targetPageIndex = initialPageIndex
@@ -215,6 +236,36 @@ object ImageEnhancer {
         isFirstRequestAfterReset = true
         initialTargetEnqueued = false
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Resetting state to page $initialPageIndex" }
+    }
+
+    fun cancelAll(reason: String = "cancelAll", resetNative: Boolean = true) {
+        generation.incrementAndGet()
+        queue.clear()
+        pendingRequests.clear()
+        activeJob?.cancel(CancellationException("Image enhancement cancelled: $reason"))
+        activeJob = null
+        activeMangaId = -1L
+        activeChapterId = -1L
+        activePageIndex = -1
+        activePageVariant = ""
+        initialTargetEnqueued = false
+        if (resetNative) {
+            try {
+                Waifu2x.abortProcessing()
+            } catch (t: Throwable) {
+                logcat(LogPriority.WARN, t) { "ImageEnhancer: Failed to signal native abort" }
+            }
+            if (nativeResetJob?.isActive != true) {
+                nativeResetJob = scope.launch {
+                    try {
+                        Waifu2x.resetRealCugan()
+                    } catch (t: Throwable) {
+                        logcat(LogPriority.ERROR, t) { "ImageEnhancer: Failed to reset native upscaler" }
+                    }
+                }
+            }
+        }
+        logcat(LogPriority.DEBUG) { "ImageEnhancer: Cancelled all enhancement work (reason=$reason)" }
     }
 
     fun reprioritizeAround(
@@ -239,7 +290,7 @@ object ImageEnhancer {
 
 
     fun hasRequest(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = ""): Boolean {
-        return pendingRequests.containsKey("${mangaId}_${chapterId}_${pageIndex}_${pageVariant}")
+        return pendingRequests.containsKey(requestKey(mangaId, chapterId, pageIndex, pageVariant))
     }
 
     fun isFocusedTarget(pageIndex: Int, pageVariant: String = ""): Boolean {
@@ -255,7 +306,7 @@ object ImageEnhancer {
     }
 
     fun cancel(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = "") {
-        val requestKey = "${mangaId}_${chapterId}_${pageIndex}_${pageVariant}"
+        val requestKey = requestKey(mangaId, chapterId, pageIndex, pageVariant)
         if (pendingRequests.remove(requestKey) != null) {
              val removed = queue.removeIf { 
                  it.mangaId == mangaId && it.chapterId == chapterId && it.pageIndex == pageIndex && it.pageVariant == pageVariant
@@ -269,7 +320,7 @@ object ImageEnhancer {
     fun cancelRequestsLessThan(context: Context, mangaId: Long, chapterId: Long, thresholdPageIndex: Int) {
         queue.removeIf { req ->
             if (req.mangaId == mangaId && req.chapterId == chapterId && req.pageIndex < thresholdPageIndex) {
-                pendingRequests.remove("${req.mangaId}_${req.chapterId}_${req.pageIndex}_${req.pageVariant}")
+                pendingRequests.remove(req.key, req.generation)
                 logcat(LogPriority.DEBUG) { "ImageEnhancer: Pruned page ${req.pageIndex}/${req.pageVariant} (reason: < $thresholdPageIndex)" }
                 true
             } else {
@@ -281,7 +332,7 @@ object ImageEnhancer {
     fun cancelRequestsGreaterThan(context: Context, mangaId: Long, chapterId: Long, thresholdPageIndex: Int) {
         queue.removeIf { req ->
             if (req.mangaId == mangaId && req.chapterId == chapterId && req.pageIndex > thresholdPageIndex) {
-                pendingRequests.remove("${req.mangaId}_${req.chapterId}_${req.pageIndex}_${req.pageVariant}")
+                pendingRequests.remove(req.key, req.generation)
                 logcat(LogPriority.DEBUG) { "ImageEnhancer: Pruned page ${req.pageIndex}/${req.pageVariant} (reason: > $thresholdPageIndex)" }
                 true
             } else {
@@ -292,6 +343,7 @@ object ImageEnhancer {
 
     private suspend fun processRequest(req: EnhanceRequest) {
         try {
+            if (req.generation != generation.get()) return
             activeMangaId = req.mangaId
             activeChapterId = req.chapterId
             activePageIndex = req.pageIndex
@@ -308,13 +360,23 @@ object ImageEnhancer {
                 .pageVariant(req.pageVariant)
                 .build()
             
-            SingletonImageLoader.get(req.context).enqueue(request).job.await()
+            val disposable = SingletonImageLoader.get(req.context).enqueue(request)
+            activeJob = disposable.job
+            disposable.job.await()
         } finally {
             activeMangaId = -1L
             activeChapterId = -1L
             activePageIndex = -1
             activePageVariant = ""
-            pendingRequests.remove("${req.mangaId}_${req.chapterId}_${req.pageIndex}_${req.pageVariant}")
+            activeJob = null
+            pendingRequests.remove(req.key, req.generation)
         }
+    }
+
+    private val EnhanceRequest.key: String
+        get() = requestKey(mangaId, chapterId, pageIndex, pageVariant)
+
+    private fun requestKey(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String): String {
+        return "${mangaId}_${chapterId}_${pageIndex}_${pageVariant}"
     }
 }

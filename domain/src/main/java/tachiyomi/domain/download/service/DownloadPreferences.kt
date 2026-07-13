@@ -13,6 +13,8 @@ class DownloadPreferences(
 
     fun saveChaptersAsCBZ() = preferenceStore.getBoolean("save_chapter_as_cbz", true)
 
+    fun addRandomNonceToCBZ() = preferenceStore.getBoolean("add_random_nonce_to_cbz", false)
+
     fun cloudSyncEnabled() = preferenceStore.getBoolean("cloud_sync_enabled", false)
 
     fun cloudSyncUrl() = preferenceStore.getString("cloud_sync_url", "")
@@ -24,6 +26,8 @@ class DownloadPreferences(
     fun cloudSyncDestination() = preferenceStore.getString("cloud_sync_destination", "")
 
     fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
+
+    fun parallelCloudUploadLimit() = preferenceStore.getInt("cloud_sync_parallel_upload_limit", 5)
 
     fun cloudUploadedChapterIds() = preferenceStore.getStringSet(CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY, emptySet())
     fun cloudUploadedMetaInfoHashes() = preferenceStore.getStringSet(CLOUD_UPLOADED_META_INFO_HASHES_PREF_KEY, emptySet())

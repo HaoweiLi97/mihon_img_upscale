@@ -58,6 +58,9 @@ class DownloadManager(
     val queueState
         get() = downloader.queueState
 
+    val uploadQueueState
+        get() = downloader.uploadQueueState
+
     // For use by DownloadService only
     fun downloaderStart() = downloader.start()
     fun downloaderStop(reason: String? = null) = downloader.stop(reason)
@@ -415,25 +418,29 @@ class DownloadManager(
         }
     }
 
-    fun statusFlow(): Flow<Download> = queueState
-        .flatMapLatest { downloads ->
-            downloads
+    fun statusFlow(): Flow<Download> = kotlinx.coroutines.flow.combine(queueState, uploadQueueState) { downloads, uploads ->
+        downloads + uploads
+    }
+        .flatMapLatest { queue ->
+            queue
                 .map { download ->
-                    download.statusFlow.drop(1).map { download }
+                    download.statusFlow.drop(1).map { download }.onStart { emit(download) }
                 }
                 .merge()
         }
         .onStart {
             emitAll(
-                queueState.value.filter { download ->
+                (queueState.value + uploadQueueState.value).filter { download ->
                     download.status == Download.State.DOWNLOADING || download.status == Download.State.UPLOADING
                 }.asFlow(),
             )
         }
 
-    fun progressFlow(): Flow<Download> = queueState
-        .flatMapLatest { downloads ->
-            downloads
+    fun progressFlow(): Flow<Download> = kotlinx.coroutines.flow.combine(queueState, uploadQueueState) { downloads, uploads ->
+        downloads + uploads
+    }
+        .flatMapLatest { queue ->
+            queue
                 .map { download ->
                     download.progressFlow.drop(1).map { download }
                 }
@@ -441,7 +448,7 @@ class DownloadManager(
         }
         .onStart {
             emitAll(
-                queueState.value.filter { download ->
+                (queueState.value + uploadQueueState.value).filter { download ->
                     download.status == Download.State.DOWNLOADING || download.status == Download.State.UPLOADING
                 }
                     .asFlow(),

@@ -80,6 +80,10 @@ object ImageEnhancementCache {
      */
     fun saveToCache(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, bitmap: Bitmap, pageVariant: String = ""): File? {
         val currentCacheDir = cacheDir ?: return null
+        if (!isDisplayable(bitmap)) {
+            android.util.Log.e("ImageEnhancementCache", "Refusing to cache nearly transparent enhanced image for page $pageIndex")
+            return null
+        }
         
         try {
             val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant))
@@ -105,6 +109,33 @@ object ImageEnhancementCache {
             android.util.Log.e("ImageEnhancementCache", "Failed to save to cache for page $pageIndex", t)
             return null
         }
+    }
+
+    fun isDisplayable(bitmap: Bitmap): Boolean {
+        if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) return false
+        if (!bitmap.hasAlpha()) return true
+
+        val stepX = (bitmap.width / 24).coerceAtLeast(1)
+        val stepY = (bitmap.height / 24).coerceAtLeast(1)
+        var total = 0
+        var visible = 0
+        var alphaSum = 0L
+
+        var y = 0
+        while (y < bitmap.height) {
+            var x = 0
+            while (x < bitmap.width) {
+                val alpha = bitmap.getPixel(x, y) ushr 24
+                if (alpha > 16) visible++
+                alphaSum += alpha.toLong()
+                total++
+                x += stepX
+            }
+            y += stepY
+        }
+
+        if (total == 0) return false
+        return visible > total / 20 || alphaSum / total > 32
     }
 
     /**
@@ -184,9 +215,22 @@ object ImageEnhancementCache {
         model: Int = 0,
         maxWidth: Int = 0,
         maxHeight: Int = 0,
-        resizeEnabled: Boolean = false
+        skipMaxWidth: Int = 0,
+        skipMaxHeight: Int = 0,
+        resizeEnabled: Boolean = false,
+        tileSize: Int = 128,
+        precision: Int = 0,
     ): String {
-        return "${noise}x${scale}x${inputScale}_m${model}_w${maxWidth}_h${maxHeight}_r${if (resizeEnabled) 1 else 0}"
+        val effectiveScale = getEffectiveScale(model, scale)
+        return "${noise}x${effectiveScale}x${inputScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_r${if (resizeEnabled) 1 else 0}_t${tileSize}_p${precision}"
+    }
+
+    fun getEffectiveScale(model: Int, scale: Int): Int {
+        return when (model) {
+            3, 4, 5, 6, 7, 8, 9, 12, 13 -> 2
+            10, 11, 14, 15 -> 4
+            else -> scale
+        }
     }
     
     /**

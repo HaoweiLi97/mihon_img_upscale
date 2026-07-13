@@ -73,6 +73,12 @@ object SettingsDownloadScreen : SearchableSettings {
                 preference = downloadPreferences.saveChaptersAsCBZ(),
                 title = stringResource(MR.strings.save_chapter_as_cbz),
             ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.addRandomNonceToCBZ(),
+                title = stringResource(MR.strings.add_random_nonce_to_cbz),
+                subtitle = stringResource(MR.strings.add_random_nonce_to_cbz_summary),
+                enabled = saveChaptersAsCBZ,
+            ),
             getCloudSyncGroup(
                 downloadPreferences = downloadPreferences,
                 saveChaptersAsCBZ = saveChaptersAsCBZ,
@@ -123,6 +129,7 @@ object SettingsDownloadScreen : SearchableSettings {
         val cloudSyncPassword by downloadPreferences.cloudSyncPassword().collectAsState()
         val cloudSyncDestination by downloadPreferences.cloudSyncDestination().collectAsState()
         val deleteAfterUpload by downloadPreferences.cloudSyncDeleteAfterUpload().collectAsState()
+        val parallelUploadLimit by downloadPreferences.parallelCloudUploadLimit().collectAsState()
 
         var showLoginDialog by rememberSaveable { mutableStateOf(false) }
         var testingConnection by rememberSaveable { mutableStateOf(false) }
@@ -207,6 +214,13 @@ object SettingsDownloadScreen : SearchableSettings {
                         onCheckedChanged = { downloadPreferences.cloudSyncDeleteAfterUpload().set(it) },
                     )
                 },
+                Preference.PreferenceItem.SliderPreference(
+                    value = parallelUploadLimit,
+                    valueRange = 1..5,
+                    title = stringResource(MR.strings.pref_cloud_sync_concurrent_uploads),
+                    enabled = destinationAvailable,
+                    onValueChanged = { downloadPreferences.parallelCloudUploadLimit().set(it) },
+                ),
             ),
         )
     }

@@ -71,6 +71,9 @@ object DownloadQueueScreen : Screen() {
         val downloadCount by remember {
             derivedStateOf { downloadList.sumOf { it.subItems.size } }
         }
+        val queuedDownloadCount by remember {
+            derivedStateOf { downloadList.sumOf { header -> header.subItems.count { !it.isUpload } } }
+        }
 
         val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
         var fabExpanded by remember { mutableStateOf(true) }
@@ -121,7 +124,7 @@ object DownloadQueueScreen : Screen() {
                     },
                     navigateUp = navigator::pop,
                     actions = {
-                        if (downloadList.isNotEmpty()) {
+                        if (queuedDownloadCount > 0) {
                             var sortExpanded by remember { mutableStateOf(false) }
                             val onDismissRequest = { sortExpanded = false }
                             DropdownMenu(
@@ -226,7 +229,7 @@ object DownloadQueueScreen : Screen() {
                     },
                     expanded = fabExpanded,
                     modifier = Modifier.animateFloatingActionButton(
-                        visible = downloadList.isNotEmpty(),
+                        visible = queuedDownloadCount > 0,
                         alignment = Alignment.BottomEnd,
                     ),
                 )

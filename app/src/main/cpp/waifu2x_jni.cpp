@@ -2,6 +2,7 @@
 #include "waifu2x.h"
 #include <android/bitmap.h>
 #include <android/log.h>
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <jni.h>
@@ -25,7 +26,9 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
                                                          jobject thiz,
                                                          jstring model_dir,
                                                          jint noise_level,
-                                                         jint scale_level) {
+                                                         jint scale_level,
+                                                         jint jobs,
+                                                         jint precision) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -58,7 +61,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
                "_scale2.0x_model.bin";
   }
 
-  g_waifu2x = new Waifu2x(0); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
   g_waifu2x->disable_grayscale_check = true;
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
@@ -76,7 +79,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
     JNIEnv *env, jobject thiz, jstring model_dir, jint noise_level,
-    jint scale_level) {
+    jint scale_level, jint jobs, jint precision) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -106,7 +109,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
     // model or just fail/fallback For now assume 2x.
   }
 
-  g_waifu2x = new Waifu2x(0); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
   g_waifu2x->disable_grayscale_check = true;
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
@@ -283,6 +286,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeScaleBitmap(
 extern "C" JNIEXPORT void JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeDestroy(JNIEnv *env,
                                                             jobject thiz) {
+  g_abort_processing.store(true);
   std::lock_guard<std::mutex> lock(g_lock);
   if (g_waifu2x) {
     delete g_waifu2x;
@@ -292,8 +296,17 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeDestroy(JNIEnv *env,
     delete g_anime4k;
     g_anime4k = nullptr;
   }
+  g_progress.store(0);
+  g_current_id.store(-1);
+  g_abort_processing.store(false);
   // DO NOT call destroy_gpu_instance here. It should be global.
   // Repeatedly calling it on exit/init is slow and can cause hangs.
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeAbortProcessing(
+    JNIEnv *env, jobject thiz) {
+  g_abort_processing.store(true);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -369,7 +382,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcessAnime4K(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
     JNIEnv *env, jobject thiz, jstring model_dir, jint noise_level,
-    jint scale_level, jint tile_sleep_ms) {
+    jint scale_level, jint tile_sleep_ms, jint jobs, jint precision) {
   g_abort_processing = true; // Signal abort to any running process
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false; // Reset
@@ -418,7 +431,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
   std::string bin_file = model_path + "/up" + std::to_string(scale_level) +
                          "x-" + noise_str + ".bin";
 
-  g_waifu2x = new Waifu2x(0); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
   g_waifu2x->tile_sleep_ms = tile_sleep_ms; // Set configurable sleep
@@ -461,7 +474,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcessRealCugan(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
-    JNIEnv *env, jobject thiz, jstring model_dir, jint scale) {
+    JNIEnv *env, jobject thiz, jstring model_dir, jint scale, jint jobs,
+    jint precision) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -479,7 +493,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
   std::string param_file = model_path + "/x" + std::to_string(scale) + ".param";
   std::string bin_file = model_path + "/x" + std::to_string(scale) + ".bin";
 
-  g_waifu2x = new Waifu2x(0); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
   g_waifu2x->noise = 0;
   g_waifu2x->scale = scale;
   g_waifu2x->prepadding = 10; // Real-ESRGAN usually uses smaller padding, 10 is
@@ -502,8 +516,52 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
+    JNIEnv *env, jobject thiz, jstring model_dir, jstring model_stem,
+    jint scale, jint jobs, jint precision) {
+  g_abort_processing = true;
+  std::lock_guard<std::mutex> lock(g_lock);
+  g_abort_processing = false;
+
+  ncnn::create_gpu_instance();
+
+  if (g_waifu2x) {
+    delete g_waifu2x;
+  }
+
+  const char *model_dir_str = env->GetStringUTFChars(model_dir, 0);
+  const char *model_stem_str = env->GetStringUTFChars(model_stem, 0);
+  std::string model_path = std::string(model_dir_str);
+  std::string stem = std::string(model_stem_str);
+
+  std::string param_file = model_path + "/" + stem + ".param";
+  std::string bin_file = model_path + "/" + stem + ".bin";
+
+  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision);
+  g_waifu2x->noise = 0;
+  g_waifu2x->scale = scale;
+  g_waifu2x->prepadding = 10;
+  g_waifu2x->progress_ptr = &g_progress;
+  g_waifu2x->ui_busy_ptr = &g_ui_busy;
+  g_waifu2x->should_abort_ptr = &g_abort_processing;
+  g_progress.store(0);
+
+  int ret = g_waifu2x->load(param_file, bin_file);
+
+  if (ret != 0) {
+    LOGE("Generic ncnn model init failed: %s", param_file.c_str());
+  } else {
+    LOGD("Generic ncnn model loaded: %s x%d", stem.c_str(), scale);
+  }
+
+  env->ReleaseStringUTFChars(model_stem, model_stem_str);
+  env->ReleaseStringUTFChars(model_dir, model_dir_str);
+  return ret == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitNose(
-    JNIEnv *env, jobject thiz, jstring model_dir) {
+    JNIEnv *env, jobject thiz, jstring model_dir, jint jobs, jint precision) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -521,7 +579,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitNose(
   std::string param_file = model_path + "/up2x-no-denoise.param";
   std::string bin_file = model_path + "/up2x-no-denoise.bin";
 
-  g_waifu2x = new Waifu2x(0); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
   g_waifu2x->noise = 0;
   g_waifu2x->scale = 2;       // Fixed 2x
   g_waifu2x->prepadding = 18; // Assumed 18 for CUGAN 2x

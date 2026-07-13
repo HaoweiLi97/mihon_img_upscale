@@ -34,8 +34,11 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      *
      * @param category The category to bind.
      */
-    fun bind(download: Download) {
+    fun bind(download: Download, isUpload: Boolean) {
         this.download = download
+        binding.reorder.visibility = if (isUpload) View.INVISIBLE else View.VISIBLE
+        binding.menu.visibility = if (isUpload) View.INVISIBLE else View.VISIBLE
+
         // Update the chapter name.
         binding.chapterTitle.text = download.chapter.name
 

@@ -14,8 +14,11 @@
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-Waifu2x::Waifu2x(int gpuid, bool _tta_mode, int num_threads) {
+Waifu2x::Waifu2x(int gpuid, bool _tta_mode, int _num_threads,
+                 int _precision_mode) {
   vkdev = gpuid == -1 ? 0 : ncnn::get_gpu_device(gpuid);
+  num_threads = std::max(1, _num_threads);
+  precision_mode = _precision_mode;
   net.opt.num_threads = num_threads;
   waifu2x_preproc = 0;
   waifu2x_postproc = 0;
@@ -43,11 +46,36 @@ Waifu2x::~Waifu2x() {
 
 int Waifu2x::load(const std::string &parampath, const std::string &modelpath) {
   net.opt.use_vulkan_compute = vkdev ? true : false;
-  net.opt.use_fp16_packed = true;  // Disable FP16 packed
-  net.opt.use_fp16_storage = true; // Disable FP16 storage
+  net.opt.use_fp16_packed = false;
+  net.opt.use_fp16_storage = false;
+  net.opt.use_fp16_arithmetic = false;
+  net.opt.use_int8_inference = false;
+  net.opt.use_int8_packed = false;
+  net.opt.use_int8_storage = false;
+  net.opt.use_int8_arithmetic = false;
+  net.opt.use_bf16_storage = false;
+  net.opt.use_bf16_packed = false;
 
-  net.opt.use_fp16_arithmetic =
-      false; // Use FP32 arithmetic (Vulkan lacks BF16 math)
+  switch (precision_mode) {
+  case 1: // FP32
+    break;
+  case 2: // INT8
+    net.opt.use_int8_inference = true;
+    net.opt.use_int8_packed = true;
+    net.opt.use_int8_storage = true;
+    net.opt.use_int8_arithmetic = true;
+    break;
+  case 3: // BF16
+    net.opt.use_bf16_storage = true;
+    net.opt.use_bf16_packed = true;
+    break;
+  case 0: // FP16
+  default:
+    net.opt.use_fp16_packed = true;
+    net.opt.use_fp16_storage = true;
+    net.opt.use_fp16_arithmetic = false;
+    break;
+  }
   net.opt.use_packing_layout = true; // Enable packing for better performance
 
   // Additional optimizations (safe for all devices)
@@ -56,7 +84,7 @@ int Waifu2x::load(const std::string &parampath, const std::string &modelpath) {
   net.opt.use_local_pool_allocator = true; // Better memory allocation
   net.opt.use_shader_local_memory = true;  // Use shader local memory
 
-  net.opt.num_threads = 3; // Optimized for Snapdragon multi-core architecture
+  net.opt.num_threads = num_threads;
 
   // Hardware-specific optimizations are already set in constructor
   // (use_subgroup_ops, use_cooperative_matrix, num_threads)
@@ -373,8 +401,9 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
                     (unsigned char)std::max(0.0f, std::min(255.0f, g));
                 dst_row[dst_idx + 2] =
                     (unsigned char)std::max(0.0f, std::min(255.0f, b));
+                float a = ptr_a ? ptr_a[j] : 255.0f;
                 dst_row[dst_idx + 3] =
-                    ptr_a ? (unsigned char)(ptr_a[j] * 255.0f) : 255;
+                    (unsigned char)std::max(0.0f, std::min(255.0f, a));
               }
             }
 
@@ -388,6 +417,10 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
       // Check for abort signal
       if (should_abort_ptr && should_abort_ptr->load()) {
         LOGD("Waifu2x process aborted by signal");
+        while (!pipeline.empty()) {
+          pipeline.front().wait();
+          pipeline.pop_front();
+        }
         return -1;
       }
 
@@ -398,15 +431,6 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
       }
     }
   }
-
-  // ---------------------------------------------------------
-  // GPU WORK DONE - RELEASE LOCK EARLY!
-  // ---------------------------------------------------------
-  // All GPU inference tasks are submitted. Releasing the lock allows the NEXT
-  // image to start its GPU work while we finish CPU conversion for the current
-  // image's buffered tiles.
-  LOGD("GPU work finished, releasing lock early for next image.");
-  lock.unlock();
 
   // Wait for all remaining tile conversions in the pipeline
   while (!pipeline.empty()) {

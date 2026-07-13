@@ -12,7 +12,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -151,7 +155,24 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         val realCuganInputScale by screenModel.preferences.realCuganInputScale().collectAsState()
 
         SettingsChipRow(stringResource(MR.strings.reader_model)) {
-            listOf("Real-CUGAN SE", "Real-CUGAN Pro", "Real-ESRGAN", "Real-CUGAN Nose", "Waifu2x", "Waifu2x (Fast)").mapIndexed { index, name ->
+            listOf(
+                "Real-CUGAN SE",
+                "Real-CUGAN Pro",
+                "Real-ESRGAN",
+                "Real-CUGAN Nose",
+                "Waifu2x",
+                "Waifu2x (Fast)",
+                "W2xEX Universal Fast",
+                "W2xEX Omni Mini",
+                "W2xEX Omni Mini V2",
+                "W2xEX Photo Small",
+                "W2xEX Anime HQ",
+                "W2xEX Photo HQ",
+                "SPAN x2 ch48",
+                "SPAN x2 ch52",
+                "SPAN x4 ch48",
+                "SPAN x4 ch52",
+            ).mapIndexed { index, name ->
                 FilterChip(
                     selected = realCuganModel == index,
                     onClick = { screenModel.preferences.realCuganModel().set(index) },
@@ -182,7 +203,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        if (realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5) {
+        if (realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 || realCuganModel in 6..9 || realCuganModel in 12..13) {
              SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
                   FilterChip(
                       selected = true,
@@ -190,6 +211,14 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                       label = { Text(stringResource(MR.strings.reader_scale_fixed_2x)) }
                   )
              }
+        } else if (realCuganModel == 10 || realCuganModel == 11 || realCuganModel in 14..15) {
+            SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
+                FilterChip(
+                    selected = true,
+                    onClick = {},
+                    label = { Text("4x") },
+                )
+            }
         } else if (realCuganModel == 1) { // Pro only supports 2x, 3x
             SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
                 listOf(2, 3).map { scale ->
@@ -238,38 +267,63 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        Column {
-            HeadingItem(stringResource(MR.strings.reader_target_resolution))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                val maxWidth by screenModel.preferences.realCuganMaxSizeWidth().collectAsState()
-                OutlinedTextField(
-                    modifier = Modifier.weight(1f),
-                    value = maxWidth.toString(),
-                    onValueChange = { s ->
-                        s.toIntOrNull()?.let { screenModel.preferences.realCuganMaxSizeWidth().set(it) }
-                    },
-                    label = { Text(stringResource(MR.strings.reader_target_width)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                )
-                val maxHeight by screenModel.preferences.realCuganMaxSizeHeight().collectAsState()
-                OutlinedTextField(
-                    modifier = Modifier.weight(1f),
-                    value = maxHeight.toString(),
-                    onValueChange = { s ->
-                        s.toIntOrNull()?.let { screenModel.preferences.realCuganMaxSizeHeight().set(it) }
-                    },
-                    label = { Text(stringResource(MR.strings.reader_target_height)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
+        SettingsChipRow(stringResource(MR.strings.reader_tile_size)) {
+            val tileSize by screenModel.preferences.realCuganTileSize().collectAsState()
+            listOf(64, 96, 128, 192, 256).map { value ->
+                FilterChip(
+                    selected = tileSize == value,
+                    onClick = { screenModel.preferences.realCuganTileSize().set(value) },
+                    label = { Text(value.toString()) },
                 )
             }
         }
+
+        SettingsChipRow(stringResource(MR.strings.reader_processing_jobs)) {
+            val jobs by screenModel.preferences.realCuganJobs().collectAsState()
+            (1..6).map { value ->
+                FilterChip(
+                    selected = jobs == value,
+                    onClick = { screenModel.preferences.realCuganJobs().set(value) },
+                    label = { Text(value.toString()) },
+                )
+            }
+        }
+
+        SettingsChipRow(stringResource(MR.strings.reader_precision)) {
+            val precision by screenModel.preferences.realCuganPrecision().collectAsState()
+            listOf(
+                0 to stringResource(MR.strings.reader_precision_fp16),
+                1 to stringResource(MR.strings.reader_precision_fp32),
+                2 to stringResource(MR.strings.reader_precision_int8),
+                3 to stringResource(MR.strings.reader_precision_bf16),
+            ).map { (value, name) ->
+                FilterChip(
+                    selected = precision == value,
+                    onClick = { screenModel.preferences.realCuganPrecision().set(value) },
+                    label = { Text(name) },
+                )
+            }
+        }
+
+        val processMaxWidth by screenModel.preferences.realCuganMaxSizeWidth().collectAsState()
+        val processMaxHeight by screenModel.preferences.realCuganMaxSizeHeight().collectAsState()
+        ResolutionLimitFields(
+            heading = stringResource(MR.strings.reader_processing_resolution),
+            width = processMaxWidth,
+            height = processMaxHeight,
+            onWidthChange = { screenModel.preferences.realCuganMaxSizeWidth().set(it) },
+            onHeightChange = { screenModel.preferences.realCuganMaxSizeHeight().set(it) },
+        )
+
+        val skipMaxWidth by screenModel.preferences.realCuganSkipMaxSizeWidth().collectAsState()
+        val skipMaxHeight by screenModel.preferences.realCuganSkipMaxSizeHeight().collectAsState()
+        ResolutionLimitFields(
+            heading = stringResource(MR.strings.reader_max_resolution),
+            width = skipMaxWidth,
+            height = skipMaxHeight,
+            onWidthChange = { screenModel.preferences.realCuganSkipMaxSizeWidth().set(it) },
+            onHeightChange = { screenModel.preferences.realCuganSkipMaxSizeHeight().set(it) },
+        )
 
         CheckboxItem(
             label = stringResource(MR.strings.reader_show_processing_status),
@@ -277,6 +331,70 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         )
     }
 }
+
+@Composable
+private fun ResolutionLimitFields(
+    heading: String,
+    width: Int,
+    height: Int,
+    onWidthChange: (Int) -> Unit,
+    onHeightChange: (Int) -> Unit,
+) {
+    Column {
+        HeadingItem(heading)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            ResolutionNumberField(
+                modifier = Modifier.weight(1f),
+                value = width,
+                onValueChange = onWidthChange,
+                label = stringResource(MR.strings.reader_resolution_width),
+            )
+            ResolutionNumberField(
+                modifier = Modifier.weight(1f),
+                value = height,
+                onValueChange = onHeightChange,
+                label = stringResource(MR.strings.reader_resolution_height),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ResolutionNumberField(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    var text by remember { mutableStateOf(value.toResolutionText()) }
+
+    LaunchedEffect(value) {
+        val normalized = value.toResolutionText()
+        if (text != normalized && (text.toIntOrNull() ?: 0) != value) {
+            text = normalized
+        }
+    }
+
+    OutlinedTextField(
+        modifier = modifier,
+        value = text,
+        onValueChange = { raw ->
+            val filtered = raw.filter(Char::isDigit)
+            text = filtered
+            onValueChange(filtered.toIntOrNull() ?: 0)
+        },
+        label = { Text(label) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true,
+    )
+}
+
+private fun Int.toResolutionText(): String = if (this == 0) "" else toString()
 
 private fun getColorValue(currentColor: Int, color: Int, mask: Long, bitShift: Int): Int {
     return (color shl bitShift) or (currentColor and mask.inv().toInt())

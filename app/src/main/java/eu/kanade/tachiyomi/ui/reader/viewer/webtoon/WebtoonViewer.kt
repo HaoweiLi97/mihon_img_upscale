@@ -206,6 +206,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      */
     override fun destroy() {
         super.destroy()
+        eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("webtoon viewer destroyed")
         scope.cancel()
     }
 
