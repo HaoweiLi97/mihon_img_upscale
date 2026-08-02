@@ -216,6 +216,18 @@ class DownloadManager(
         removeFromDownloadQueue(downloads.map { it.chapter })
     }
 
+    fun resumeCloudUpload(chapterId: Long) {
+        downloader.resumeCloudUpload(chapterId)
+    }
+
+    fun pauseCloudUpload(chapterId: Long) {
+        downloader.pauseCloudUpload(chapterId)
+    }
+
+    fun cancelCloudUpload(chapterId: Long) {
+        downloader.cancelCloudUpload(chapterId)
+    }
+
     /**
      * Deletes the directories of a list of downloaded chapters.
      *

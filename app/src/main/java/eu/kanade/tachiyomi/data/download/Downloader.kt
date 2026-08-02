@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -124,8 +125,10 @@ class Downloader(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloaderJob: Job? = null
-    private val cloudUploadQueue = Channel<CloudUploadTask>(Channel.UNLIMITED)
+    private val cloudUploadQueue = Channel<CloudUploadQueueEntry>(Channel.UNLIMITED)
     private val queuedCloudUploadKeys = Collections.synchronizedSet(mutableSetOf<String>())
+    private val cloudUploadTasks = Collections.synchronizedMap(mutableMapOf<String, CloudUploadTask>())
+    private val activeCloudUploadJobs = Collections.synchronizedMap(mutableMapOf<String, Job>())
     private val queuedMetaInfoUploadMangaIds = Collections.synchronizedSet(mutableSetOf<Long>())
     private var cloudUploadJob: Job? = null
 
@@ -761,9 +764,10 @@ class Downloader(
 
     private fun enqueueCloudUpload(task: CloudUploadTask) {
         if (!queuedCloudUploadKeys.add(task.key)) return
-        val enqueued = cloudUploadQueue.trySend(task).isSuccess
+        cloudUploadTasks[task.key] = task
+        val enqueued = cloudUploadQueue.trySend(CloudUploadQueueEntry(task, task.queueGeneration())).isSuccess
         if (!enqueued) {
-            queuedCloudUploadKeys.remove(task.key)
+            removeCloudUploadTask(task)
             return
         }
         if (task is CloudUploadTask.Chapter) {
@@ -781,23 +785,86 @@ class Downloader(
         cloudUploadJob = scope.launch {
             repeat(parallelUploads) {
                 launchIO {
-                    for (task in cloudUploadQueue) {
-                        processCloudUploadTask(task)
+                    for (entry in cloudUploadQueue) {
+                        supervisorScope {
+                            val taskJob = launch(start = CoroutineStart.LAZY) {
+                                processCloudUploadTask(entry.task, entry.generation)
+                            }
+                            activeCloudUploadJobs[entry.task.key] = taskJob
+                            taskJob.start()
+                            try {
+                                taskJob.join()
+                            } finally {
+                                activeCloudUploadJobs.remove(entry.task.key, taskJob)
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    private suspend fun processCloudUploadTask(task: CloudUploadTask) {
-        var failed = false
+    fun resumeCloudUpload(chapterId: Long) {
+        val task = chapterCloudUploadTask(chapterId) ?: return
+        val generation = task.resume() ?: return
+        task.displayDownload.status = Download.State.UPLOADING
+        task.displayDownload.uploadProgress = 0
+        if (!cloudUploadQueue.trySend(CloudUploadQueueEntry(task, generation)).isSuccess) {
+            task.pause()
+            task.displayDownload.status = Download.State.ERROR
+            return
+        }
+        ensureCloudUploadWorkers()
+    }
+
+    fun pauseCloudUpload(chapterId: Long) {
+        val task = chapterCloudUploadTask(chapterId) ?: return
+        if (!task.pause()) return
+        task.displayDownload.status = Download.State.ERROR
+        activeCloudUploadJobs[task.key]?.cancel()
+    }
+
+    fun cancelCloudUpload(chapterId: Long) {
+        val task = chapterCloudUploadTask(chapterId) ?: return
+        if (!task.cancel()) return
+        task.displayDownload.status = Download.State.DOWNLOADED
+        activeCloudUploadJobs[task.key]?.cancel()
+        removeCloudUploadTask(task)
+        _uploadQueueState.update { uploads ->
+            uploads - task.displayDownload
+        }
+    }
+
+    private fun chapterCloudUploadTask(chapterId: Long): CloudUploadTask.Chapter? {
+        return cloudUploadTasks["chapter:$chapterId"] as? CloudUploadTask.Chapter
+    }
+
+    private fun removeCloudUploadTask(task: CloudUploadTask) {
+        queuedCloudUploadKeys.remove(task.key)
+        synchronized(cloudUploadTasks) {
+            if (cloudUploadTasks[task.key] === task) {
+                cloudUploadTasks.remove(task.key)
+            }
+        }
+    }
+
+    private suspend fun processCloudUploadTask(
+        task: CloudUploadTask,
+        generation: Int,
+    ) {
+        if (!task.canProcess(generation)) return
+        var completed = false
         try {
             retryCloudUpload(task) {
                 processCloudUploadTaskOnce(task)
             }
+            completed = true
         } catch (error: Throwable) {
-            if (error is CancellationException) throw error
-            failed = true
+            if (error is CancellationException) {
+                if (task.isPausedOrCancelled()) return
+                throw error
+            }
+            if (!task.canProcess(generation)) return
             logcat(LogPriority.WARN, error) {
                 "Failed to upload ${task.description} for ${task.mangaTitle}"
             }
@@ -808,14 +875,15 @@ class Downloader(
                 queuedMetaInfoUploadMangaIds.remove(task.mangaId)
             }
             if (task is CloudUploadTask.Chapter) {
+                task.pause()
                 task.displayDownload.status = Download.State.ERROR
             }
             notifier.onWarning(error.message ?: "Cloud sync upload failed", mangaId = task.mangaId)
         } finally {
-            queuedCloudUploadKeys.remove(task.key)
-            // Leave failed chapter uploads paused in the queue. Returning from this worker lets
-            // it immediately process the next upload task.
-            if (task is CloudUploadTask.Chapter && !failed) {
+            if (task is CloudUploadTask.MetaInfo || completed || task.isCancelled()) {
+                removeCloudUploadTask(task)
+            }
+            if (task is CloudUploadTask.Chapter && (completed || task.isCancelled())) {
                 _uploadQueueState.update { uploads ->
                     uploads - task.displayDownload
                 }
@@ -1184,6 +1252,49 @@ private sealed class CloudUploadTask {
     abstract val uploadFileName: String
     abstract val description: String
 
+    private var generation = 0
+    private var paused = false
+    private var cancelled = false
+
+    @Synchronized
+    fun queueGeneration(): Int = generation
+
+    @Synchronized
+    fun canProcess(queueGeneration: Int): Boolean {
+        return generation == queueGeneration && !paused && !cancelled
+    }
+
+    @Synchronized
+    fun pause(): Boolean {
+        if (paused || cancelled) return false
+        paused = true
+        generation += 1
+        return true
+    }
+
+    @Synchronized
+    fun resume(): Int? {
+        if (!paused || cancelled) return null
+        paused = false
+        generation += 1
+        return generation
+    }
+
+    @Synchronized
+    fun cancel(): Boolean {
+        if (cancelled) return false
+        cancelled = true
+        paused = false
+        generation += 1
+        return true
+    }
+
+    @Synchronized
+    fun isPausedOrCancelled(): Boolean = paused || cancelled
+
+    @Synchronized
+    fun isCancelled(): Boolean = cancelled
+
     data class MetaInfo(
         override val key: String,
         override val mangaId: Long,
@@ -1217,6 +1328,11 @@ private sealed class CloudUploadTask {
         }
     }
 }
+
+private data class CloudUploadQueueEntry(
+    val task: CloudUploadTask,
+    val generation: Int,
+)
 
 @Serializable
 private data class MetaInfoManifest(

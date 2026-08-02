@@ -68,7 +68,14 @@ class DownloadQueueScreenModel(
          */
         override fun onMenuItemClick(position: Int, menuItem: MenuItem) {
             val item = adapter?.getItem(position) as? DownloadItem ?: return
-            if (item.isUpload) return
+            if (item.isUpload) {
+                when (menuItem.itemId) {
+                    R.id.resume_upload -> downloadManager.resumeCloudUpload(item.download.chapter.id)
+                    R.id.pause_upload -> downloadManager.pauseCloudUpload(item.download.chapter.id)
+                    R.id.cancel_upload -> downloadManager.cancelCloudUpload(item.download.chapter.id)
+                }
+                return
+            }
 
             when (menuItem.itemId) {
                 R.id.move_to_top, R.id.move_to_bottom -> {

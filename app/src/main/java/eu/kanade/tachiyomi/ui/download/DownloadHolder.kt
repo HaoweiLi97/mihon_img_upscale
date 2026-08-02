@@ -39,7 +39,7 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
         this.download = download
         this.isUpload = isUpload
         binding.reorder.visibility = if (isUpload) View.INVISIBLE else View.VISIBLE
-        binding.menu.visibility = if (isUpload) View.INVISIBLE else View.VISIBLE
+        binding.menu.visibility = View.VISIBLE
 
         // Update the chapter name.
         binding.chapterTitle.text = download.chapter.name
@@ -123,11 +123,16 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
 
     private fun showPopupMenu(view: View) {
         view.popupMenu(
-            menuRes = R.menu.download_single,
+            menuRes = if (isUpload) R.menu.upload_single else R.menu.download_single,
             initMenu = {
-                findItem(R.id.move_to_top).isVisible = bindingAdapterPosition > 1
-                findItem(R.id.move_to_bottom).isVisible =
-                    bindingAdapterPosition != adapter.itemCount - 1
+                if (isUpload) {
+                    findItem(R.id.resume_upload).isVisible = download.status == Download.State.ERROR
+                    findItem(R.id.pause_upload).isVisible = download.status != Download.State.ERROR
+                } else {
+                    findItem(R.id.move_to_top).isVisible = bindingAdapterPosition > 1
+                    findItem(R.id.move_to_bottom).isVisible =
+                        bindingAdapterPosition != adapter.itemCount - 1
+                }
             },
             onMenuItemClick = {
                 adapter.downloadItemListener.onMenuItemClick(bindingAdapterPosition, this)

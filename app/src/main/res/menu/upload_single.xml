@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/resume_upload"
+        android:title="@string/action_resume" />
+
+    <item
+        android:id="@+id/pause_upload"
+        android:title="@string/action_pause" />
+
+    <item
+        android:id="@+id/cancel_upload"
+        android:title="@string/action_cancel" />
+
+</menu>
