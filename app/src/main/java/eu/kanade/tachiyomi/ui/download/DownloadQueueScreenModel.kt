@@ -215,7 +215,11 @@ class DownloadQueueScreenModel(
                 onUpdateProgress(download)
                 onUpdateDownloadedPages(download)
             }
-            Download.State.ERROR -> cancelProgressJob(download)
+            Download.State.ERROR -> {
+                cancelProgressJob(download)
+                onUpdateProgress(download)
+                onUpdateDownloadedPages(download)
+            }
             else -> {
                 /* unused */
             }

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
@@ -641,9 +642,20 @@ class Downloader(
     ): UniFile? {
         val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")!!
         ZipWriter(context, zip).use { writer ->
-            tmpDir.listFiles()?.forEach { file ->
-                writer.write(file)
-            }
+            // Download jobs complete concurrently, and a document provider
+            // does not guarantee that listFiles() preserves either creation
+            // or display order. ZIP writes are append-only, so keep physical
+            // entry offsets in the same natural order used by the reader.
+            // This makes sequential Range buffering of remote CBZ files
+            // practical instead of scattering consecutive pages throughout
+            // the archive.
+            tmpDir.listFiles()
+                ?.sortedWith { first, second ->
+                    first.name.orEmpty().compareToCaseInsensitiveNaturalOrder(second.name.orEmpty())
+                }
+                ?.forEach { file ->
+                    writer.write(file)
+                }
             if (downloadPreferences.addRandomNonceToCBZ().get()) {
                 writer.writeBytes(
                     CBZ_RANDOM_NONCE_FILE_NAME,
@@ -778,12 +790,14 @@ class Downloader(
     }
 
     private suspend fun processCloudUploadTask(task: CloudUploadTask) {
+        var failed = false
         try {
             retryCloudUpload(task) {
                 processCloudUploadTaskOnce(task)
             }
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
+            failed = true
             logcat(LogPriority.WARN, error) {
                 "Failed to upload ${task.description} for ${task.mangaTitle}"
             }
@@ -799,7 +813,9 @@ class Downloader(
             notifier.onWarning(error.message ?: "Cloud sync upload failed", mangaId = task.mangaId)
         } finally {
             queuedCloudUploadKeys.remove(task.key)
-            if (task is CloudUploadTask.Chapter) {
+            // Leave failed chapter uploads paused in the queue. Returning from this worker lets
+            // it immediately process the next upload task.
+            if (task is CloudUploadTask.Chapter && !failed) {
                 _uploadQueueState.update { uploads ->
                     uploads - task.displayDownload
                 }

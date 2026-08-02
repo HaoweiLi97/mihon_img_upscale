@@ -28,6 +28,7 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
     }
 
     private lateinit var download: Download
+    private var isUpload: Boolean = false
 
     /**
      * Binds this holder with the given category.
@@ -36,6 +37,7 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      */
     fun bind(download: Download, isUpload: Boolean) {
         this.download = download
+        this.isUpload = isUpload
         binding.reorder.visibility = if (isUpload) View.INVISIBLE else View.VISIBLE
         binding.menu.visibility = if (isUpload) View.INVISIBLE else View.VISIBLE
 
@@ -47,7 +49,11 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
 
         // Update the progress bar and the number of downloaded pages
         val pages = download.pages
-        if (download.status == Download.State.UPLOADING) {
+        if (isUpload && download.status == Download.State.ERROR) {
+            binding.downloadProgress.progress = download.uploadProgress
+            binding.downloadProgress.max = 100
+            binding.downloadProgressText.text = view.context.stringResource(MR.strings.chapter_paused)
+        } else if (download.status == Download.State.UPLOADING) {
             binding.downloadProgress.progress = download.uploadProgress
             binding.downloadProgress.max = 100
             notifyDownloadedPages()
@@ -66,6 +72,11 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      * Updates the progress bar of the download.
      */
     fun notifyProgress() {
+        if (isUpload && download.status == Download.State.ERROR) {
+            binding.downloadProgress.max = 100
+            binding.downloadProgress.setProgressCompat(download.uploadProgress, true)
+            return
+        }
         if (download.status == Download.State.UPLOADING) {
             binding.downloadProgress.max = 100
             binding.downloadProgress.setProgressCompat(download.uploadProgress, true)
@@ -82,6 +93,10 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
      * Updates the text field of the number of downloaded pages.
      */
     fun notifyDownloadedPages() {
+        if (isUpload && download.status == Download.State.ERROR) {
+            binding.downloadProgressText.text = view.context.stringResource(MR.strings.chapter_paused)
+            return
+        }
         if (download.status == Download.State.UPLOADING) {
             binding.downloadProgressText.text = view.context.stringResource(
                 MR.strings.cloud_sync_uploading_progress,
