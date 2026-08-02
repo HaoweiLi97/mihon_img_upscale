@@ -159,13 +159,11 @@ jobs:
           tag_name: ${{ needs.get_tag.outputs.tag }}
           name: Mihon Img Upscale ${{ needs.get_tag.outputs.tag }}
           body: |
-            ## v1.2.1
+            ## ${{ needs.get_tag.outputs.tag }}
 
-            This release adds WebDAV cloud sync for downloads, including:
-            - Uploading downloaded chapter CBZ files to WebDAV or aList-backed WebDAV
-            - Manga-level `meta.info` packaging with `manifest.json` and cover art
-            - Cloud upload status indicators and improved upload completion handling
-            - Cleaner chapter file names without random hash suffixes
+            This release improves download and WebDAV cloud-sync handling:
+            - Failed WebDAV chapter uploads remain visible as paused while later uploads continue
+            - CBZ entries are written in natural page order for more efficient remote reading
 
             > [!TIP]
             >
