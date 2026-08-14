@@ -18,7 +18,9 @@ enum class PageLayout(
     val fullStringRes = _fullStringRes ?: stringRes
 
     companion object {
+        val selectableEntries = entries.filterNot { it == SPLIT_PAGES }
+
         fun fromPreference(preference: Int): PageLayout =
-            entries.find { it.value == preference } ?: SINGLE_PAGE
+            selectableEntries.find { it.value == preference } ?: SINGLE_PAGE
     }
 }

@@ -452,7 +452,8 @@
     <string name="page_layout_double">双页</string>
     <string name="page_layout_automatic">自动</string>
     <string name="page_layout_split">拆页</string>
-    <string name="pref_dual_page_split">拆分宽图（仅单页）</string>
+    <string name="pref_dual_page_split">拆分宽图</string>
+    <string name="pref_auto_detect_page_spreads">自动识别跨页图</string>
     <string name="pref_pager_page_inset">边缘缩进</string>
     <string name="pref_dual_page_invert">拆分双页时交换顺序</string>
     <string name="pref_dual_page_invert_summary">拆分双页的顺序与阅读方向不符时可以开启</string>
@@ -782,7 +783,7 @@
     <string name="label_extension_repos">插件仓库</string>
     <string name="information_empty_repos">尚未设置仓库</string>
     <string name="label_add_repo_input">仓库网址</string>
-    <string name="action_add_repo_message">在 %s 中添加仓库，输入的网址结尾应为 \"index.min.json\" 。</string>
+    <string name="action_add_repo_message">在 %s 中添加扩展商店。可输入以 index.min.json、repo.json 或 .pb 结尾的网址。</string>
     <string name="onboarding_storage_help_info">如果你是从旧版更新而来，可以查看存储指南了解详情。</string>
     <string name="onboarding_storage_help_action">存储指南</string>
     <string name="pref_storage_location">存储位置</string>

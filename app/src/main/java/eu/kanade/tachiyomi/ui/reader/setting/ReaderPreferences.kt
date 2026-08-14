@@ -153,6 +153,8 @@ class ReaderPreferences(
 
     fun automaticSplitsPage() = preferenceStore.getBoolean("automatic_splits_page", false)
 
+    fun autoDetectPageSpreads() = preferenceStore.getBoolean("auto_detect_page_spreads", false)
+
     fun invertDoublePages() = preferenceStore.getBoolean("invert_double_pages", false)
 
     fun hingeGapSize() = preferenceStore.getInt("hinge_gap_size", 0)

@@ -11,12 +11,17 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
 import mihon.domain.extensionrepo.interactor.GetExtensionRepo
 import mihon.domain.extensionrepo.interactor.UpdateExtensionRepo
 import mihon.domain.extensionrepo.model.ExtensionRepo
+import mihon.domain.extensionrepo.service.ExtensionStoreIndex
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.util.lang.withIOContext
@@ -48,22 +53,83 @@ internal class ExtensionApi {
     }
 
     private suspend fun getExtensions(extRepo: ExtensionRepo): List<Extension.Available> {
-        val repoBaseUrl = extRepo.baseUrl
         return try {
-            val response = networkService.client
-                .newCall(GET("$repoBaseUrl/index.min.json"))
-                .awaitSuccess()
-
-            with(json) {
-                response
-                    .parseAs<List<ExtensionJsonObject>>()
-                    .toExtensions(repoBaseUrl)
+            when {
+                extRepo.baseUrl.endsWith(".pb") || extRepo.baseUrl.endsWith(".pb.gz") -> {
+                    fetchStoreExtensions(extRepo.baseUrl, extRepo.baseUrl)
+                }
+                extRepo.baseUrl.endsWith("/repo.json") -> {
+                    runCatching {
+                        getStoreExtensions(fetchStore(extRepo.baseUrl), extRepo.baseUrl)
+                    }.getOrElse {
+                        fetchLegacyExtensions(extRepo.baseUrl.removeSuffix("/repo.json"))
+                    }
+                }
+                else -> {
+                    val repoBaseUrl = extRepo.baseUrl
+                    networkService.client.newCall(GET("$repoBaseUrl/index.min.json"))
+                        .awaitSuccess()
+                        .use { response ->
+                            with(json) {
+                                response.parseAs<List<ExtensionJsonObject>>().toExtensions(repoBaseUrl)
+                            }
+                        }
+                }
             }
         } catch (e: Throwable) {
-            logcat(LogPriority.ERROR, e) { "Failed to get extensions from $repoBaseUrl" }
+            logcat(LogPriority.ERROR, e) { "Failed to get extensions from ${extRepo.baseUrl}" }
             emptyList()
         }
     }
+
+    private suspend fun fetchStoreExtensions(indexUrl: String, repoUrl: String): List<Extension.Available> {
+        return getStoreExtensions(fetchStore(indexUrl), repoUrl)
+    }
+
+    private suspend fun getStoreExtensions(store: ExtensionStoreIndex, repoUrl: String): List<Extension.Available> {
+        val list: ExtensionStoreIndex.ExtensionList = store.extensionList ?: store.extensionListUrl?.let { url ->
+            fetchExtensionList(resolveUrl(repoUrl, url))
+        } ?: ExtensionStoreIndex.ExtensionList(emptyList())
+        return list.toExtensions(repoUrl)
+    }
+
+    private suspend fun fetchStore(url: String): ExtensionStoreIndex {
+        val bytes = networkService.client.newCall(GET(url)).awaitSuccess().use { it.body.bytes() }.decompressGzip()
+        return if (bytes.firstNonWhitespace() == '{'.code.toByte()) {
+            json.decodeFromString(bytes.decodeToString())
+        } else {
+            ProtoBuf.decodeFromByteArray(bytes)
+        }
+    }
+
+    private suspend fun fetchExtensionList(url: String): ExtensionStoreIndex.ExtensionList {
+        val bytes = networkService.client.newCall(GET(url)).awaitSuccess().use { it.body.bytes() }.decompressGzip()
+        return if (bytes.firstNonWhitespace() == '{'.code.toByte()) {
+            json.decodeFromString(bytes.decodeToString())
+        } else {
+            ProtoBuf.decodeFromByteArray(bytes)
+        }
+    }
+
+    private suspend fun fetchLegacyExtensions(repoBaseUrl: String): List<Extension.Available> {
+        return networkService.client.newCall(GET("$repoBaseUrl/index.min.json"))
+            .awaitSuccess()
+            .use { response ->
+                with(json) {
+                    response.parseAs<List<ExtensionJsonObject>>().toExtensions(repoBaseUrl)
+                }
+            }
+    }
+
+    private fun resolveUrl(baseUrl: String, url: String): String =
+        url.toHttpUrlOrNull()?.toString() ?: baseUrl.toHttpUrlOrNull()?.resolve(url)?.toString() ?: url
+
+    private fun ByteArray.decompressGzip(): ByteArray {
+        if (size < 2 || this[0] != 0x1f.toByte() || this[1] != 0x8b.toByte()) return this
+        return java.util.zip.GZIPInputStream(inputStream()).use { it.readBytes() }
+    }
+
+    private fun ByteArray.firstNonWhitespace(): Byte? = firstOrNull { it > 0x20 }
 
     suspend fun checkForUpdates(
         context: Context,
@@ -132,11 +198,37 @@ internal class ExtensionApi {
     }
 
     fun getApkUrl(extension: Extension.Available): String {
-        return "${extension.repoUrl}/apk/${extension.apkName}"
+        return extension.apkName.toHttpUrlOrNull()?.toString() ?: "${extension.repoUrl}/apk/${extension.apkName}"
     }
 
     private fun ExtensionJsonObject.extractLibVersion(): Double {
         return version.substringBeforeLast('.').toDouble()
+    }
+
+    private fun ExtensionStoreIndex.ExtensionList.toExtensions(repoUrl: String): List<Extension.Available> {
+        return extensions
+            .filter {
+                val version = it.extensionLib.toDoubleOrNull() ?: return@filter false
+                version in ExtensionLoader.LIB_VERSION_MIN..ExtensionLoader.LIB_VERSION_MAX
+            }
+            .map { extension ->
+                val languages = extension.sources.map { it.language }.toSet()
+                Extension.Available(
+                    name = extension.name,
+                    pkgName = extension.packageName,
+                    versionName = extension.versionName,
+                    versionCode = extension.versionCode,
+                    libVersion = extension.extensionLib.toDouble(),
+                    lang = languages.singleOrNull() ?: "all",
+                    isNsfw = extension.contentWarning >= ExtensionStoreIndex.ContentWarning.MIXED,
+                    sources = extension.sources.map {
+                        Extension.Available.Source(it.id, it.language, it.name, it.homeUrl)
+                    },
+                    apkName = extension.resources.apkUrl,
+                    iconUrl = extension.resources.iconUrl,
+                    repoUrl = repoUrl,
+                )
+            }
     }
 }
 

@@ -24,7 +24,11 @@ class UpdateExtensionRepo(
             repo.signingKeyFingerprint.startsWith("NOFINGERPRINT") ||
             repo.signingKeyFingerprint == newRepo.signingKeyFingerprint
         ) {
-            repository.upsertRepo(newRepo)
+            if (repo.baseUrl == newRepo.baseUrl) {
+                repository.upsertRepo(newRepo)
+            } else {
+                repository.replaceRepo(newRepo)
+            }
         }
     }
 }

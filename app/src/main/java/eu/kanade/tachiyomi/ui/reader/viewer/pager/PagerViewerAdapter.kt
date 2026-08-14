@@ -6,7 +6,10 @@ import eu.kanade.tachiyomi.ui.reader.model.*
 import eu.kanade.tachiyomi.ui.reader.viewer.calculateChapterGap
 import eu.kanade.tachiyomi.util.system.createReaderThemeContext
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.util.Collections
+import java.util.IdentityHashMap
 import kotlin.math.max
 
 /**
@@ -52,6 +55,29 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
     var forceTransition = false
 
+    private val pageSpreadDetectionState = PageSpreadDetectionState<PageSpreadKey>()
+    // Splitting a page changes the neighbour used by the preceding source page. ViewPager would
+    // otherwise retain that holder because its displayed item is still the same page instance.
+    private val pagesNeedingSpreadRefresh = Collections.newSetFromMap(IdentityHashMap<ReaderPage, Boolean>())
+
+    data class PageSpreadCandidate(
+        val first: ReaderPage,
+        val second: ReaderPage,
+    )
+
+    private data class PageSpreadKey(
+        val chapterId: Long,
+        val firstIndex: Int,
+        val firstIsInserted: Boolean,
+        val secondIndex: Int,
+        val secondIsInserted: Boolean,
+    )
+
+    private data class SplitPageKey(
+        val chapterId: Long,
+        val pageIndex: Int,
+    )
+
     private val displayReaderPages: List<ReaderPage>
         get() = subItems.filterIsInstance<ReaderPage>().filterNot { it is InsertPage }
 
@@ -63,6 +89,11 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
     fun setChapters(chapters: ViewerChapters, forceTransition: Boolean, anchorPage: ReaderPage? = null) {
         restoredPosition = false
         val newItems = mutableListOf<ReaderItem>()
+        // Preference changes rebuild this list. Retain existing split halves while wide-page
+        // splitting is still active so the current page does not temporarily lose its right half.
+        val existingSplitPages = subItems.filterIsInstance<InsertPage>()
+            .mapNotNull { splitPageKey(it.parent) }
+            .toSet()
 
         // Forces chapter transition if there is missing chapters
         val prevHasMissingChapters = calculateChapterGap(chapters.currChapter, chapters.prevChapter) > 0
@@ -123,6 +154,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
         subItems = newItems
         preprocessed = mutableMapOf()
+        restoreSplitPages(existingSplitPages)
         
         var useSecondPage = false
         val enteringDoublePages = !doubledUp && viewer.config.doublePages
@@ -156,18 +188,8 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
                     startPageConfidence = null
                 }
             }
-            if (viewer.config.splitPages) {
-                val pagedItems = mutableListOf<ReaderItem>()
-                subItems.forEach { page ->
-                    // Mihon doesn't have longPage property yet, but we can check if it's wide
-                    // For now, let's assume it should be split if it was already marked as split
-                    // This logic is simplified compared to Yokai
-                    pagedItems.add(page)
-                }
-
-                this.joinedItems = pagedItems.map {
-                    it to (if ((it as? ReaderPage)?.fullPage == true && it.firstHalf == true) SplitPage else null)
-                }.toMutableList()
+            if (viewer.config.autoDetectPageSpreads) {
+                this.joinedItems = joinDetectedPageSpreads()
             } else {
                 this.joinedItems = subItems.map { it to null }.toMutableList()
             }
@@ -202,7 +224,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
                     it?.firstHalf = null
                 }
                 // Step 3: If pages have been shifted,
-                if (viewer.config.shiftDoublePage) {
+                if (viewer.config.doublePages && viewer.config.shiftDoublePage) {
                     run loop@{
                         var index = items.indexOf(pageToShift)
                         if (pageToShift?.fullPage == true) {
@@ -233,7 +255,11 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
                 var itemIndex = 0
                 while (itemIndex < items.size) {
                     items[itemIndex]?.isolatedPage = false
-                    if (items[itemIndex]?.fullPage == true || items[itemIndex]?.shiftedPage == true) {
+                    if (
+                        items[itemIndex]?.fullPage == true ||
+                        items[itemIndex]?.shiftedPage == true ||
+                        items[itemIndex] is InsertPage
+                    ) {
                         // Add a 'blank' page after each full page. It will be used when chunked to solo a page
                         items.add(itemIndex + 1, null)
                         if (items[itemIndex]?.fullPage == true && itemIndex > 0 &&
@@ -325,10 +351,16 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
     private fun findReaderPage(page: ReaderPage?): ReaderPage? {
         page ?: return null
+        if (page is InsertPage) return page
         return displayReaderPages.firstOrNull { candidate -> candidate.isFromSamePage(page) }
     }
 
     fun getPositionForPage(page: ReaderPage, preferCurrentAsFirstPage: Boolean = false): Int {
+        if (page is InsertPage) {
+            return joinedItems.indexOfFirst { pair ->
+                pair.first === page || pair.second === page
+            }
+        }
         var index = if (preferCurrentAsFirstPage) {
             joinedItems.indexOfFirst {
                 val firstPage = it.first as? ReaderPage
@@ -376,7 +408,105 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
     fun getActiveReaderPage(position: Int): ReaderPage? {
         return joinedItems.getOrNull(position)
             ?.let(::visibleReaderPages)
-            ?.firstOrNull()
+            ?.let { pages ->
+                // The pair keeps source order even for R2L (the renderer swaps the
+                // halves). In R2L the page on the right is read first, so it is the
+                // active page for progress, restore and chapter preloading.
+                if (viewer is R2LPagerViewer) pages.lastOrNull() else pages.firstOrNull()
+            }
+    }
+
+    fun getPageSpreadCandidate(page: ReaderPage): PageSpreadCandidate? {
+        if (
+            !viewer.config.autoDetectPageSpreads ||
+            viewer.config.doublePages
+        ) {
+            logcat(LogPriority.INFO) {
+                "PageSpread: skip page ${page.index}; auto=${viewer.config.autoDetectPageSpreads}, double=${viewer.config.doublePages}"
+            }
+            return null
+        }
+
+        // InsertPage has the same source index as its parent. Use identity so each half of a
+        // split wide image can be compared with its actual neighbouring half.
+        val pageIndex = subItems.indexOfFirst { it === page }
+        if (pageIndex == -1) return null
+
+        val adjacentIndex = pageIndex + 1
+        val adjacentPage = subItems.getOrNull(adjacentIndex) as? ReaderPage ?: return null
+        if (adjacentPage.chapter != page.chapter) return null
+
+        val first = page
+        val second = adjacentPage
+        val key = pageSpreadKey(first, second) ?: return null
+        if (!pageSpreadDetectionState.begin(key)) {
+            logcat(LogPriority.INFO) { "PageSpread: page pair ${first.index}/${second.index} already checked or pending" }
+            return null
+        }
+
+        return PageSpreadCandidate(first, second)
+    }
+
+    fun onPageSpreadDeferred(candidate: PageSpreadCandidate) {
+        pageSpreadKey(candidate.first, candidate.second)?.let(pageSpreadDetectionState::defer)
+    }
+
+    fun hasSplitPage(page: ReaderPage): Boolean {
+        return page is InsertPage || subItems.any { item ->
+            item is InsertPage && item.parent === page
+        }
+    }
+
+    fun resetPageSpreadDetection() {
+        pageSpreadDetectionState.reset()
+    }
+
+    fun onPageSpreadChecked(candidate: PageSpreadCandidate, isSpread: Boolean) {
+        val key = pageSpreadKey(candidate.first, candidate.second) ?: return
+        if (pageSpreadDetectionState.complete(key, isSpread)) {
+            logcat(LogPriority.INFO) { "PageSpread: joining pages ${candidate.first.index}/${candidate.second.index}" }
+            restoredPosition = setJoinedItems(anchorPage = viewer.getCurrentReaderPage() ?: candidate.first)
+        }
+    }
+
+    private fun joinDetectedPageSpreads(): MutableList<Pair<ReaderItem, ReaderItem?>> {
+        val items = mutableListOf<Pair<ReaderItem, ReaderItem?>>()
+        var index = 0
+        while (index < subItems.size) {
+            val first = subItems[index]
+            val second = subItems.getOrNull(index + 1)
+            val key = pageSpreadKey(first as? ReaderPage, second as? ReaderPage)
+            if (key != null && pageSpreadDetectionState.isDetected(key)) {
+                items.add(first to second)
+                index += 2
+            } else {
+                items.add(first to null)
+                index++
+            }
+        }
+        return items
+    }
+
+    private fun pageSpreadKey(first: ReaderPage?, second: ReaderPage?): PageSpreadKey? {
+        if (first == null || second == null) return null
+        // The two halves of one source page are already a split image, not an auto-detected
+        // spread. Only compare across adjacent source pages.
+        if (first.isFromSamePage(second)) return null
+        if (first.chapter != second.chapter || second.index != first.index + 1) return null
+        val chapterId = first.chapter.chapter.id ?: return null
+        return PageSpreadKey(
+            chapterId = chapterId,
+            firstIndex = first.index,
+            firstIsInserted = first is InsertPage,
+            secondIndex = second.index,
+            secondIsInserted = second is InsertPage,
+        )
+    }
+
+    private fun splitPageKey(page: ReaderPage?): SplitPageKey? {
+        page ?: return null
+        val chapterId = page.chapter.chapter.id ?: return null
+        return SplitPageKey(chapterId, page.index)
     }
 
     /**
@@ -403,6 +533,10 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
      */
     override fun getItemPosition(view: Any): Int {
         if (view is PositionableView) {
+            if (view is PagerPageHolder && pagesNeedingSpreadRefresh.remove(view.page)) {
+                logcat(LogPriority.INFO) { "PageSpread: recreating page ${view.page.index} after a neighbour split" }
+                return POSITION_NONE
+            }
             val position = joinedItems.indexOfFirst { it.first == view.item || (it.first to it.second) == view.item }
             if (position != -1) {
                 return position
@@ -416,6 +550,14 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
         val currentIndex = subItems.indexOf(currentPage)
         if (currentIndex == -1) return
+
+        // The earlier page's old holder has already deferred its candidate because this page was
+        // wide. Recreate it after insertion so it reads the correct new half. In R2L the original
+        // source page also acquires a new following neighbour after the inserted first half.
+        (subItems.getOrNull(currentIndex - 1) as? ReaderPage)?.let(pagesNeedingSpreadRefresh::add)
+        if (viewer is R2LPagerViewer) {
+            pagesNeedingSpreadRefresh.add(currentPage)
+        }
 
         // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter
         if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {
@@ -440,8 +582,49 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
             return
         }
 
+        val currentReaderPage = viewer.getCurrentReaderPage()
         subItems.add(placeAtIndex, newPage)
-        restoredPosition = setJoinedItems(anchorPage = viewer.getCurrentReaderPage())
+
+        // In R2L the inserted half is the right half and is the first page the reader should
+        // remain on. The parent page represents the left half, so using it as the anchor would
+        // make a split jump backwards after the adapter is rebuilt.
+        val anchorPage = if (
+            viewer is R2LPagerViewer &&
+                currentReaderPage?.isFromSamePage(currentPage) == true
+        ) {
+            newPage
+        } else {
+            currentReaderPage
+        }
+        restoredPosition = setJoinedItems(anchorPage = anchorPage)
+    }
+
+    private fun restoreSplitPages(splitPages: Set<SplitPageKey>) {
+        if (!shouldKeepSplitPages()) return
+
+        splitPages.forEach { key ->
+            val parentIndex = subItems.indexOfFirst { item ->
+                val page = item as? ReaderPage
+                page !is InsertPage && splitPageKey(page) == key
+            }
+            if (parentIndex == -1) return@forEach
+
+            val parent = subItems[parentIndex] as ReaderPage
+            if (subItems.any { item -> item is InsertPage && item.parent === parent }) return@forEach
+
+            val insertIndex = when (viewer) {
+                is L2RPagerViewer,
+                is VerticalPagerViewer,
+                -> parentIndex + 1
+                else -> parentIndex
+            }
+            subItems.add(insertIndex, InsertPage(parent))
+        }
+    }
+
+    private fun shouldKeepSplitPages(): Boolean {
+        return !viewer.config.doublePages &&
+            (viewer.config.autoSplitPages || viewer.config.autoDoublePages)
     }
 
     fun onWidePageDetected(page: ReaderPage) {

@@ -73,7 +73,7 @@ private fun DialogContent(
                 ),
             )
 
-            PageLayout.entries.forEach { layout ->
+            PageLayout.selectableEntries.forEach { layout ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

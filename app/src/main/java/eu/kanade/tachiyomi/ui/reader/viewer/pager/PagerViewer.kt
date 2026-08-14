@@ -141,6 +141,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             activity.viewModel.state.value.viewerChapters?.let(::setChapters)
         }
 
+        config.pageSpreadConfigurationChangedListener = {
+            adapter.resetPageSpreadDetection()
+        }
+
         config.navigationModeChangedListener = {
             val showOnStart = config.navigationOverlayOnStart || config.forceNavigationOverlay
             activity.binding.navigationOverlay.setNavigation(config.navigator, showOnStart)
@@ -527,6 +531,26 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         activity.runOnUiThread {
             adapter.onWidePageDetected(page)
         }
+    }
+
+    fun getPageSpreadCandidate(page: ReaderPage): PagerViewerAdapter.PageSpreadCandidate? {
+        return adapter.getPageSpreadCandidate(page)
+    }
+
+    fun onPageSpreadChecked(candidate: PagerViewerAdapter.PageSpreadCandidate, isSpread: Boolean) {
+        activity.runOnUiThread {
+            adapter.onPageSpreadChecked(candidate, isSpread)
+        }
+    }
+
+    fun onPageSpreadDeferred(candidate: PagerViewerAdapter.PageSpreadCandidate) {
+        activity.runOnUiThread {
+            adapter.onPageSpreadDeferred(candidate)
+        }
+    }
+
+    fun hasSplitPage(page: ReaderPage): Boolean {
+        return adapter.hasSplitPage(page)
     }
 
     private fun cleanupPageSplit() {

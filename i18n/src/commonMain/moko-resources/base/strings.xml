@@ -368,7 +368,7 @@
     <string name="information_empty_repos">You have no repos set.</string>
     <string name="action_add_repo">Add repo</string>
     <string name="label_add_repo_input">Repo URL</string>
-    <string name="action_add_repo_message">Add additional repos to %s. This should be a URL that ends with \"index.min.json\".</string>
+    <string name="action_add_repo_message">Add an extension store to %s. Use an index.min.json, repo.json, or .pb URL.</string>
     <string name="error_repo_exists">This repo already exists!</string>
     <string name="action_delete_repo">Delete repo</string>
     <string name="invalid_repo_name">Invalid repo URL</string>
@@ -389,7 +389,8 @@
     <string name="page_layout_automatic">Automatic</string>
     <string name="page_layout_split">Split pages</string>
     <string name="pref_dual_page_shift">Shift double pages</string>
-    <string name="pref_dual_page_split">Split wide pages (single-page only)</string>
+    <string name="pref_dual_page_split">Split wide pages</string>
+    <string name="pref_auto_detect_page_spreads">Automatically detect page spreads</string>
     <string name="pref_pager_page_inset">Page inset</string>
     <string name="pref_dual_page_invert">Invert split page placement</string>
     <string name="pref_dual_page_invert_summary">If the placement of the split wide pages don\'t match reading direction</string>

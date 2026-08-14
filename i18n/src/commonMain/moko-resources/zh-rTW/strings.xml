@@ -444,7 +444,8 @@
     <string name="action_display_show_number_of_items">顯示藏書數目</string>
     <string name="manga_from_library">書櫃上的作品</string>
     <string name="downloaded_chapters">已下載的章節</string>
-    <string name="pref_dual_page_split">分割寬圖（僅單頁）</string>
+    <string name="pref_dual_page_split">分割寬圖</string>
+    <string name="pref_auto_detect_page_spreads">自動辨識跨頁圖</string>
     <string name="pref_pager_page_inset">邊緣縮進</string>
     <string name="pref_dual_page_invert_summary">若分割後的排版方向與翻閱順序不符</string>
     <string name="pref_dual_page_invert">調換分割寬頁排版</string>
@@ -773,7 +774,7 @@
     <string name="error_repo_exists">已有該儲存庫！</string>
     <string name="pref_library_update_smart_update">智慧更新</string>
     <string name="invalid_repo_name">無效的儲存庫網址</string>
-    <string name="action_add_repo_message">將額外的擴充套件儲存庫新增至 %s，此處應填入一個結尾為「index.min.json」的網址</string>
+    <string name="action_add_repo_message">將擴充套件商店新增至 %s。可輸入結尾為 index.min.json、repo.json 或 .pb 的網址。</string>
     <string name="delete_repo_confirmation">確定要刪除「%s」儲存庫嗎？</string>
     <string name="action_delete_repo">刪除儲存庫</string>
     <string name="action_add_repo">新增儲存庫</string>

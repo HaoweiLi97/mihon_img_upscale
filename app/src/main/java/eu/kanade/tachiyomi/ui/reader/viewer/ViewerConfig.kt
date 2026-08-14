@@ -23,6 +23,8 @@ abstract class ViewerConfig(
 
     var reloadChapterListener: ((Boolean) -> Unit)? = null
 
+    var pageSpreadConfigurationChangedListener: (() -> Unit)? = null
+
     var tappingInverted = ReaderPreferences.TappingInvertMode.NONE
     var longTapEnabled = true
     var usePageTransitions = false
@@ -67,8 +69,10 @@ abstract class ViewerConfig(
 
     var autoDoublePages = false
 
-    var splitPages = false
     var autoSplitPages = false
+
+    var autoDetectPageSpreads = false
+        private set
 
     private var pageLayoutPreference = readerPreferences.pageLayout().get()
 
@@ -76,6 +80,14 @@ abstract class ViewerConfig(
         protected set
 
     init {
+        // "Split pages" used to be a page-layout option. Preserve its behavior for
+        // existing users while moving it to the independent wide-page split preference.
+        if (pageLayoutPreference == PageLayout.SPLIT_PAGES.value) {
+            pageLayoutPreference = PageLayout.SINGLE_PAGE.value
+            readerPreferences.pageLayout().set(PageLayout.SINGLE_PAGE.value)
+            readerPreferences.automaticSplitsPage().set(true)
+        }
+
         readerPreferences.readWithLongTap()
             .register({ longTapEnabled = it })
 
@@ -107,21 +119,28 @@ abstract class ViewerConfig(
 
         readerPreferences.pageLayout()
             .register({
-                pageLayoutPreference = it
-                autoDoublePages = it == PageLayout.AUTOMATIC.value
-                splitPages = it == PageLayout.SPLIT_PAGES.value
-                doublePages = when (it) {
+                pageLayoutPreference = if (it == PageLayout.SPLIT_PAGES.value) {
+                    PageLayout.SINGLE_PAGE.value
+                } else {
+                    it
+                }
+                autoDoublePages = pageLayoutPreference == PageLayout.AUTOMATIC.value
+                doublePages = when (pageLayoutPreference) {
                     PageLayout.DOUBLE_PAGES.value -> true
                     PageLayout.AUTOMATIC.value -> isLandscape()
                     else -> false
                 }
             }, {
+                pageSpreadConfigurationChangedListener?.invoke()
                 reloadChapterListener?.invoke(doublePages)
+                imagePropertyChangedListener?.invoke()
             })
 
         readerPreferences.automaticSplitsPage()
             .register({ autoSplitPages = it }, {
+                pageSpreadConfigurationChangedListener?.invoke()
                 reloadChapterListener?.invoke(doublePages)
+                imagePropertyChangedListener?.invoke()
             })
 
         readerPreferences.readerTheme()

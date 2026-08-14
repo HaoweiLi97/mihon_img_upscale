@@ -258,6 +258,10 @@ object SettingsReaderScreen : SearchableSettings {
                     enabled = navMode != 5,
                 ),
                 Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.automaticSplitsPage(),
+                    title = stringResource(MR.strings.pref_dual_page_split),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
                     preference = rotateToFitPref,
                     title = stringResource(MR.strings.pref_page_rotate),
                 ),

@@ -102,19 +102,6 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
 
     val pageLayout by screenModel.preferences.pageLayout().collectAsState()
 
-    val splitWidePages by screenModel.preferences.automaticSplitsPage().collectAsState()
-    CheckboxItem(
-        label = stringResource(MR.strings.pref_dual_page_split),
-        pref = screenModel.preferences.automaticSplitsPage(),
-    )
-
-    if (pageLayout == PageLayout.SINGLE_PAGE.value && splitWidePages) {
-        CheckboxItem(
-            label = stringResource(MR.strings.pref_dual_page_invert),
-            pref = screenModel.preferences.dualPageInvertPaged(),
-        )
-    }
-
     CheckboxItem(
         label = stringResource(MR.strings.pref_landscape_zoom),
         pref = screenModel.preferences.landscapeZoom(),
@@ -136,7 +123,7 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
     )
 
     SettingsChipRow(MR.strings.pref_page_layout) {
-        PageLayout.entries
+        PageLayout.selectableEntries
             .map {
             FilterChip(
                 selected = pageLayout == it.value,
@@ -144,6 +131,19 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
                 label = { Text(stringResource(it.stringRes)) },
             )
         }
+    }
+
+    val splitWidePages by screenModel.preferences.automaticSplitsPage().collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_dual_page_split),
+        pref = screenModel.preferences.automaticSplitsPage(),
+    )
+
+    if (splitWidePages) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_dual_page_invert),
+            pref = screenModel.preferences.dualPageInvertPaged(),
+        )
     }
 
     if (pageLayout == PageLayout.DOUBLE_PAGES.value || pageLayout == PageLayout.AUTOMATIC.value) {

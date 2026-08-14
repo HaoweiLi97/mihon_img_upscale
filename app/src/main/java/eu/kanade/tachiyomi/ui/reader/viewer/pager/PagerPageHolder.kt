@@ -33,6 +33,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -98,6 +99,7 @@ class PagerPageHolder(
     private var extraEnhancementWatchJob: Job? = null
     private var extraEnhancementState: String? = null
     private var halfStatusJob: Job? = null
+    private var pageSpreadRetryJob: Job? = null
 
     private val readerPreferences by lazy { Injekt.get<ReaderPreferences>() }
     private val leftStatusView by lazy { createHalfStatusView(Gravity.BOTTOM or Gravity.START) }
@@ -133,6 +135,8 @@ class PagerPageHolder(
         extraEnhancementWatchJob = null
         halfStatusJob?.cancel()
         halfStatusJob = null
+        pageSpreadRetryJob?.cancel()
+        pageSpreadRetryJob = null
     }
 
     private fun createHalfStatusView(gravity: Int): TextView {
@@ -249,12 +253,17 @@ class PagerPageHolder(
         try {
             val (source, isAnimated, background) = withIOContext {
                 val source = currentDisplayStream(page)?.use { s1 ->
+                    val primarySource = Buffer().readFrom(s1)
                     if (extraPage != null) {
                         currentDisplayStream(extraPage!!)?.use { s2 ->
-                            mergeOrSplitPages(Buffer().readFrom(s1), Buffer().readFrom(s2))
+                            mergeOrSplitPages(
+                                pageSourceForCombinedDisplay(page, primarySource),
+                                pageSourceForCombinedDisplay(extraPage!!, Buffer().readFrom(s2)),
+                            )
                         }
                     } else {
-                        process(item, Buffer().readFrom(s1))
+                        detectPageSpread(primarySource)
+                        process(item, primarySource)
                     }
                 }!!
                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)
@@ -296,7 +305,7 @@ class PagerPageHolder(
     }
 
     private suspend fun awaitCombinedPageLayoutIfNeeded() {
-        if (extraPage == null || !viewer.config.doublePages || hasCombinedViewportSize()) {
+        if (extraPage == null || hasCombinedViewportSize()) {
             return
         }
 
@@ -313,6 +322,91 @@ class PagerPageHolder(
         return width > 0 && height > 0
     }
 
+    private fun detectPageSpread(primarySource: BufferedSource) {
+        val candidate = viewer.getPageSpreadCandidate(page) ?: run {
+            logcat(LogPriority.INFO) {
+                "PageSpread: no candidate for page ${page.index}; auto=${viewer.config.autoDetectPageSpreads}, double=${viewer.config.doublePages}"
+            }
+            return
+        }
+        logcat(LogPriority.INFO) {
+            "PageSpread: checking pages ${candidate.first.index} and ${candidate.second.index}"
+        }
+        if (requiresSplitBeforeSpreadDetection(page, primarySource)) {
+            logcat(LogPriority.INFO) { "PageSpread: deferring page ${page.index} until its wide source is split" }
+            viewer.onPageSplit(page, InsertPage(page))
+            viewer.onPageSpreadDeferred(candidate)
+            return
+        }
+
+        val adjacentPage = if (candidate.first === page) candidate.second else candidate.first
+        val adjacentSource = currentDisplayStream(adjacentPage)?.use { Buffer().readFrom(it) }
+        if (adjacentSource == null) {
+            logcat(LogPriority.INFO) {
+                "PageSpread: waiting for adjacent page ${adjacentPage.index}; state=${adjacentPage.status}"
+            }
+            deferPageSpreadUntilAdjacentIsReady(candidate, adjacentPage)
+            return
+        }
+
+        if (requiresSplitBeforeSpreadDetection(adjacentPage, adjacentSource)) {
+            logcat(LogPriority.INFO) { "PageSpread: deferring until adjacent wide page ${adjacentPage.index} is split" }
+            viewer.onPageSplit(adjacentPage, InsertPage(adjacentPage))
+            viewer.onPageSpreadDeferred(candidate)
+            return
+        }
+
+        val firstSource = if (candidate.first === page) primarySource else adjacentSource
+        val secondSource = if (candidate.second === page) primarySource else adjacentSource
+        val result = PageSpreadDetector.detect(
+            firstSource = pageSourceForCombinedDisplay(candidate.first, firstSource),
+            secondSource = pageSourceForCombinedDisplay(candidate.second, secondSource),
+            isR2L = viewer is R2LPagerViewer,
+        )
+        logcat(LogPriority.INFO) {
+            "PageSpread: pages ${candidate.first.index}/${candidate.second.index} confidence=${result.confidence}, detected=${result.isSpread}, " +
+                "blocks=${result.matchingBlocks}/${result.informativeBlocks}/${result.totalBlocks}, bands=${result.matchingBands}, " +
+                "spatial=${result.spatialMatchingBlocks}"
+        }
+        viewer.onPageSpreadChecked(candidate, result.isSpread)
+    }
+
+    private fun deferPageSpreadUntilAdjacentIsReady(
+        candidate: PagerViewerAdapter.PageSpreadCandidate,
+        adjacentPage: ReaderPage,
+    ) {
+        viewer.onPageSpreadDeferred(candidate)
+        if (pageSpreadRetryJob?.isActive == true) return
+
+        pageSpreadRetryJob = scope.launch {
+            adjacentPage.statusFlow.first { it == Page.State.Ready }
+            logcat(LogPriority.INFO) { "PageSpread: adjacent page ${adjacentPage.index} is ready; retrying" }
+            // Release this retry before checking again so a transient stream failure can defer a
+            // new retry instead of being treated as an already-active job.
+            pageSpreadRetryJob = null
+            withIOContext {
+                currentDisplayStream(page)?.use { source ->
+                    detectPageSpread(Buffer().readFrom(source))
+                }
+            }
+        }
+    }
+
+    private fun requiresSplitBeforeSpreadDetection(targetPage: ReaderPage, source: BufferedSource): Boolean {
+        return targetPage !is InsertPage &&
+            !viewer.hasSplitPage(targetPage) &&
+            shouldSplitWidePagesInSinglePageMode() &&
+            isWideImage(source)
+    }
+
+    private fun pageSourceForCombinedDisplay(targetPage: ReaderPage, source: BufferedSource): BufferedSource {
+        return if (shouldSplitWidePagesInSinglePageMode() && isWideImage(source)) {
+            ImageUtil.splitInHalf(source.peek(), splitSideFor(targetPage))
+        } else {
+            source
+        }
+    }
+
     private fun usesTransformedEnhancedDisplay(): Boolean {
         return extraPage != null || viewer.config.dualPageRotateToFit
     }
@@ -323,7 +417,7 @@ class PagerPageHolder(
 
     private fun shouldSplitWidePagesInSinglePageMode(): Boolean {
         return !viewer.config.doublePages &&
-            (viewer.config.splitPages || viewer.config.autoSplitPages || viewer.config.autoDoublePages)
+            (viewer.config.autoSplitPages || viewer.config.autoDoublePages)
     }
 
     private fun refreshEnhancementTargets() {
@@ -416,7 +510,10 @@ class PagerPageHolder(
             if (extraPage != null) {
                 val extraStream = currentDisplayStream(extraPage!!) ?: return null
                 extraStream.use { s2 ->
-                    mergeOrSplitPages(Buffer().readFrom(s1), Buffer().readFrom(s2))
+                    mergeOrSplitPages(
+                        pageSourceForCombinedDisplay(page, Buffer().readFrom(s1)),
+                        pageSourceForCombinedDisplay(extraPage!!, Buffer().readFrom(s2)),
+                    )
                 }
             } else {
                 process(item, Buffer().readFrom(s1))
@@ -456,7 +553,10 @@ class PagerPageHolder(
                 primaryStream.use { s1 ->
                     val extraStream = currentDisplayStream(secondaryPage) ?: return
                     extraStream.use { s2 ->
-                        mergeOrSplitPages(Buffer().readFrom(s1), Buffer().readFrom(s2))
+                        mergeOrSplitPages(
+                            pageSourceForCombinedDisplay(page, Buffer().readFrom(s1)),
+                            pageSourceForCombinedDisplay(secondaryPage, Buffer().readFrom(s2)),
+                        )
                     }
                 }
             } ?: return

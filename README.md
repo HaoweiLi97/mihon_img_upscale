@@ -99,7 +99,7 @@ The developer(s) of this application does not have any affiliation with the cont
 
 ### License
 
-<pre>
+<pre>、
 Copyright © 2015 Javier Tomás
 Copyright © 2024 Mihon Open Source Project
 
