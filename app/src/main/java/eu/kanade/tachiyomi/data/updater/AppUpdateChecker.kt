@@ -40,9 +40,7 @@ class AppUpdateChecker {
     }
 }
 
-val GITHUB_REPO: String by lazy {
-    "HaoweiLi97/mihon_img_upscale"
-}
+const val GITHUB_REPO = "HaoweiLi97/mihon_img_upscale"
 
 val RELEASE_TAG: String by lazy {
     if (isPreviewBuildType) {
