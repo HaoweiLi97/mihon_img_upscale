@@ -121,7 +121,11 @@ class BrowseSourceScreenModel(
         .distinctUntilChanged()
         .map { request ->
             Pager(
-                config = PagingConfig(pageSize = 25),
+                config = PagingConfig(
+                    pageSize = SOURCE_PAGE_SIZE,
+                    prefetchDistance = 5,
+                    enablePlaceholders = false,
+                ),
                 initialKey = request.page.toLong(),
             ) {
                 getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters)

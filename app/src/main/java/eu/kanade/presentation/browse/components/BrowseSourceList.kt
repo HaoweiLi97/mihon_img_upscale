@@ -34,16 +34,37 @@ fun BrowseSourceList(
 
     LaunchedEffect(lazyListState, mangaList) {
         var prependWasLoading = false
+        var anchorMangaId: Long? = null
+        var anchorScrollOffset = 0
         snapshotFlow { mangaList.loadState.prepend to lazyListState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { (prependState, index) ->
-                if (prependWasLoading && prependState is LoadState.NotLoading) {
+                val prependStarted = !prependWasLoading && prependState is LoadState.Loading
+                val prependCompleted = prependWasLoading && prependState is LoadState.NotLoading
+                if (prependStarted) {
+                    anchorMangaId = mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
+                    anchorScrollOffset = lazyListState.firstVisibleItemScrollOffset
+                }
+                if (prependCompleted) {
                     onPreviousPageLoaded()
                 }
                 prependWasLoading = prependState is LoadState.Loading
 
-                // The prepend slot is always present, even when it has no visible content.
-                onVisibleMangaIndexChanged((index - 1).coerceAtLeast(0))
+                val restoredIndex = if (prependCompleted) {
+                    anchorMangaId?.let { anchorId ->
+                        mangaList.itemSnapshotList.items.indexOfFirst { it.value.id == anchorId }
+                            .takeIf { it >= 0 }
+                    }
+                } else {
+                    null
+                }
+                if (restoredIndex != null) {
+                    lazyListState.scrollToItem(restoredIndex, anchorScrollOffset)
+                    onVisibleMangaIndexChanged(restoredIndex)
+                    anchorMangaId = null
+                } else if (!prependCompleted) {
+                    onVisibleMangaIndexChanged(index)
+                }
             }
     }
 
@@ -51,12 +72,6 @@ fun BrowseSourceList(
         state = lazyListState,
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
-        item(key = "browse_source_prepend") {
-            if (mangaList.loadState.prepend is LoadState.Loading) {
-                BrowseSourceLoadingItem()
-            }
-        }
-
         items(
             count = mangaList.itemCount,
             key = mangaList.itemKey { it.value.id },

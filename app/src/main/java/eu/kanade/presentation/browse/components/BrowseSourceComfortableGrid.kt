@@ -38,16 +38,37 @@ fun BrowseSourceComfortableGrid(
 
     LaunchedEffect(lazyGridState, mangaList) {
         var prependWasLoading = false
+        var anchorMangaId: Long? = null
+        var anchorScrollOffset = 0
         snapshotFlow { mangaList.loadState.prepend to lazyGridState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { (prependState, index) ->
-                if (prependWasLoading && prependState is LoadState.NotLoading) {
+                val prependStarted = !prependWasLoading && prependState is LoadState.Loading
+                val prependCompleted = prependWasLoading && prependState is LoadState.NotLoading
+                if (prependStarted) {
+                    anchorMangaId = mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
+                    anchorScrollOffset = lazyGridState.firstVisibleItemScrollOffset
+                }
+                if (prependCompleted) {
                     onPreviousPageLoaded()
                 }
                 prependWasLoading = prependState is LoadState.Loading
 
-                val prependOffset = if (prependState is LoadState.Loading) 1 else 0
-                onVisibleMangaIndexChanged((index - prependOffset).coerceAtLeast(0))
+                val restoredIndex = if (prependCompleted) {
+                    anchorMangaId?.let { anchorId ->
+                        mangaList.itemSnapshotList.items.indexOfFirst { it.value.id == anchorId }
+                            .takeIf { it >= 0 }
+                    }
+                } else {
+                    null
+                }
+                if (restoredIndex != null) {
+                    lazyGridState.scrollToItem(restoredIndex, anchorScrollOffset)
+                    onVisibleMangaIndexChanged(restoredIndex)
+                    anchorMangaId = null
+                } else if (!prependCompleted) {
+                    onVisibleMangaIndexChanged(index)
+                }
             }
     }
 
@@ -58,15 +79,6 @@ fun BrowseSourceComfortableGrid(
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
-        if (mangaList.loadState.prepend is LoadState.Loading) {
-            item(
-                key = "browse_source_prepend",
-                span = { GridItemSpan(maxLineSpan) },
-            ) {
-                BrowseSourceLoadingItem()
-            }
-        }
-
         items(
             count = mangaList.itemCount,
             key = mangaList.itemKey { it.value.id },
