@@ -14,6 +14,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.itemKey
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import kotlinx.coroutines.flow.StateFlow
@@ -58,12 +59,18 @@ fun BrowseSourceCompactGrid(
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
         if (mangaList.loadState.prepend is LoadState.Loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
+            item(
+                key = "browse_source_prepend",
+                span = { GridItemSpan(maxLineSpan) },
+            ) {
                 BrowseSourceLoadingItem()
             }
         }
 
-        items(count = mangaList.itemCount) { index ->
+        items(
+            count = mangaList.itemCount,
+            key = mangaList.itemKey { it.value.id },
+        ) { index ->
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceCompactGridItem(
                 manga = manga,
@@ -74,7 +81,10 @@ fun BrowseSourceCompactGrid(
         }
 
         if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
+            item(
+                key = "browse_source_append",
+                span = { GridItemSpan(maxLineSpan) },
+            ) {
                 BrowseSourceLoadingItem()
             }
         }

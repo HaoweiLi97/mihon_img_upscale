@@ -11,6 +11,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
+import androidx.paging.compose.itemKey
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaListItem
 import kotlinx.coroutines.flow.StateFlow
@@ -50,13 +51,16 @@ fun BrowseSourceList(
         state = lazyListState,
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
-        item {
+        item(key = "browse_source_prepend") {
             if (mangaList.loadState.prepend is LoadState.Loading) {
                 BrowseSourceLoadingItem()
             }
         }
 
-        items(count = mangaList.itemCount) { index ->
+        items(
+            count = mangaList.itemCount,
+            key = mangaList.itemKey { it.value.id },
+        ) { index ->
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceListItem(
                 manga = manga,
@@ -66,7 +70,7 @@ fun BrowseSourceList(
             )
         }
 
-        item {
+        item(key = "browse_source_append") {
             if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
                 BrowseSourceLoadingItem()
             }
