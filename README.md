@@ -16,14 +16,19 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 
 ## Upscaling Models
 
-| Model Name | Performance | Best Use Case |
+| Model Name | Scale | Best Use Case |
 | :--- | :---: | :--- |
-| **Real-CUGAN SE** | Medium | Balanced daily reading |
-| **Real-CUGAN Pro** | High Quality | Sharpest lines for high-res art |
-| **Real-CUGAN NoSE** | Fast | Focuses on "No Super-Resolution" (Denoising). |
-| **Real-ESRGAN** | Fast | Repairing heavily compressed scans |
-| **Waifu2x** | Medium | The classic standard |
-| **Waifu2x Fast** | Ultra Fast | Low-end devices / smooth scrolling |
+| **Real-CUGAN SE** | 2x / 3x / 4x | Balanced quality and performance for manga |
+| **Real-CUGAN Pro** | 2x / 3x | Higher-quality line and detail reconstruction |
+| **Real-ESRGAN** | 2x / 3x / 4x | Anime artwork and heavily compressed images |
+| **Real-CUGAN Nose** | 2x | Lightweight enhancement without configurable denoising |
+| **Waifu2x** | 2x | High-quality anime and manga upscaling |
+| **Waifu2x (Fast)** | 2x | Faster processing for lower-end devices |
+| **W2xEX Universal Fast** | 2x | Fast general-purpose enhancement |
+| **W2xEX Omni Mini V2** | 2x | Compact all-round model for anime and manga |
+| **W2xEX Photo Small** | 2x | Photographic and detailed color images |
+| **AnimeJaNai v2 UltraCompact** | 2x | Lightweight anime and line-art enhancement |
+| **sudo UltraCompact** | 2x | Very lightweight upscaling for limited hardware |
 
 
 
