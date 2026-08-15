@@ -20,8 +20,8 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 | :--- | :---: | :--- | :--- |
 | **Real-CUGAN SE** | 2x / 3x / 4x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
 | **Real-CUGAN Pro** | 2x / 3x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-ESRGAN** | 2x / 3x / 4x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
 | **Real-CUGAN Nose** | 2x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
+| **Real-ESRGAN** | 2x / 3x / 4x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
 | **Waifu2x** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
 | **Waifu2x (Fast)** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
 | **W2xEX Universal Fast** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
