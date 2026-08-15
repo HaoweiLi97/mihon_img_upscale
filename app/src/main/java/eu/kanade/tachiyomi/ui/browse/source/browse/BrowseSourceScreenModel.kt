@@ -112,14 +112,19 @@ class BrowseSourceScreenModel(
     }
 
     /**
-     * Flow of Pager flow tied to [State.listing]
+     * Flow of Pager flow tied to the current listing and requested source page.
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems().get()
-    val mangaPagerFlowFlow = state.map { it.listing }
+    val mangaPagerFlowFlow = state.map {
+        MangaPageRequest(it.listing, it.browsePage, it.pageRequestId)
+    }
         .distinctUntilChanged()
-        .map { listing ->
-            Pager(PagingConfig(pageSize = 25)) {
-                getRemoteManga(sourceId, listing.query ?: "", listing.filters)
+        .map { request ->
+            Pager(
+                config = PagingConfig(pageSize = 25),
+                initialKey = request.page.toLong(),
+            ) {
+                getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters)
             }.flow.map { pagingData ->
                 pagingData.map { manga ->
                     getManga.subscribe(manga.url, manga.source)
@@ -154,6 +159,7 @@ class BrowseSourceScreenModel(
             it.copy(
                 listing = listing,
                 toolbarQuery = null,
+                browsePage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -184,6 +190,7 @@ class BrowseSourceScreenModel(
                     filters = filters ?: input.filters,
                 ),
                 toolbarQuery = query ?: input.query,
+                browsePage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -231,6 +238,23 @@ class BrowseSourceScreenModel(
                 filters = defaultFilters,
                 listing = listing,
                 toolbarQuery = listing.query,
+                browsePage = 1,
+                selectionMode = false,
+                selectedMangaIds = emptySet(),
+            )
+        }
+    }
+
+    fun jumpToPage(page: Int) {
+        if (page < 1) return
+
+        selectionAnchor = null
+        mutableState.update {
+            it.copy(
+                browsePage = page,
+                pageRequestId = it.pageRequestId + 1,
+                selectionMode = false,
+                selectedMangaIds = emptySet(),
             )
         }
     }
@@ -529,6 +553,8 @@ class BrowseSourceScreenModel(
         val filters: FilterList = FilterList(),
         val toolbarQuery: String? = null,
         val dialog: Dialog? = null,
+        val browsePage: Int = 1,
+        val pageRequestId: Int = 0,
         val selectionMode: Boolean = false,
         val selectedMangaIds: Set<Long> = emptySet(),
     ) {
@@ -537,6 +563,12 @@ class BrowseSourceScreenModel(
 
     data class BatchDownloadResult(val successful: Int, val failed: Int)
     data class BatchCloudSyncResult(val queued: Int, val skipped: Int, val failed: Int)
+
+    private data class MangaPageRequest(
+        val listing: Listing,
+        val page: Int,
+        val requestId: Int,
+    )
 }
 
 internal data class RangeSelectionResult(

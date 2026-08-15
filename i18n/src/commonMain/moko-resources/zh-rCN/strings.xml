@@ -193,6 +193,9 @@
     <string name="action_global_search_hint">全局搜索…</string>
     <string name="latest">最近更新</string>
     <string name="browse">浏览</string>
+    <string name="browse_page_number">第 %1$d 页</string>
+    <string name="browse_jump_to_page">跳转到指定页</string>
+    <string name="browse_page_number_label">页码</string>
     <string name="ongoing">连载中</string>
     <string name="unknown">未知</string>
     <string name="licensed">版权屏蔽</string>

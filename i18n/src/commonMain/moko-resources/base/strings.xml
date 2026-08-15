@@ -733,6 +733,9 @@
     <string name="latest">Latest</string>
     <string name="popular">Popular</string>
     <string name="browse">Browse</string>
+    <string name="browse_page_number">Page %1$d</string>
+    <string name="browse_jump_to_page">Jump to page</string>
+    <string name="browse_page_number_label">Page number</string>
     <string name="has_results">Has results</string>
     <string name="local_source_help_guide">Local source guide</string>
     <string name="no_pinned_sources">You have no pinned sources</string>

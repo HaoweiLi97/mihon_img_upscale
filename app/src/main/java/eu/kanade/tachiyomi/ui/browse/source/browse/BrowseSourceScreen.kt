@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.Numbers
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.FilterChip
@@ -25,6 +26,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SmallExtendedFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -54,6 +56,7 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.core.util.ifSourcesLoaded
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
+import eu.kanade.presentation.browse.components.BrowseSourcePageDialog
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
 import eu.kanade.presentation.browse.components.RemoveMangaDialog
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
@@ -74,7 +77,6 @@ import kotlinx.coroutines.launch
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import mihon.presentation.core.util.collectAsLazyPagingItems
 import tachiyomi.core.common.Constants
-import tachiyomi.core.common.i18n.stringResource as contextStringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
@@ -83,6 +85,7 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.source.local.LocalSource
+import tachiyomi.core.common.i18n.stringResource as contextStringResource
 
 data class BrowseSourceScreen(
     val sourceId: Long,
@@ -130,6 +133,7 @@ data class BrowseSourceScreen(
         val selectedMangas = loadedMangas.filter { it.id in state.selectedMangaIds }
         var showDownloadConfirmation by rememberSaveable { mutableStateOf(false) }
         var showCloudSyncConfirmation by rememberSaveable { mutableStateOf(false) }
+        var showPageDialog by rememberSaveable { mutableStateOf(false) }
 
         BackHandler(enabled = state.selectionMode) {
             screenModel.clearSelection()
@@ -213,6 +217,14 @@ data class BrowseSourceScreen(
                         Text(stringResource(MR.strings.action_cancel))
                     }
                 },
+            )
+        }
+
+        if (showPageDialog) {
+            BrowseSourcePageDialog(
+                currentPage = state.browsePage,
+                onDismissRequest = { showPageDialog = false },
+                onConfirm = screenModel::jumpToPage,
             )
         }
 
@@ -336,6 +348,27 @@ data class BrowseSourceScreen(
                     onDownload = { showDownloadConfirmation = true },
                     onCloudSync = { showCloudSyncConfirmation = true },
                 )
+            },
+            floatingActionButton = {
+                if (!state.selectionMode && screenModel.source !is LocalSource) {
+                    SmallExtendedFloatingActionButton(
+                        text = {
+                            Text(
+                                text = stringResource(
+                                    MR.strings.browse_page_number,
+                                    state.browsePage,
+                                ),
+                            )
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Numbers,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = { showPageDialog = true },
+                    )
+                }
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { paddingValues ->
