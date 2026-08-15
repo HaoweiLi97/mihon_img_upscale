@@ -5,15 +5,19 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.presentation.core.util.plus
@@ -26,8 +30,28 @@ fun BrowseSourceComfortableGrid(
     selectedMangaIds: Set<Long>,
     onMangaClick: (Int, Manga) -> Unit,
     onMangaLongClick: (Int, Manga) -> Unit,
+    onPreviousPageLoaded: () -> Unit,
+    onVisibleMangaIndexChanged: (Int) -> Unit,
 ) {
+    val lazyGridState = rememberLazyGridState()
+
+    LaunchedEffect(lazyGridState, mangaList) {
+        var prependWasLoading = false
+        snapshotFlow { mangaList.loadState.prepend to lazyGridState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collect { (prependState, index) ->
+                if (prependWasLoading && prependState is LoadState.NotLoading) {
+                    onPreviousPageLoaded()
+                }
+                prependWasLoading = prependState is LoadState.Loading
+
+                val prependOffset = if (prependState is LoadState.Loading) 1 else 0
+                onVisibleMangaIndexChanged((index - prependOffset).coerceAtLeast(0))
+            }
+    }
+
     LazyVerticalGrid(
+        state = lazyGridState,
         columns = columns,
         contentPadding = contentPadding + PaddingValues(8.dp),
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),

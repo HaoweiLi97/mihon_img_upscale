@@ -2,15 +2,19 @@ package eu.kanade.presentation.browse.components
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaListItem
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.presentation.core.util.plus
@@ -22,8 +26,28 @@ fun BrowseSourceList(
     selectedMangaIds: Set<Long>,
     onMangaClick: (Int, Manga) -> Unit,
     onMangaLongClick: (Int, Manga) -> Unit,
+    onPreviousPageLoaded: () -> Unit,
+    onVisibleMangaIndexChanged: (Int) -> Unit,
 ) {
+    val lazyListState = rememberLazyListState()
+
+    LaunchedEffect(lazyListState, mangaList) {
+        var prependWasLoading = false
+        snapshotFlow { mangaList.loadState.prepend to lazyListState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collect { (prependState, index) ->
+                if (prependWasLoading && prependState is LoadState.NotLoading) {
+                    onPreviousPageLoaded()
+                }
+                prependWasLoading = prependState is LoadState.Loading
+
+                // The prepend slot is always present, even when it has no visible content.
+                onVisibleMangaIndexChanged((index - 1).coerceAtLeast(0))
+            }
+    }
+
     LazyColumn(
+        state = lazyListState,
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
         item {

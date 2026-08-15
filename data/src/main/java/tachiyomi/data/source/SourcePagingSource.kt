@@ -60,7 +60,7 @@ abstract class BaseSourcePagingSource(
 
             LoadResult.Page(
                 data = manga,
-                prevKey = null,
+                prevKey = if (page > 1) page - 1 else null,
                 nextKey = if (mangasPage.hasNextPage) page + 1 else null,
             )
         } catch (e: Exception) {
@@ -71,7 +71,7 @@ abstract class BaseSourcePagingSource(
     override fun getRefreshKey(state: PagingState<Long, Manga>): Long? {
         return state.anchorPosition?.let { anchorPosition ->
             val anchorPage = state.closestPageToPosition(anchorPosition)
-            anchorPage?.prevKey ?: anchorPage?.nextKey
+            anchorPage?.prevKey?.plus(1) ?: anchorPage?.nextKey?.minus(1)
         }
     }
 }

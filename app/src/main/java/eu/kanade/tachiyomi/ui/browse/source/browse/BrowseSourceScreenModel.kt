@@ -116,7 +116,7 @@ class BrowseSourceScreenModel(
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems().get()
     val mangaPagerFlowFlow = state.map {
-        MangaPageRequest(it.listing, it.browsePage, it.pageRequestId)
+        MangaPageRequest(it.listing, it.browseStartPage, it.pageRequestId)
     }
         .distinctUntilChanged()
         .map { request ->
@@ -160,6 +160,8 @@ class BrowseSourceScreenModel(
                 listing = listing,
                 toolbarQuery = null,
                 browsePage = 1,
+                browseStartPage = 1,
+                browseFirstLoadedPage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -191,6 +193,8 @@ class BrowseSourceScreenModel(
                 ),
                 toolbarQuery = query ?: input.query,
                 browsePage = 1,
+                browseStartPage = 1,
+                browseFirstLoadedPage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -239,6 +243,8 @@ class BrowseSourceScreenModel(
                 listing = listing,
                 toolbarQuery = listing.query,
                 browsePage = 1,
+                browseStartPage = 1,
+                browseFirstLoadedPage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -252,10 +258,31 @@ class BrowseSourceScreenModel(
         mutableState.update {
             it.copy(
                 browsePage = page,
+                browseStartPage = page,
+                browseFirstLoadedPage = page,
                 pageRequestId = it.pageRequestId + 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
+        }
+    }
+
+    fun onPreviousPageLoaded() {
+        mutableState.update { state ->
+            if (state.browseFirstLoadedPage <= 1) {
+                state
+            } else {
+                state.copy(browseFirstLoadedPage = state.browseFirstLoadedPage - 1)
+            }
+        }
+    }
+
+    fun updateVisibleMangaIndex(index: Int) {
+        if (index < 0) return
+
+        mutableState.update { state ->
+            val visiblePage = calculateBrowsePage(state.browseFirstLoadedPage, index)
+            if (visiblePage == state.browsePage) state else state.copy(browsePage = visiblePage)
         }
     }
 
@@ -554,6 +581,8 @@ class BrowseSourceScreenModel(
         val toolbarQuery: String? = null,
         val dialog: Dialog? = null,
         val browsePage: Int = 1,
+        val browseStartPage: Int = 1,
+        val browseFirstLoadedPage: Int = 1,
         val pageRequestId: Int = 0,
         val selectionMode: Boolean = false,
         val selectedMangaIds: Set<Long> = emptySet(),
@@ -569,6 +598,12 @@ class BrowseSourceScreenModel(
         val page: Int,
         val requestId: Int,
     )
+}
+
+private const val SOURCE_PAGE_SIZE = 50
+
+internal fun calculateBrowsePage(firstLoadedPage: Int, visibleMangaIndex: Int): Int {
+    return firstLoadedPage + visibleMangaIndex.coerceAtLeast(0) / SOURCE_PAGE_SIZE
 }
 
 internal data class RangeSelectionResult(

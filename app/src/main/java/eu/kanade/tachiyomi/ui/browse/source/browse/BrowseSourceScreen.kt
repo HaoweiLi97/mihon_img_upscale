@@ -18,7 +18,6 @@ import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.NewReleases
-import androidx.compose.material.icons.outlined.Numbers
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.FilterChip
@@ -26,7 +25,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SmallExtendedFloatingActionButton
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -351,23 +350,14 @@ data class BrowseSourceScreen(
             },
             floatingActionButton = {
                 if (!state.selectionMode && screenModel.source !is LocalSource) {
-                    SmallExtendedFloatingActionButton(
-                        text = {
-                            Text(
-                                text = stringResource(
-                                    MR.strings.browse_page_number,
-                                    state.browsePage,
-                                ),
-                            )
-                        },
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Outlined.Numbers,
-                                contentDescription = null,
-                            )
-                        },
+                    SmallFloatingActionButton(
                         onClick = { showPageDialog = true },
-                    )
+                    ) {
+                        Text(
+                            text = "# ${state.browsePage}",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -410,6 +400,8 @@ data class BrowseSourceScreen(
                         }
                     }
                 },
+                onPreviousPageLoaded = screenModel::onPreviousPageLoaded,
+                onVisibleMangaIndexChanged = screenModel::updateVisibleMangaIndex,
             )
         }
 
