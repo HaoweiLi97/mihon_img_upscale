@@ -400,8 +400,7 @@ data class BrowseSourceScreen(
                         }
                     }
                 },
-                onPreviousPageLoaded = screenModel::onPreviousPageLoaded,
-                onVisibleMangaIndexChanged = screenModel::updateVisibleMangaIndex,
+                onVisibleMangaChanged = screenModel::updateVisibleManga,
             )
         }
 

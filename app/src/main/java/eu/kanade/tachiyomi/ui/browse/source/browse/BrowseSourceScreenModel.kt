@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
+import androidx.paging.PagingSource
+import androidx.paging.PagingState
 import androidx.paging.cachedIn
 import androidx.paging.filter
 import androidx.paging.map
@@ -58,6 +60,8 @@ import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import eu.kanade.tachiyomi.source.model.Filter as SourceModelFilter
 
 class BrowseSourceScreenModel(
@@ -115,11 +119,15 @@ class BrowseSourceScreenModel(
      * Flow of Pager flow tied to the current listing and requested source page.
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems().get()
+    private val pagingGeneration = AtomicLong()
+    private val mangaSourcePages = ConcurrentHashMap<Long, SourcePage>()
     val mangaPagerFlowFlow = state.map {
         MangaPageRequest(it.listing, it.browseStartPage, it.pageRequestId)
     }
         .distinctUntilChanged()
         .map { request ->
+            val generation = pagingGeneration.incrementAndGet()
+            mangaSourcePages.clear()
             Pager(
                 config = PagingConfig(
                     pageSize = SOURCE_PAGE_SIZE,
@@ -128,7 +136,16 @@ class BrowseSourceScreenModel(
                 ),
                 initialKey = request.page.toLong(),
             ) {
-                getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters)
+                PageTrackingPagingSource(
+                    delegate = getRemoteManga(sourceId, request.listing.query ?: "", request.listing.filters),
+                    onPageLoaded = { page, mangas ->
+                        if (pagingGeneration.get() == generation) {
+                            mangas.forEach { manga ->
+                                mangaSourcePages[manga.id] = SourcePage(generation, page)
+                            }
+                        }
+                    },
+                )
             }.flow.map { pagingData ->
                 pagingData.map { manga ->
                     getManga.subscribe(manga.url, manga.source)
@@ -165,7 +182,6 @@ class BrowseSourceScreenModel(
                 toolbarQuery = null,
                 browsePage = 1,
                 browseStartPage = 1,
-                browseFirstLoadedPage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -198,7 +214,6 @@ class BrowseSourceScreenModel(
                 toolbarQuery = query ?: input.query,
                 browsePage = 1,
                 browseStartPage = 1,
-                browseFirstLoadedPage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -248,7 +263,6 @@ class BrowseSourceScreenModel(
                 toolbarQuery = listing.query,
                 browsePage = 1,
                 browseStartPage = 1,
-                browseFirstLoadedPage = 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
             )
@@ -263,7 +277,6 @@ class BrowseSourceScreenModel(
             it.copy(
                 browsePage = page,
                 browseStartPage = page,
-                browseFirstLoadedPage = page,
                 pageRequestId = it.pageRequestId + 1,
                 selectionMode = false,
                 selectedMangaIds = emptySet(),
@@ -271,22 +284,13 @@ class BrowseSourceScreenModel(
         }
     }
 
-    fun onPreviousPageLoaded() {
+    fun updateVisibleManga(mangaId: Long) {
+        val sourcePage = mangaSourcePages[mangaId]
+            ?.takeIf { it.generation == pagingGeneration.get() }
+            ?.page
+            ?: return
         mutableState.update { state ->
-            if (state.browseFirstLoadedPage <= 1) {
-                state
-            } else {
-                state.copy(browseFirstLoadedPage = state.browseFirstLoadedPage - 1)
-            }
-        }
-    }
-
-    fun updateVisibleMangaIndex(index: Int) {
-        if (index < 0) return
-
-        mutableState.update { state ->
-            val visiblePage = calculateBrowsePage(state.browseFirstLoadedPage, index)
-            if (visiblePage == state.browsePage) state else state.copy(browsePage = visiblePage)
+            if (sourcePage == state.browsePage) state else state.copy(browsePage = sourcePage)
         }
     }
 
@@ -586,7 +590,6 @@ class BrowseSourceScreenModel(
         val dialog: Dialog? = null,
         val browsePage: Int = 1,
         val browseStartPage: Int = 1,
-        val browseFirstLoadedPage: Int = 1,
         val pageRequestId: Int = 0,
         val selectionMode: Boolean = false,
         val selectedMangaIds: Set<Long> = emptySet(),
@@ -606,9 +609,34 @@ class BrowseSourceScreenModel(
 
 private const val SOURCE_PAGE_SIZE = 50
 
-internal fun calculateBrowsePage(firstLoadedPage: Int, visibleMangaIndex: Int): Int {
-    return firstLoadedPage + visibleMangaIndex.coerceAtLeast(0) / SOURCE_PAGE_SIZE
+internal class PageTrackingPagingSource(
+    private val delegate: PagingSource<Long, Manga>,
+    private val onPageLoaded: (Int, List<Manga>) -> Unit,
+) : PagingSource<Long, Manga>() {
+
+    init {
+        delegate.registerInvalidatedCallback(::invalidate)
+        registerInvalidatedCallback(delegate::invalidate)
+    }
+
+    override suspend fun load(params: LoadParams<Long>): LoadResult<Long, Manga> {
+        return delegate.load(params).also { result ->
+            if (result is LoadResult.Page) {
+                val page = params.key
+                    ?: result.prevKey?.plus(1)
+                    ?: result.nextKey?.minus(1)
+                    ?: 1
+                onPageLoaded(page.toInt(), result.data)
+            }
+        }
+    }
+
+    override fun getRefreshKey(state: PagingState<Long, Manga>): Long? {
+        return delegate.getRefreshKey(state)
+    }
 }
+
+private data class SourcePage(val generation: Long, val page: Int)
 
 internal data class RangeSelectionResult(
     val selectedIds: Set<Long>,

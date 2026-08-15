@@ -27,8 +27,7 @@ fun BrowseSourceList(
     selectedMangaIds: Set<Long>,
     onMangaClick: (Int, Manga) -> Unit,
     onMangaLongClick: (Int, Manga) -> Unit,
-    onPreviousPageLoaded: () -> Unit,
-    onVisibleMangaIndexChanged: (Int) -> Unit,
+    onVisibleMangaChanged: (Long) -> Unit,
 ) {
     val lazyListState = rememberLazyListState()
 
@@ -45,9 +44,6 @@ fun BrowseSourceList(
                     anchorMangaId = mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
                     anchorScrollOffset = lazyListState.firstVisibleItemScrollOffset
                 }
-                if (prependCompleted) {
-                    onPreviousPageLoaded()
-                }
                 prependWasLoading = prependState is LoadState.Loading
 
                 val restoredIndex = if (prependCompleted) {
@@ -60,10 +56,11 @@ fun BrowseSourceList(
                 }
                 if (restoredIndex != null) {
                     lazyListState.scrollToItem(restoredIndex, anchorScrollOffset)
-                    onVisibleMangaIndexChanged(restoredIndex)
+                    anchorMangaId?.let(onVisibleMangaChanged)
                     anchorMangaId = null
                 } else if (!prependCompleted) {
-                    onVisibleMangaIndexChanged(index)
+                    mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
+                        ?.let(onVisibleMangaChanged)
                 }
             }
     }
