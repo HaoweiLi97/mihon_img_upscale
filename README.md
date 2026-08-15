@@ -28,7 +28,7 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 | **W2xEX Omni Mini V2** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
 | **W2xEX Photo Small** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
 | **AnimeJaNai v2 UltraCompact** | 2x | the-database | [OpenModelDB](https://openmodeldb.info/models/2x-AnimeJaNai-v2-UltraCompact) |
-| **sudo UltraCompact** | 2x | sudo | [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
+| **sudo UltraCompact** | 2x | [sudo rm -rf / --no-preserve-root#8353](https://openmodeldb.info/users/sudo) | [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
 
 
 
