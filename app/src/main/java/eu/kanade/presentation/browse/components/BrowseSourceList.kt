@@ -16,6 +16,7 @@ import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaListItem
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.presentation.core.util.plus
@@ -35,13 +36,13 @@ fun BrowseSourceList(
         var prependWasLoading = false
         var anchorMangaId: Long? = null
         var anchorScrollOffset = 0
-        snapshotFlow { mangaList.loadState.prepend to lazyListState.firstVisibleItemIndex }
+        snapshotFlow { mangaList.loadState.prepend }
             .distinctUntilChanged()
-            .collect { (prependState, index) ->
+            .collect { prependState ->
                 val prependStarted = !prependWasLoading && prependState is LoadState.Loading
                 val prependCompleted = prependWasLoading && prependState is LoadState.NotLoading
                 if (prependStarted) {
-                    anchorMangaId = mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
+                    anchorMangaId = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? Long
                     anchorScrollOffset = lazyListState.firstVisibleItemScrollOffset
                 }
                 prependWasLoading = prependState is LoadState.Loading
@@ -56,13 +57,16 @@ fun BrowseSourceList(
                 }
                 if (restoredIndex != null) {
                     lazyListState.scrollToItem(restoredIndex, anchorScrollOffset)
-                    anchorMangaId?.let(onVisibleMangaChanged)
                     anchorMangaId = null
-                } else if (!prependCompleted) {
-                    mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
-                        ?.let(onVisibleMangaChanged)
                 }
             }
+    }
+
+    LaunchedEffect(lazyListState) {
+        snapshotFlow { lazyListState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? Long }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collect(onVisibleMangaChanged)
     }
 
     LazyColumn(

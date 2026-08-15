@@ -19,6 +19,7 @@ import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.presentation.core.util.plus
@@ -39,13 +40,13 @@ fun BrowseSourceComfortableGrid(
         var prependWasLoading = false
         var anchorMangaId: Long? = null
         var anchorScrollOffset = 0
-        snapshotFlow { mangaList.loadState.prepend to lazyGridState.firstVisibleItemIndex }
+        snapshotFlow { mangaList.loadState.prepend }
             .distinctUntilChanged()
-            .collect { (prependState, index) ->
+            .collect { prependState ->
                 val prependStarted = !prependWasLoading && prependState is LoadState.Loading
                 val prependCompleted = prependWasLoading && prependState is LoadState.NotLoading
                 if (prependStarted) {
-                    anchorMangaId = mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
+                    anchorMangaId = lazyGridState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? Long
                     anchorScrollOffset = lazyGridState.firstVisibleItemScrollOffset
                 }
                 prependWasLoading = prependState is LoadState.Loading
@@ -60,13 +61,16 @@ fun BrowseSourceComfortableGrid(
                 }
                 if (restoredIndex != null) {
                     lazyGridState.scrollToItem(restoredIndex, anchorScrollOffset)
-                    anchorMangaId?.let(onVisibleMangaChanged)
                     anchorMangaId = null
-                } else if (!prependCompleted) {
-                    mangaList.itemSnapshotList.items.getOrNull(index)?.value?.id
-                        ?.let(onVisibleMangaChanged)
                 }
             }
+    }
+
+    LaunchedEffect(lazyGridState) {
+        snapshotFlow { lazyGridState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? Long }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collect(onVisibleMangaChanged)
     }
 
     LazyVerticalGrid(
