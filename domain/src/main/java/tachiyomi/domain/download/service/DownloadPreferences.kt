@@ -13,6 +13,8 @@ class DownloadPreferences(
 
     fun saveChaptersAsCBZ() = preferenceStore.getBoolean("save_chapter_as_cbz", true)
 
+    fun organizeDownloadsByCategory() = preferenceStore.getBoolean("organize_downloads_by_category", false)
+
     fun addRandomNonceToCBZ() = preferenceStore.getBoolean("add_random_nonce_to_cbz", false)
 
     fun cloudSyncEnabled() = preferenceStore.getBoolean("cloud_sync_enabled", false)
@@ -37,7 +39,12 @@ class DownloadPreferences(
     }
 
     fun markChapterUploadedToCloud(chapterId: Long) {
-        cloudUploadedChapterIds().set(cloudUploadedChapterIds().get() + chapterId.toString())
+        markChaptersUploadedToCloud(listOf(chapterId))
+    }
+
+    fun markChaptersUploadedToCloud(chapterIds: Collection<Long>) {
+        if (chapterIds.isEmpty()) return
+        cloudUploadedChapterIds().set(cloudUploadedChapterIds().get() + chapterIds.map { it.toString() })
     }
 
     fun uploadedMetaInfoHash(mangaId: Long): String? {
@@ -89,6 +96,10 @@ class DownloadPreferences(
         private const val DOWNLOAD_NEW_CATEGORIES_EXCLUDE_PREF_KEY = "download_new_categories_exclude"
         private const val CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY = "cloud_uploaded_chapter_ids"
         private const val CLOUD_UPLOADED_META_INFO_HASHES_PREF_KEY = "cloud_uploaded_meta_info_hashes"
+        val cloudSyncRecordPreferenceKeys = setOf(
+            CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY,
+            CLOUD_UPLOADED_META_INFO_HASHES_PREF_KEY,
+        )
         val categoryPreferenceKeys = setOf(
             REMOVE_EXCLUDE_CATEGORIES_PREF_KEY,
             DOWNLOAD_NEW_CATEGORIES_PREF_KEY,

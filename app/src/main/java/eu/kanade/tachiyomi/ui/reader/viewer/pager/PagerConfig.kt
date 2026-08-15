@@ -147,16 +147,6 @@ class PagerConfig(
             }
             .launchIn(scope)
 
-        readerPreferences.realCuganInputScale().changes()
-            .drop(1)
-            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganInputScale changed") }
-            .debounce(500)
-            .onEach { 
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                imagePropertyChangedListener?.invoke() 
-            }
-            .launchIn(scope)
-
         readerPreferences.realCuganMaxSizeWidth().changes()
             .drop(1)
             .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganMaxSizeWidth changed") }
@@ -207,16 +197,6 @@ class PagerConfig(
             }
             .launchIn(scope)
 
-        readerPreferences.realCuganJobs().changes()
-            .drop(1)
-            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganJobs changed") }
-            .debounce(500)
-            .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                imagePropertyChangedListener?.invoke()
-            }
-            .launchIn(scope)
-
         readerPreferences.realCuganPrecision().changes()
             .drop(1)
             .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganPrecision changed") }
@@ -227,10 +207,11 @@ class PagerConfig(
             }
             .launchIn(scope)
 
-        readerPreferences.realCuganResizeLargeImage().changes()
+        readerPreferences.realCuganFp16Arithmetic().changes()
             .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganFp16Arithmetic changed") }
+            .debounce(500)
             .onEach {
-                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganResizeLargeImage changed")
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
                 imagePropertyChangedListener?.invoke()
             }

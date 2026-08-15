@@ -70,6 +70,11 @@ object SettingsDownloadScreen : SearchableSettings {
                 title = stringResource(MR.strings.connected_to_wifi),
             ),
             Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.organizeDownloadsByCategory(),
+                title = stringResource(MR.strings.pref_download_organize_by_category),
+                subtitle = stringResource(MR.strings.pref_download_organize_by_category_summary),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.saveChaptersAsCBZ(),
                 title = stringResource(MR.strings.save_chapter_as_cbz),
             ),

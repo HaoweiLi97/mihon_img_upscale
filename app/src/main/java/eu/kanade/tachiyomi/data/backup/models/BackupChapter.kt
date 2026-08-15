@@ -22,6 +22,7 @@ data class BackupChapter(
     @ProtoNumber(10) var sourceOrder: Long = 0,
     @ProtoNumber(11) var lastModifiedAt: Long = 0,
     @ProtoNumber(12) var version: Long = 0,
+    @ProtoNumber(13) var cloudSynced: Boolean = false,
 ) {
     fun toChapterImpl(): Chapter {
         return Chapter.create().copy(
@@ -41,8 +42,8 @@ data class BackupChapter(
     }
 }
 
-val backupChapterMapper = {
-        _: Long,
+fun backupChapterMapper(cloudUploadedChapterIds: Set<String>) = {
+        id: Long,
         _: Long,
         url: String,
         name: String,
@@ -71,5 +72,6 @@ val backupChapterMapper = {
         sourceOrder = sourceOrder,
         lastModifiedAt = lastModifiedAt,
         version = version,
+        cloudSynced = id.toString() in cloudUploadedChapterIds,
     )
 }

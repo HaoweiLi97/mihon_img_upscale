@@ -238,7 +238,7 @@ class MainActivity : BaseActivity() {
 
                 HandleOnNewIntent(context = context, navigator = navigator)
 
-                CheckForUpdates()
+                CheckForUpdates(isLaunch)
                 ShowOnboarding()
             }
 
@@ -298,15 +298,15 @@ class MainActivity : BaseActivity() {
     }
 
     @Composable
-    private fun CheckForUpdates() {
+    private fun CheckForUpdates(isLaunch: Boolean) {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
         // App updates
         LaunchedEffect(Unit) {
-            if (updaterEnabled) {
+            if (isLaunch && updaterEnabled) {
                 try {
-                    val result = AppUpdateChecker().checkForUpdate(context)
+                    val result = AppUpdateChecker().checkForUpdate(context, forceCheck = true)
                     if (result is GetApplicationRelease.Result.NewUpdate) {
                         val updateScreen = NewUpdateScreen(
                             versionName = result.release.version,

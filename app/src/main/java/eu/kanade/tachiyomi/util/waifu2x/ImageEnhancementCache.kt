@@ -5,6 +5,13 @@ import android.graphics.Bitmap
 import android.os.Build
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 
 /**
  * Manages disk cache for Real-CUGAN enhanced images to reduce memory usage.
@@ -14,6 +21,41 @@ object ImageEnhancementCache {
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
     private var lastTrimTime = 0L
+    private val cacheGeneration = AtomicInteger(0)
+    private val pendingSaveKeys = ConcurrentHashMap<String, Int>()
+    private val saveQueue = Channel<SaveRequest>(capacity = 1)
+    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private data class SaveRequest(
+        val mangaId: Long,
+        val chapterId: Long,
+        val pageIndex: Int,
+        val configHash: String,
+        val bitmap: Bitmap,
+        val pageVariant: String,
+        val generation: Int,
+        val key: String,
+    )
+
+    init {
+        saveScope.launch {
+            for (request in saveQueue) {
+                try {
+                    if (request.generation == cacheGeneration.get()) {
+                        val file = writeToCache(request)
+                        if (file != null) {
+                            android.util.Log.d("ImageEnhancementCache", "Saved page ${request.pageIndex}/${request.pageVariant} to ${file.absolutePath}")
+                        } else {
+                            android.util.Log.e("ImageEnhancementCache", "Failed to save page ${request.pageIndex}/${request.pageVariant}")
+                        }
+                    }
+                } finally {
+                    pendingSaveKeys.remove(request.key, request.generation)
+                    if (!request.bitmap.isRecycled) request.bitmap.recycle()
+                }
+            }
+        }
+    }
 
     fun init(context: Context) {
         if (cacheDir == null) {
@@ -76,17 +118,57 @@ object ImageEnhancementCache {
     }
 
     /**
-     * Save bitmap to disk cache
+     * Transfers ownership of [bitmap] to the cache pipeline, including when the request is rejected.
      */
-    fun saveToCache(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, bitmap: Bitmap, pageVariant: String = ""): File? {
-        val currentCacheDir = cacheDir ?: return null
+    suspend fun enqueueSaveToCache(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, bitmap: Bitmap, pageVariant: String = ""): Boolean {
+        if (cacheDir == null || !isDisplayable(bitmap)) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            return false
+        }
+        val key = pendingSaveKey(mangaId, chapterId, pageIndex, pageVariant)
+        val generation = cacheGeneration.get()
+        if (pendingSaveKeys.putIfAbsent(key, generation) != null) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            return false
+        }
+
+        val request = SaveRequest(
+            mangaId = mangaId,
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            configHash = configHash,
+            bitmap = bitmap,
+            pageVariant = pageVariant,
+            generation = generation,
+            key = key,
+        )
+        try {
+            saveQueue.send(request)
+            return true
+        } catch (t: Throwable) {
+            pendingSaveKeys.remove(key, generation)
+            if (!bitmap.isRecycled) bitmap.recycle()
+            throw t
+        }
+    }
+
+    fun isSavePending(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = ""): Boolean {
+        return pendingSaveKeys.containsKey(pendingSaveKey(mangaId, chapterId, pageIndex, pageVariant))
+    }
+
+    private fun writeToCache(request: SaveRequest): File? {
+        if (cacheDir == null) return null
+        val bitmap = request.bitmap
         if (!isDisplayable(bitmap)) {
-            android.util.Log.e("ImageEnhancementCache", "Refusing to cache nearly transparent enhanced image for page $pageIndex")
+            android.util.Log.e("ImageEnhancementCache", "Refusing to cache nearly transparent enhanced image for page ${request.pageIndex}")
             return null
         }
         
         try {
-            val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant))
+            val file = File(
+                getChapterDir(request.mangaId, request.chapterId),
+                getFilename(request.pageIndex, request.configHash, request.pageVariant),
+            )
             val tempFile = File(file.parent, "${file.name}.tmp")
             
             FileOutputStream(tempFile).use { out ->
@@ -98,6 +180,11 @@ object ImageEnhancementCache {
                 }
                 out.flush()
             }
+
+            if (request.generation != cacheGeneration.get()) {
+                tempFile.delete()
+                return null
+            }
             
             if (tempFile.renameTo(file)) {
                 return file
@@ -106,7 +193,7 @@ object ImageEnhancementCache {
                 return null
             }
         } catch (t: Throwable) {
-            android.util.Log.e("ImageEnhancementCache", "Failed to save to cache for page $pageIndex", t)
+            android.util.Log.e("ImageEnhancementCache", "Failed to save to cache for page ${request.pageIndex}", t)
             return null
         }
     }
@@ -188,8 +275,14 @@ object ImageEnhancementCache {
      */
     fun clear(context: Context) {
         init(context)
+        cacheGeneration.incrementAndGet()
+        pendingSaveKeys.clear()
         cacheDir?.deleteRecursively()
         cacheDir?.mkdirs()
+    }
+
+    private fun pendingSaveKey(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String): String {
+        return "${mangaId}_${chapterId}_${pageIndex}_$pageVariant"
     }
 
     private fun getFilename(pageIndex: Int, configHash: String, pageVariant: String = ""): String {
@@ -211,24 +304,23 @@ object ImageEnhancementCache {
     fun getConfigHash(
         noise: Int, 
         scale: Int, 
-        inputScale: Int,
         model: Int = 0,
         maxWidth: Int = 0,
         maxHeight: Int = 0,
         skipMaxWidth: Int = 0,
         skipMaxHeight: Int = 0,
-        resizeEnabled: Boolean = false,
         tileSize: Int = 128,
         precision: Int = 0,
+        fp16Arithmetic: Boolean = false,
     ): String {
         val effectiveScale = getEffectiveScale(model, scale)
-        return "${noise}x${effectiveScale}x${inputScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_r${if (resizeEnabled) 1 else 0}_t${tileSize}_p${precision}"
+        return "${noise}x${effectiveScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${precision}_fa${if (fp16Arithmetic) 1 else 0}"
     }
 
     fun getEffectiveScale(model: Int, scale: Int): Int {
+        Waifu2x.w2xExScaleFor(model)?.let { return it }
         return when (model) {
-            3, 4, 5, 6, 7, 8, 9, 12, 13 -> 2
-            10, 11, 14, 15 -> 4
+            3, 4, 5 -> 2
             else -> scale
         }
     }

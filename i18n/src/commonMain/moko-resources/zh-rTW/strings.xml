@@ -29,6 +29,11 @@
     <string name="action_mark_as_unread">標示為未讀</string>
     <string name="action_mark_previous_as_read">標示過往章節為已讀</string>
     <string name="action_download">下載</string>
+    <string name="download_selected_manga_confirmation">下載所選 %1$d 部漫畫的全部章節嗎？</string>
+    <string name="download_selected_manga_result">已將 %1$d 部漫畫加入下載佇列，%2$d 部失敗。</string>
+    <string name="cloud_sync_selected_manga_confirmation">下載並同步所選 %1$d 部漫畫中尚未同步的章節嗎？</string>
+    <string name="cloud_sync_selected_manga_result">已加入 %1$d 章，略過 %2$d 個已同步章節，%3$d 項失敗。</string>
+    <string name="cloud_sync_manga_confirmation">下載並同步這部漫畫中尚未同步的章節嗎？</string>
     <string name="action_bookmark">將章節加上書籤</string>
     <string name="action_remove_bookmark">將章節移除書籤</string>
     <string name="action_delete">刪除</string>
@@ -910,12 +915,12 @@
     <string name="pref_download_concurrent_pages_summary">每個來源同時下載的頁數</string>
     <string name="action_webview_close_tab">關閉頁籤</string>
     <string name="reader_tile_size">分塊大小</string>
-    <string name="reader_processing_jobs">處理執行緒</string>
     <string name="reader_precision">精度</string>
     <string name="reader_precision_fp16">FP16</string>
     <string name="reader_precision_fp32">FP32</string>
     <string name="reader_precision_int8">INT8</string>
     <string name="reader_precision_bf16">BF16</string>
+    <string name="reader_fp16_arithmetic">FP16 半精度運算</string>
     <string name="reader_processing_resolution">最大處理解析度</string>
     <string name="reader_max_resolution">最大解析度</string>
     <string name="reader_resolution_width">寬度（0 不限）</string>

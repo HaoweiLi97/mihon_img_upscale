@@ -1,6 +1,7 @@
 package eu.kanade.presentation.manga.components
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
@@ -34,6 +35,7 @@ fun MangaToolbar(
     onClickFilter: () -> Unit,
     onClickShare: (() -> Unit)?,
     onClickDownload: ((DownloadAction) -> Unit)?,
+    onClickCloudSync: (() -> Unit)?,
     onClickEditCategory: (() -> Unit)?,
     onClickRefresh: () -> Unit,
     onClickMigrate: (() -> Unit)?,
@@ -100,6 +102,15 @@ fun MangaToolbar(
                                 title = stringResource(MR.strings.manga_download),
                                 icon = Icons.Outlined.Download,
                                 onClick = { downloadExpanded = !downloadExpanded },
+                            ),
+                        )
+                    }
+                    if (onClickCloudSync != null) {
+                        add(
+                            AppBar.Action(
+                                title = stringResource(MR.strings.cloud_sync),
+                                icon = Icons.Outlined.CloudUpload,
+                                onClick = onClickCloudSync,
                             ),
                         )
                     }

@@ -139,6 +139,16 @@ class DownloadManager(
         downloader.queueChapters(manga, chapters, autoStart)
     }
 
+    fun isCloudSyncAvailable(): Boolean = downloader.isCloudSyncAvailable()
+
+    internal suspend fun cloudSyncChapters(
+        manga: Manga,
+        chapters: List<Chapter>,
+        autoStart: Boolean = true,
+    ): CloudSyncQueueResult {
+        return downloader.queueChaptersForCloudSync(manga, chapters, autoStart)
+    }
+
     /**
      * Tells the downloader to enqueue the given list of downloads at the start of the queue.
      *
@@ -244,13 +254,14 @@ class DownloadManager(
 
             removeFromDownloadQueue(filteredChapters)
 
-            val (mangaDir, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
+            val (mangaDirs, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
             chapterDirs.forEach { it.delete() }
             cache.removeChapters(filteredChapters, manga)
 
-            // Delete manga directory if empty
-            if (mangaDir?.listFiles()?.isEmpty() == true) {
-                deleteManga(manga, source, removeQueued = false)
+            // Delete manga directories if empty
+            mangaDirs.filter { it.listFiles()?.isEmpty() == true }.forEach { it.delete() }
+            if (mangaDirs.isNotEmpty()) {
+                deleteEmptySourceDirectories(source)
             }
         }
     }
@@ -267,15 +278,17 @@ class DownloadManager(
             if (removeQueued) {
                 downloader.removeFromQueue(manga)
             }
-            provider.findMangaDir(manga.title, source)?.delete()
+            provider.findMangaDirs(manga.title, source).forEach { it.delete() }
             cache.removeManga(manga)
+            deleteEmptySourceDirectories(source)
+        }
+    }
 
-            // Delete source directory if empty
-            val sourceDir = provider.findSourceDir(source)
-            if (sourceDir?.listFiles()?.isEmpty() == true) {
-                sourceDir.delete()
-                cache.removeSource(source)
-            }
+    private suspend fun deleteEmptySourceDirectories(source: Source) {
+        val sourceDirs = provider.findSourceDirs(source)
+        if (sourceDirs.isNotEmpty() && sourceDirs.all { it.listFiles()?.isEmpty() == true }) {
+            sourceDirs.forEach { it.delete() }
+            cache.removeSource(source)
         }
     }
 
@@ -324,22 +337,32 @@ class DownloadManager(
      * @param newSource the new source.
      */
     fun renameSource(oldSource: Source, newSource: Source) {
-        val oldFolder = provider.findSourceDir(oldSource) ?: return
         val newName = provider.getSourceDirName(newSource)
+        if (provider.getSourceDirName(oldSource) == newName) return
 
-        if (oldFolder.name == newName) return
+        var renamed = false
 
-        val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
-        if (capitalizationChanged) {
-            val tempName = newName + Downloader.TMP_DIR_SUFFIX
-            if (!oldFolder.renameTo(tempName)) {
+        provider.findSourceDirs(oldSource).forEach { oldFolder ->
+            if (oldFolder.name == newName) return@forEach
+
+            val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
+            if (capitalizationChanged) {
+                val tempName = newName + Downloader.TMP_DIR_SUFFIX
+                if (!oldFolder.renameTo(tempName)) {
+                    logcat(LogPriority.ERROR) { "Failed to rename source download folder: ${oldFolder.name}" }
+                    return@forEach
+                }
+            }
+
+            if (!oldFolder.renameTo(newName)) {
                 logcat(LogPriority.ERROR) { "Failed to rename source download folder: ${oldFolder.name}" }
-                return
+            } else {
+                renamed = true
             }
         }
 
-        if (!oldFolder.renameTo(newName)) {
-            logcat(LogPriority.ERROR) { "Failed to rename source download folder: ${oldFolder.name}" }
+        if (renamed) {
+            cache.invalidateCache()
         }
     }
 
@@ -351,28 +374,30 @@ class DownloadManager(
      */
     suspend fun renameManga(manga: Manga, newTitle: String) {
         val source = sourceManager.getOrStub(manga.source)
-        val oldFolder = provider.findMangaDir(manga.title, source) ?: return
+        val oldFolders = provider.findMangaDirs(manga.title, source)
+        if (oldFolders.isEmpty()) return
         val newName = provider.getMangaDirName(newTitle)
-
-        if (oldFolder.name == newName) return
 
         // just to be safe, don't allow downloads for this manga while renaming it
         downloader.removeFromQueue(manga)
 
-        val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
-        if (capitalizationChanged) {
-            val tempName = newName + Downloader.TMP_DIR_SUFFIX
-            if (!oldFolder.renameTo(tempName)) {
+        oldFolders.forEach { oldFolder ->
+            if (oldFolder.name == newName) return@forEach
+
+            val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
+            if (capitalizationChanged) {
+                val tempName = newName + Downloader.TMP_DIR_SUFFIX
+                if (!oldFolder.renameTo(tempName)) {
+                    logcat(LogPriority.ERROR) { "Failed to rename manga download folder: ${oldFolder.name}" }
+                    return@forEach
+                }
+            }
+
+            if (!oldFolder.renameTo(newName)) {
                 logcat(LogPriority.ERROR) { "Failed to rename manga download folder: ${oldFolder.name}" }
-                return
             }
         }
-
-        if (oldFolder.renameTo(newName)) {
-            cache.renameManga(manga, oldFolder, newTitle)
-        } else {
-            logcat(LogPriority.ERROR) { "Failed to rename manga download folder: ${oldFolder.name}" }
-        }
+        cache.invalidateCache()
     }
 
     /**
@@ -385,15 +410,16 @@ class DownloadManager(
      */
     suspend fun renameChapter(source: Source, manga: Manga, oldChapter: Chapter, newChapter: Chapter) {
         val oldNames = provider.getValidChapterDirNames(oldChapter.name, oldChapter.scanlator, oldChapter.url)
-        val mangaDir = provider.getMangaDir(manga.title, source).getOrElse { e ->
-            logcat(LogPriority.ERROR, e) { "Manga download folder doesn't exist. Skipping renaming after source sync" }
-            return
-        }
-
         // Assume there's only 1 version of the chapter name formats present
-        val oldDownload = oldNames.asSequence()
-            .mapNotNull { mangaDir.findFile(it) }
+        val mangaDirAndDownload = provider.findMangaDirs(manga.title, source).asSequence()
+            .mapNotNull { mangaDir ->
+                oldNames.asSequence()
+                    .mapNotNull { mangaDir.findFile(it) }
+                    .firstOrNull()
+                    ?.let { mangaDir to it }
+            }
             .firstOrNull() ?: return
+        val (mangaDir, oldDownload) = mangaDirAndDownload
 
         var newName = provider.getChapterDirName(newChapter.name, newChapter.scanlator, newChapter.url)
         if (oldDownload.isFile && oldDownload.extension == "cbz") {
@@ -466,4 +492,13 @@ class DownloadManager(
                     .asFlow(),
             )
         }
+}
+
+internal data class CloudSyncQueueResult(
+    val downloadsQueued: Int = 0,
+    val uploadsQueued: Int = 0,
+    val skipped: Int = 0,
+    val failed: Int = 0,
+) {
+    val queued: Int get() = downloadsQueued + uploadsQueued
 }

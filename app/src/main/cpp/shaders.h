@@ -1,91 +1,20 @@
 #ifndef WAIFU2X_SHADERS_H
 #define WAIFU2X_SHADERS_H
 
-// Preproc shader for packed RGBA input
-// Input: packed RGBA bytes (4 bytes per pixel: R, G, B, A)
-// Output: planar RGB floats normalized to 0-1 for model
-static const char waifu2x_preproc_comp_data[] = R"(
-#version 450
-layout (local_size_x_id = 233, local_size_y_id = 234, local_size_z_id = 235) in;
-layout (constant_id = 0) const int bgr = 0;
-layout (binding = 0) readonly buffer bottom_blob { float bottom_blob_data[]; };
-layout (binding = 1) writeonly buffer top_blob { float top_blob_data[]; };
-layout (binding = 2) writeonly buffer alpha_blob { float alpha_blob_data[]; };
-layout (push_constant) uniform parameter { int w; int h; int cstep; int outw; int outh; int outcstep; int pad_top; int pad_left; int crop_x; int crop_y; int channels; int alphaw; int alphah; } p;
-void main() {
-    int gx = int(gl_GlobalInvocationID.x);
-    int gy = int(gl_GlobalInvocationID.y);
-    int gz = int(gl_GlobalInvocationID.z);
-    if (gx >= p.outw || gy >= p.outh || gz >= p.channels) return;
-    
-    int x = clamp(gx + p.crop_x - p.pad_left, 0, p.w - 1);
-    int y = clamp(gy + p.crop_y - p.pad_top, 0, p.h - 1);
-    
-    // Input is packed RGBA: each pixel has 4 floats at (y * w + x) * 4
-    int pixel_idx = y * p.w + x;
-    int channel_idx = gz;
-    // For BGR swap: read B when writing R channel (gz=0), read R when writing B channel (gz=2)
-    if (bgr == 1 && gz < 3) {
-        channel_idx = 2 - gz;
-    }
-    
-    float v = bottom_blob_data[pixel_idx * 4 + channel_idx];
-    
-    if (gz == 3) {
-        // Alpha channel
-        int ax = gx - p.pad_left;
-        int ay = gy - p.pad_top;
-        if (ax >= 0 && ax < p.alphaw && ay >= 0 && ay < p.alphah) {
-            alpha_blob_data[ay * p.alphaw + ax] = v;
-        }
-    } else {
-        // RGB channels - normalize to 0-1
-        const float norm_val = 1.0 / 255.0;
-        top_blob_data[gz * p.outcstep + gy * p.outw + gx] = v * norm_val;
-    }
-}
-)";
+#include <cstdint>
 
-// Postproc shader
-// Input: planar RGB floats from model (0-1 range)
-// Output: packed RGBA floats (0-255 range)
-static const char waifu2x_postproc_comp_data[] = R"(
-#version 450
-layout (local_size_x_id = 233, local_size_y_id = 234, local_size_z_id = 235) in;
-layout (constant_id = 0) const int bgr = 0;
-layout (binding = 0) readonly buffer bottom_blob { float bottom_blob_data[]; };
-layout (binding = 1) readonly buffer alpha_blob { float alpha_blob_data[]; };
-layout (binding = 2) writeonly buffer top_blob { float top_blob_data[]; };
-layout (push_constant) uniform parameter { int w; int h; int cstep; int outw; int outh; int outcstep; int offset_x; int gx_max; int channels; int alphaw; int alphah; } p;
-void main() {
-    int gx = int(gl_GlobalInvocationID.x);
-    int gy = int(gl_GlobalInvocationID.y);
-    int gz = int(gl_GlobalInvocationID.z);
-    if (gx >= p.gx_max || gy >= p.outh || gz >= p.channels) return;
-    
-    float v;
-    if (gz == 3) {
-        // Alpha from bicubic interpolation
-        v = alpha_blob_data[gy * p.alphaw + gx];
-    } else {
-        // RGB from model - need to swap back if bgr
-        int channel_read = gz;
-        if (bgr == 1) {
-            channel_read = 2 - gz;
-        }
-        v = bottom_blob_data[channel_read * p.cstep + gy * p.w + gx];
-        // Denormalize to 0-255
-        v = v * 255.0;
-    }
-    
-    // Clamp with rounding
-    v = clamp(v + 0.5, 0.0, 255.0);
-    
-    // Output is packed RGBA
-    int out_pixel_idx = gy * p.outw + gx + p.offset_x;
-    top_blob_data[out_pixel_idx * 4 + gz] = v;
-}
-)";
+static const uint32_t waifu2x_fused_preproc_fp16_spv[] =
+#include "waifu2x_fused_preproc_fp16.inc"
+;
+static const uint32_t waifu2x_fused_postproc_fp16_spv[] =
+#include "waifu2x_fused_postproc_fp16.inc"
+;
+static const uint32_t waifu2x_fused_preproc_fp32_spv[] =
+#include "waifu2x_fused_preproc_fp32.inc"
+;
+static const uint32_t waifu2x_fused_postproc_fp32_spv[] =
+#include "waifu2x_fused_postproc_fp32.inc"
+;
 
 // TTA preproc shader (placeholder - not commonly used)
 static const char waifu2x_preproc_tta_comp_data[] = R"(

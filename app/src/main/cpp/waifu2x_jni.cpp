@@ -4,6 +4,7 @@
 #include <android/log.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <jni.h>
 #include <mutex>
@@ -27,8 +28,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
                                                          jstring model_dir,
                                                          jint noise_level,
                                                          jint scale_level,
-                                                         jint jobs,
-                                                         jint precision) {
+                                                         jint precision,
+                                                         jboolean fp16_arithmetic) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -61,7 +62,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
                "_scale2.0x_model.bin";
   }
 
-  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, 0, precision,
+                          fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->disable_grayscale_check = true;
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
@@ -79,7 +81,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
     JNIEnv *env, jobject thiz, jstring model_dir, jint noise_level,
-    jint scale_level, jint jobs, jint precision) {
+    jint scale_level, jint precision, jboolean fp16_arithmetic) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -109,7 +111,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
     // model or just fail/fallback For now assume 2x.
   }
 
-  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, 0, precision,
+                          fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->disable_grayscale_check = true;
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
@@ -144,7 +147,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
     if (!g_waifu2x)
       return bitmap;
 
-    AndroidBitmapInfo info;
+    AndroidBitmapInfo info{};
     if (AndroidBitmap_getInfo(env, bitmap, &info) < 0)
       return bitmap;
     if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888)
@@ -158,14 +161,18 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
     int h = info.height;
     int stride = info.stride;
 
-    // Use from_pixels for input (copy to ncnn Mat)
-    ncnn::Mat in = ncnn::Mat::from_pixels((const unsigned char *)pixels,
-                                          ncnn::Mat::PIXEL_RGBA, w, h, stride);
-
-    // Unlock input quickly if possible, checking if creating output needs it
-    // locked? No, createBitmap doesn't need input locked. But we need to keep
-    // 'pixels' valid if we didn't copy... ncnn::Mat::from_pixels COPIES data,
-    // so we can unlock input immediately.
+    // Keep a packed RGBA copy for the fused Vulkan upload. This also lets the
+    // staged path reconstruct its planar input without keeping Bitmap locked.
+    ncnn::Mat packed_input(w, h, (size_t)4u, 1);
+    if (packed_input.empty()) {
+      AndroidBitmap_unlockPixels(env, bitmap);
+      return bitmap;
+    }
+    for (int y = 0; y < h; y++) {
+      memcpy((unsigned char *)packed_input.data + (size_t)y * w * 4,
+             (const unsigned char *)pixels + (size_t)y * stride,
+             (size_t)w * 4);
+    }
     AndroidBitmap_unlockPixels(env, bitmap);
 
     if (g_waifu2x) {
@@ -189,15 +196,55 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
       if (outBitmap) {
         void *outPixels;
         if (AndroidBitmap_lockPixels(env, outBitmap, &outPixels) == 0) {
-          AndroidBitmapInfo outInfo;
+          AndroidBitmapInfo outInfo{};
           AndroidBitmap_getInfo(env, outBitmap, &outInfo);
 
           g_waifu2x->progress_ptr = &g_progress;
           g_waifu2x->should_abort_ptr = &g_abort_processing;
 
-          // RUN UNIFIED PROCESS
-          ret = g_waifu2x->process(in, outPixels, outInfo.stride, lock,
-                                   &g_progress);
+          bool input_has_alpha =
+              (info.flags & ANDROID_BITMAP_FLAGS_ALPHA_MASK) !=
+              ANDROID_BITMAP_FLAGS_ALPHA_OPAQUE;
+          if (input_has_alpha) {
+            input_has_alpha = false;
+            const unsigned char *packed_pixels =
+                static_cast<const unsigned char *>(packed_input.data);
+            for (int i = 0; i < w * h; i++) {
+              if (packed_pixels[i * 4 + 3] != 255) {
+                input_has_alpha = true;
+                break;
+              }
+            }
+          }
+
+          if (g_waifu2x->has_gpu_pipeline()) {
+            const auto fused_start = std::chrono::steady_clock::now();
+            ret = g_waifu2x->process_gpu(packed_input, outPixels,
+                                         outInfo.stride, input_has_alpha,
+                                         &g_progress);
+            const auto fused_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - fused_start)
+                                      .count();
+            LOGD("Fused Vulkan processing %s in %lld ms",
+                 ret == 0 ? "completed" : "failed",
+                 static_cast<long long>(fused_ms));
+          }
+
+          if (ret != 0 && !g_abort_processing.load()) {
+            LOGD("Fused GPU pipeline unavailable for this image; retrying staged path");
+            const auto staged_start = std::chrono::steady_clock::now();
+            ncnn::Mat in = ncnn::Mat::from_pixels(
+                (const unsigned char *)packed_input.data,
+                ncnn::Mat::PIXEL_RGBA, w, h);
+            ret = g_waifu2x->process(in, outPixels, outInfo.stride,
+                                     input_has_alpha, lock, &g_progress);
+            const auto staged_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - staged_start)
+                                       .count();
+            LOGD("Staged processing %s in %lld ms",
+                 ret == 0 ? "completed" : "failed",
+                 static_cast<long long>(staged_ms));
+          }
 
           g_waifu2x->progress_ptr = nullptr;
           g_waifu2x->should_abort_ptr = nullptr;
@@ -309,6 +356,13 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeAbortProcessing(
   g_abort_processing.store(true);
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeClearAbortProcessing(
+    JNIEnv *env, jobject thiz) {
+  std::lock_guard<std::mutex> lock(g_lock);
+  g_abort_processing.store(false);
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitAnime4K(
     JNIEnv *env, jobject thiz, jobjectArray shaders, jobjectArray names) {
@@ -382,7 +436,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcessAnime4K(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
     JNIEnv *env, jobject thiz, jstring model_dir, jint noise_level,
-    jint scale_level, jint tile_sleep_ms, jint jobs, jint precision) {
+    jint scale_level, jint tile_sleep_ms, jint precision,
+    jboolean fp16_arithmetic) {
   g_abort_processing = true; // Signal abort to any running process
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false; // Reset
@@ -431,7 +486,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
   std::string bin_file = model_path + "/up" + std::to_string(scale_level) +
                          "x-" + noise_str + ".bin";
 
-  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, 0, precision,
+                          fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
   g_waifu2x->tile_sleep_ms = tile_sleep_ms; // Set configurable sleep
@@ -474,8 +530,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcessRealCugan(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
-    JNIEnv *env, jobject thiz, jstring model_dir, jint scale, jint jobs,
-    jint precision) {
+    JNIEnv *env, jobject thiz, jstring model_dir, jint scale, jint precision,
+    jboolean fp16_arithmetic) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -493,7 +549,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
   std::string param_file = model_path + "/x" + std::to_string(scale) + ".param";
   std::string bin_file = model_path + "/x" + std::to_string(scale) + ".bin";
 
-  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, 0, precision,
+                          fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->noise = 0;
   g_waifu2x->scale = scale;
   g_waifu2x->prepadding = 10; // Real-ESRGAN usually uses smaller padding, 10 is
@@ -518,7 +575,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
     JNIEnv *env, jobject thiz, jstring model_dir, jstring model_stem,
-    jint scale, jint jobs, jint precision) {
+    jint scale, jint precision, jboolean fp16_arithmetic) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -537,7 +594,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
   std::string param_file = model_path + "/" + stem + ".param";
   std::string bin_file = model_path + "/" + stem + ".bin";
 
-  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision);
+  g_waifu2x = new Waifu2x(0, false, 0, precision,
+                          fp16_arithmetic == JNI_TRUE);
   g_waifu2x->noise = 0;
   g_waifu2x->scale = scale;
   g_waifu2x->prepadding = 10;
@@ -561,7 +619,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitNose(
-    JNIEnv *env, jobject thiz, jstring model_dir, jint jobs, jint precision) {
+    JNIEnv *env, jobject thiz, jstring model_dir, jint precision,
+    jboolean fp16_arithmetic) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -579,7 +638,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitNose(
   std::string param_file = model_path + "/up2x-no-denoise.param";
   std::string bin_file = model_path + "/up2x-no-denoise.bin";
 
-  g_waifu2x = new Waifu2x(0, false, std::max(1, (int)jobs), precision); // GPU 0
+  g_waifu2x = new Waifu2x(0, false, 0, precision,
+                          fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->noise = 0;
   g_waifu2x->scale = 2;       // Fixed 2x
   g_waifu2x->prepadding = 18; // Assumed 18 for CUGAN 2x

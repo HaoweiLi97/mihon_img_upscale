@@ -23,8 +23,9 @@ fun BrowseSourceCompactGrid(
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     columns: GridCells,
     contentPadding: PaddingValues,
-    onMangaClick: (Manga) -> Unit,
-    onMangaLongClick: (Manga) -> Unit,
+    selectedMangaIds: Set<Long>,
+    onMangaClick: (Int, Manga) -> Unit,
+    onMangaLongClick: (Int, Manga) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = columns,
@@ -42,8 +43,9 @@ fun BrowseSourceCompactGrid(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceCompactGridItem(
                 manga = manga,
-                onClick = { onMangaClick(manga) },
-                onLongClick = { onMangaLongClick(manga) },
+                selected = manga.id in selectedMangaIds,
+                onClick = { onMangaClick(index, manga) },
+                onLongClick = { onMangaLongClick(index, manga) },
             )
         }
 
@@ -58,6 +60,7 @@ fun BrowseSourceCompactGrid(
 @Composable
 private fun BrowseSourceCompactGridItem(
     manga: Manga,
+    selected: Boolean,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
@@ -71,6 +74,7 @@ private fun BrowseSourceCompactGridItem(
             lastModified = manga.coverLastModified,
         ),
         coverAlpha = if (manga.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
+        isSelected = selected,
         coverBadgeStart = {
             InLibraryBadge(enabled = manga.favorite)
         },

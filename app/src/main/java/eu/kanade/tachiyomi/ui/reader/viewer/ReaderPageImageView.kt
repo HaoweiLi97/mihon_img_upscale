@@ -6,7 +6,6 @@ import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
@@ -29,6 +28,7 @@ import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.animation.doOnEnd
 import androidx.core.os.postDelayed
 import androidx.core.view.isVisible
+import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import coil3.BitmapImage
 import coil3.asDrawable
 import coil3.dispose
@@ -122,9 +122,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private val preloadSize: Int
         get() = if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 4
-    private val realCuganInputScale: Int
-        get() = preferences.realCuganInputScale().get()
-
     private val realCuganModel: Int
         get() = preferences.realCuganModel().get()
 
@@ -140,21 +137,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private val realCuganSkipMaxSizeHeight: Int
         get() = preferences.realCuganSkipMaxSizeHeight().get()
         
-    private val realCuganResizeLargeImage: Boolean
-        get() = true
-
     private val realCuganShowStatus: Boolean
         get() = preferences.realCuganShowStatus().get()
 
-    // Performance mode: 0=90% (0ms sleep), 1=50% (2ms), 2=30% (5ms)
+    // Performance mode: 0=full speed, 1=balanced, 2=power saving.
     private val realCuganPerformanceMode: Int
         get() = preferences.realCuganPerformanceMode().get()
     
     private val tileSleepMs: Int
         get() = when (realCuganPerformanceMode) {
             0 -> 0    // 性能模式 90% - 全速
-            1 -> 15   // 平衡模式 50% - 强力降温 (15ms/tile)
-            2 -> 15   // 节能模式 30% - 极致发热控制 (15ms/tile)
+            1 -> 5
+            2 -> 15
             else -> 0
         }
 
@@ -173,6 +167,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var processingJob: Job? = null
     private var enhancedBitmap: Bitmap? = null
     private var processedSwapView: SubsamplingScaleImageView? = null
+    private var outgoingProcessedView: SubsamplingScaleImageView? = null
+    private var processedSwapAnimator: ValueAnimator? = null
 
     var onImageLoaded: (() -> Unit)? = null
     var onImageLoadError: ((Throwable?) -> Unit)? = null
@@ -215,27 +211,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    private val transitionDivider: View by lazy {
-        View(context).apply {
-            val scannerHeight = (context.resources.displayMetrics.density * 28).toInt().coerceAtLeast(12)
-            layoutParams = LayoutParams(MATCH_PARENT, scannerHeight)
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(
-                    0x00D8D8D8,
-                    0x16DCDCDC,
-                    0x33E6E6E6,
-                    0x16DCDCDC,
-                    0x00D8D8D8,
-                ),
-            )
-            alpha = 0.45f
-            elevation = 100f
-            isVisible = false
-            this@ReaderPageImageView.addView(this)
-        }
-    }
-    
     init {
         // Listen for performance mode changes to update native throttling immediately
         // Use launchIO to avoid blocking UI thread waiting for native lock if processing is active
@@ -247,7 +222,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 .collect { mode ->
                     val sleepMs = when (mode) {
                         0 -> 0
-                        1 -> 15
+                        1 -> 5
                         2 -> 15
                         else -> 0
                     }
@@ -339,6 +314,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @CallSuper
     open fun onScaleChanged(newScale: Float) {
         onScaleChanged?.invoke(newScale)
+
+        if (processedSwapAnimator?.isRunning == true) {
+            completeProcessedSwapTransition(notifyLoaded = true)
+        }
         
         // If zooming, dismiss the static overlay immediately to show the zoomable image
         if (newScale != 1f && isSettingProcessedImage) {
@@ -391,11 +370,53 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun clearProcessedSwapView() {
-        processedSwapView?.let { swapView ->
+        processedSwapAnimator?.run {
+            removeAllUpdateListeners()
+            removeAllListeners()
+            cancel()
+        }
+        processedSwapAnimator = null
+
+        val swapView = processedSwapView
+        val outgoingView = outgoingProcessedView
+        if (swapView != null) {
+            if (pageView === swapView) {
+                pageView = outgoingView
+            }
             swapView.recycle()
             removeView(swapView)
         }
+        outgoingView?.alpha = 1f
+        outgoingView?.clipBounds = null
         processedSwapView = null
+        outgoingProcessedView = null
+    }
+
+    private fun completeProcessedSwapTransition(notifyLoaded: Boolean) {
+        processedSwapAnimator?.run {
+            removeAllUpdateListeners()
+            removeAllListeners()
+            cancel()
+        }
+        processedSwapAnimator = null
+
+        val swapView = processedSwapView ?: return
+        swapView.alpha = 1f
+        swapView.clipBounds = null
+        pageView = swapView
+
+        outgoingProcessedView?.let { outgoingView ->
+            if (outgoingView !== swapView) {
+                outgoingView.recycle()
+                removeView(outgoingView)
+            }
+        }
+        processedSwapView = null
+        outgoingProcessedView = null
+
+        if (notifyLoaded) {
+            onImageLoaded()
+        }
     }
 
     private fun displayedImageRect(view: SubsamplingScaleImageView): RectF? {
@@ -442,6 +463,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val targetMinScale = activeView.minScale
         val targetWidth = activeView.sWidth
         val targetHeight = activeView.sHeight
+        outgoingProcessedView = activeView
         val swapView = createSubsamplingPageView().apply {
             alpha = 0f
             isVisible = true
@@ -452,6 +474,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setOnImageEventListener(
                 object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
                     override fun onReady() {
+                        if (processedSwapView !== this@apply) return
+
                         setupZoom(targetConfig)
 
                         val wasZoomed =
@@ -462,7 +486,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                                 targetHeight > 0 &&
                                 targetScale > targetMinScale + 0.01f
 
-                        if (wasZoomed && targetCenter != null) {
+                        if (wasZoomed) {
                             val zoomFactor = targetScale / targetMinScale
                             val mappedCenter = PointF(
                                 (targetCenter.x / targetWidth) * sWidth,
@@ -477,54 +501,36 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         bringToFront()
                         statusView.bringToFront()
                         pageView = this@apply
-                        alpha = 1f
                         val revealStart = processedTransitionStartFraction.coerceIn(0f, 1f)
                         val revealEnd = processedTransitionEndFraction.coerceIn(revealStart, 1f)
-                        val clipLeft = (width * revealStart).toInt()
-                        val clipRight = (width * revealEnd).toInt().coerceAtLeast(clipLeft + 1)
-                        clipBounds = Rect(clipLeft, 0, clipRight, 0)
                         val imageRect = displayedImageRect(this@apply)
-                        val dividerLayoutParams = transitionDivider.layoutParams as LayoutParams
-                        if (imageRect != null) {
-                            val contentLeft =
-                                imageRect.left + imageRect.width() * revealStart
-                            val contentRight =
-                                imageRect.left + imageRect.width() * revealEnd
-                            dividerLayoutParams.width =
-                                (contentRight - contentLeft).toInt().coerceAtLeast(1)
-                            dividerLayoutParams.leftMargin = contentLeft.toInt()
-                        } else {
-                            dividerLayoutParams.width = (clipRight - clipLeft).coerceAtLeast(1)
-                            dividerLayoutParams.leftMargin = clipLeft
-                        }
-                        transitionDivider.layoutParams = dividerLayoutParams
-                        transitionDivider.bringToFront()
-                        statusView.bringToFront()
-                        transitionDivider.translationY = imageRect?.top ?: 0f
-                        transitionDivider.isVisible = true
-                        ValueAnimator.ofInt(0, height).apply {
-                            duration = 800
+                        val contentLeft = imageRect?.left ?: 0f
+                        val contentWidth = imageRect?.width() ?: width.toFloat()
+                        val viewWidth = width.coerceAtLeast(1)
+                        val clipLeft = (contentLeft + contentWidth * revealStart)
+                            .roundToInt()
+                            .coerceIn(0, viewWidth - 1)
+                        val clipRight = (contentLeft + contentWidth * revealEnd)
+                            .roundToInt()
+                            .coerceIn(clipLeft + 1, viewWidth)
+                        clipBounds = Rect(clipLeft, 0, clipRight, height)
+                        alpha = 0f
+
+                        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+                            duration = PROCESSED_SWAP_DURATION_MS
+                            interpolator = FastOutSlowInInterpolator()
                             addUpdateListener { animator ->
-                                val scannerBottom = animator.animatedValue as Int
-                                val scannerHeight = transitionDivider.height.coerceAtLeast(1)
-                                val revealedHeight = (scannerBottom - scannerHeight / 2).coerceAtLeast(0)
-                                clipBounds = Rect(clipLeft, 0, clipRight, revealedHeight)
-                                val baseTop = imageRect?.top ?: 0f
-                                val bottom = imageRect?.bottom ?: height.toFloat()
-                                transitionDivider.translationY =
-                                    (baseTop + scannerBottom - transitionDivider.height)
-                                        .coerceIn(baseTop, bottom - transitionDivider.height.toFloat())
+                                alpha = animator.animatedValue as Float
                             }
                             doOnEnd {
-                                clipBounds = null
-                                transitionDivider.isVisible = false
-                                activeView.recycle()
-                                removeView(activeView)
-                                processedSwapView = null
-                                this@ReaderPageImageView.onImageLoaded()
+                                if (processedSwapAnimator === this) {
+                                    processedSwapAnimator = null
+                                    completeProcessedSwapTransition(notifyLoaded = true)
+                                }
                             }
-                            start()
                         }
+                        processedSwapAnimator = animator
+                        animator.start()
                     }
 
                     override fun onImageLoadError(e: Exception) {
@@ -617,16 +623,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
         return enhancementVariantOverride ?: readerPage?.enhancementKeySuffix.orEmpty()
     }
 
-    private fun buildEnhancementData(
+    private fun buildEnhancementDataProvider(
         streamFn: (() -> java.io.InputStream)? = null,
         originalData: Any? = null,
-    ): Any? {
-        fun buffered(stream: (() -> java.io.InputStream)?): Any? {
-            return stream?.let {
-                try {
-                    Buffer().readFrom(it())
-                } catch (_: Exception) {
-                    null
+    ): (() -> Any?)? {
+        fun buffered(stream: (() -> java.io.InputStream)?): (() -> Any?)? {
+            return stream?.let { source ->
+                {
+                    try {
+                        source().use { input -> Buffer().readFrom(input) }
+                    } catch (_: Exception) {
+                        null
+                    }
                 }
             }
         }
@@ -636,12 +644,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
 
         readerPage?.let { page ->
-            return buffered(page.stream) ?: page.imageUrl
+            return buffered(page.stream) ?: page.imageUrl?.let { { it } }
         }
 
         return when (originalData) {
-            is ReaderPage -> buffered(originalData.stream) ?: originalData.imageUrl
-            else -> buffered(streamFn) ?: originalData
+            is ReaderPage -> buffered(originalData.stream) ?: originalData.imageUrl?.let { { it } }
+            null -> buffered(streamFn)
+            else -> buffered(streamFn) ?: { originalData }
         }
     }
 
@@ -653,15 +662,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
         streamFn: (() -> java.io.InputStream)? = null,
         originalData: Any? = null,
     ) {
-        val data = buildEnhancementData(streamFn, originalData) ?: return
-        ImageEnhancer.enhance(
-            context.applicationContext,
-            mId,
-            cId,
-            pIdx,
-            data,
-            highPriority,
-            enhancementVariant(),
+        val dataProvider = buildEnhancementDataProvider(streamFn, originalData) ?: return
+        ImageEnhancer.enhanceLazy(
+            context = context.applicationContext,
+            mangaId = mId,
+            chapterId = cId,
+            pageIndex = pIdx,
+            highPriority = highPriority,
+            pageVariant = enhancementVariant(),
+            dataProvider = dataProvider,
         )
     }
 
@@ -677,15 +686,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val configHash = ImageEnhancementCache.getConfigHash(
             noise = realCuganNoiseLevel,
             scale = realCuganScale,
-            inputScale = realCuganInputScale,
             model = realCuganModel,
             maxWidth = realCuganMaxSizeWidth,
             maxHeight = realCuganMaxSizeHeight,
             skipMaxWidth = realCuganSkipMaxSizeWidth,
             skipMaxHeight = realCuganSkipMaxSizeHeight,
-            resizeEnabled = realCuganResizeLargeImage,
             tileSize = tileSize,
             precision = preferences.realCuganPrecision().get(),
+            fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
         )
         val pageVariant = enhancementVariant()
 
@@ -703,9 +711,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         streamFn: (() -> java.io.InputStream)? = null,
         forceCurrentPage: Boolean = false,
     ) {
-        val data = triggerData ?: buildEnhancementData(streamFn, triggerData)
+        val dataProvider = buildEnhancementDataProvider(streamFn, triggerData)
 
-        if (data == null) {
+        if (dataProvider == null) {
             logcat(LogPriority.WARN) {
                 "ReaderPageImageView: Unable to re-enqueue page $pIdx because source data is unavailable"
             }
@@ -717,7 +725,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
             "ReaderPageImageView: Re-enqueueing page $pIdx after invalid enhanced cache (current=$isCurrent)"
         }
 
-        ImageEnhancer.enhance(context.applicationContext, mId, cId, pIdx, data, isCurrent, enhancementVariant())
+        ImageEnhancer.enhanceLazy(
+            context = context.applicationContext,
+            mangaId = mId,
+            chapterId = cId,
+            pageIndex = pIdx,
+            highPriority = isCurrent,
+            pageVariant = enhancementVariant(),
+            dataProvider = dataProvider,
+        )
     }
 
     private suspend fun healInvalidEnhancedCache(
@@ -774,15 +790,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 val configHash = ImageEnhancementCache.getConfigHash(
                     noise = realCuganNoiseLevel,
                     scale = realCuganScale,
-                    inputScale = realCuganInputScale,
                     model = realCuganModel,
                     maxWidth = realCuganMaxSizeWidth,
                     maxHeight = realCuganMaxSizeHeight,
                     skipMaxWidth = realCuganSkipMaxSizeWidth,
                     skipMaxHeight = realCuganSkipMaxSizeHeight,
-                    resizeEnabled = realCuganResizeLargeImage,
                     tileSize = tileSize,
                     precision = preferences.realCuganPrecision().get(),
+                    fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
                 )
                  val pageVariant = enhancementVariant()
                  
@@ -904,22 +919,25 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    fun recycle() = pageView?.let {
-        processingJob?.cancel()
-        processingJob = null
-        
-        when (it) {
-            is SubsamplingScaleImageView -> it.recycle()
-            is AppCompatImageView -> it.dispose()
+    fun recycle() {
+        clearProcessedSwapView()
+        pageView?.let {
+            processingJob?.cancel()
+            processingJob = null
+
+            when (it) {
+                is SubsamplingScaleImageView -> it.recycle()
+                is AppCompatImageView -> it.dispose()
+            }
+            it.isVisible = false
+            enhancedOverlay.setImageBitmap(null)
+            enhancedOverlay.isVisible = false
+            enhancedBitmap?.recycle()
+            enhancedBitmap = null
+            isSettingProcessedImage = false
+            currentLoadedUri = null
+            invalidate()
         }
-        it.isVisible = false
-        enhancedOverlay.setImageBitmap(null)
-        enhancedOverlay.isVisible = false
-        enhancedBitmap?.recycle()
-        enhancedBitmap = null
-        isSettingProcessedImage = false
-        currentLoadedUri = null
-        invalidate()
     }
 
     /**
@@ -1067,15 +1085,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val configHash = ImageEnhancementCache.getConfigHash(
             noise = realCuganNoiseLevel,
             scale = realCuganScale,
-            inputScale = realCuganInputScale,
             model = realCuganModel,
             maxWidth = realCuganMaxSizeWidth,
             maxHeight = realCuganMaxSizeHeight,
             skipMaxWidth = realCuganSkipMaxSizeWidth,
             skipMaxHeight = realCuganSkipMaxSizeHeight,
-            resizeEnabled = realCuganResizeLargeImage,
             tileSize = tileSize,
             precision = preferences.realCuganPrecision().get(),
+            fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
         )
         val pageVariant = enhancementVariant()
 
@@ -1121,10 +1138,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx NOT in cache, starting monitoring (m=$mId, c=$cId, config=$configHash)" }
         
         // Trigger enhancement if it's not already in progress
-        val triggerData = buildEnhancementData(streamFn, originalData)
+        val triggerDataProvider = buildEnhancementDataProvider(streamFn, originalData)
         
         
-        if (triggerData != null) {
+        if (triggerDataProvider != null) {
             // Use High Priority if this is the current target page (the one user is viewing)
             // This ensures re-queued pages are processed immediately, not stuck in low priority
             val isCurrentPage = pIdx == ImageEnhancer.targetPageIndex
@@ -1134,7 +1151,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
             if (canEnqueueNow) {
                 logcat(LogPriority.DEBUG) { "ReaderPageImageView: Triggering enhancement for page $pIdx. isCurrentPage=$isCurrentPage (target=${ImageEnhancer.targetPageIndex})" }
 
-                ImageEnhancer.enhance(context.applicationContext, mId, cId, pIdx, triggerData, isCurrentPage, pageVariant)
+                ImageEnhancer.enhanceLazy(
+                    context = context.applicationContext,
+                    mangaId = mId,
+                    chapterId = cId,
+                    pageIndex = pIdx,
+                    highPriority = isCurrentPage,
+                    pageVariant = pageVariant,
+                    dataProvider = triggerDataProvider,
+                )
             } else {
                 logcat(LogPriority.DEBUG) {
                     "ReaderPageImageView: Delaying enhancement enqueue for page $pIdx until initial target page ${ImageEnhancer.targetPageIndex} starts"
@@ -1257,7 +1282,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
             PhotoView(context)
         }.apply {
             adjustViewBounds = true
-
             if (this is PhotoView) {
                 setScaleLevels(1F, 2F, MAX_ZOOM_SCALE)
                 setOnDoubleTapListener(
@@ -1342,22 +1366,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         super.onDetachedFromWindow()
         processingJob?.cancel()
         processingJob = null
-        
-        // Cancel enhancement if this view is detached/recycled
-        // Use readerPage as primary source, falling back to properties
-        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
-        val cId = readerPage?.chapter?.chapter?.id ?: chapterId
-        val pIdx = readerPage?.index ?: pageIndex
-
-        val pageVariant = enhancementVariant()
-        if (
-            mId != -1L &&
-            cId != -1L &&
-            pIdx >= 0 &&
-            !ImageEnhancer.isFocusedTarget(pIdx, pageVariant)
-        ) {
-             ImageEnhancer.cancel(mId, cId, pIdx, pageVariant)
-        }
 
         enhancedOverlay.setImageBitmap(null)
         enhancedBitmap?.recycle()
@@ -1379,3 +1387,4 @@ open class ReaderPageImageView @JvmOverloads constructor(
 }
 
 private const val MAX_ZOOM_SCALE = 5F
+private const val PROCESSED_SWAP_DURATION_MS = 280L

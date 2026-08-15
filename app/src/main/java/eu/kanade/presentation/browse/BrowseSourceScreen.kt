@@ -47,8 +47,9 @@ fun BrowseSourceContent(
     onWebViewClick: () -> Unit,
     onHelpClick: () -> Unit,
     onLocalSourceHelpClick: () -> Unit,
-    onMangaClick: (Manga) -> Unit,
-    onMangaLongClick: (Manga) -> Unit,
+    selectedMangaIds: Set<Long>,
+    onMangaClick: (Int, Manga) -> Unit,
+    onMangaLongClick: (Int, Manga) -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -123,6 +124,7 @@ fun BrowseSourceContent(
                 mangaList = mangaList,
                 columns = columns,
                 contentPadding = contentPadding,
+                selectedMangaIds = selectedMangaIds,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -131,6 +133,7 @@ fun BrowseSourceContent(
             BrowseSourceList(
                 mangaList = mangaList,
                 contentPadding = contentPadding,
+                selectedMangaIds = selectedMangaIds,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )
@@ -140,6 +143,7 @@ fun BrowseSourceContent(
                 mangaList = mangaList,
                 columns = columns,
                 contentPadding = contentPadding,
+                selectedMangaIds = selectedMangaIds,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
             )

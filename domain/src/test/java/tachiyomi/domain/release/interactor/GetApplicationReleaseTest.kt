@@ -142,4 +142,32 @@ class GetApplicationReleaseTest {
         coVerify(exactly = 0) { releaseService.latest(any()) }
         result shouldBe GetApplicationRelease.Result.NoNewUpdate
     }
+
+    @Test
+    fun `When force checking expect release service to be called before three days`() = runTest {
+        every { preference.get() } returns Instant.now().toEpochMilli()
+        every { preference.set(any()) }.answers { }
+
+        val release = Release(
+            "v2.0.0",
+            "info",
+            "http://example.com/release_link",
+            "http://example.com/release_link.apk",
+        )
+        coEvery { releaseService.latest(any()) } returns release
+
+        val result = getApplicationRelease.await(
+            GetApplicationRelease.Arguments(
+                isFoss = false,
+                isPreview = false,
+                commitCount = 0,
+                versionName = "v1.0.0",
+                repository = "test",
+                forceCheck = true,
+            ),
+        )
+
+        coVerify(exactly = 1) { releaseService.latest(any()) }
+        result shouldBe GetApplicationRelease.Result.NewUpdate(release)
+    }
 }

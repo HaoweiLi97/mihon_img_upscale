@@ -26,6 +26,7 @@ import androidx.core.graphics.green
 import androidx.core.graphics.red
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.Companion.ColorFilterMode
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
@@ -152,30 +153,24 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         val realCuganModel by screenModel.preferences.realCuganModel().collectAsState()
         val realCuganNoiseLevel by screenModel.preferences.realCuganNoiseLevel().collectAsState()
         val realCuganScale by screenModel.preferences.realCuganScale().collectAsState()
-        val realCuganInputScale by screenModel.preferences.realCuganInputScale().collectAsState()
 
         SettingsChipRow(stringResource(MR.strings.reader_model)) {
             listOf(
-                "Real-CUGAN SE",
-                "Real-CUGAN Pro",
-                "Real-ESRGAN",
-                "Real-CUGAN Nose",
-                "Waifu2x",
-                "Waifu2x (Fast)",
-                "W2xEX Universal Fast",
-                "W2xEX Omni Mini",
-                "W2xEX Omni Mini V2",
-                "W2xEX Photo Small",
-                "W2xEX Anime HQ",
-                "W2xEX Photo HQ",
-                "SPAN x2 ch48",
-                "SPAN x2 ch52",
-                "SPAN x4 ch48",
-                "SPAN x4 ch52",
-            ).mapIndexed { index, name ->
+                0 to "Real-CUGAN SE",
+                1 to "Real-CUGAN Pro",
+                2 to "Real-ESRGAN",
+                3 to "Real-CUGAN Nose",
+                4 to "Waifu2x",
+                5 to "Waifu2x (Fast)",
+                6 to "W2xEX Universal Fast",
+                8 to "W2xEX Omni Mini V2",
+                9 to "W2xEX Photo Small",
+                16 to "AnimeJaNai v2 UltraCompact",
+                18 to "sudo UltraCompact",
+            ).map { (modelId, name) ->
                 FilterChip(
-                    selected = realCuganModel == index,
-                    onClick = { screenModel.preferences.realCuganModel().set(index) },
+                    selected = realCuganModel == modelId,
+                    onClick = { screenModel.preferences.realCuganModel().set(modelId) },
                     label = { Text(name) },
                 )
             }
@@ -203,7 +198,8 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        if (realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 || realCuganModel in 6..9 || realCuganModel in 12..13) {
+        val fixedW2xExScale = Waifu2x.w2xExScaleFor(realCuganModel)
+        if (realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 || fixedW2xExScale == 2) {
              SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
                   FilterChip(
                       selected = true,
@@ -211,7 +207,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                       label = { Text(stringResource(MR.strings.reader_scale_fixed_2x)) }
                   )
              }
-        } else if (realCuganModel == 10 || realCuganModel == 11 || realCuganModel in 14..15) {
+        } else if (fixedW2xExScale == 4) {
             SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
                 FilterChip(
                     selected = true,
@@ -278,19 +274,8 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        SettingsChipRow(stringResource(MR.strings.reader_processing_jobs)) {
-            val jobs by screenModel.preferences.realCuganJobs().collectAsState()
-            (1..6).map { value ->
-                FilterChip(
-                    selected = jobs == value,
-                    onClick = { screenModel.preferences.realCuganJobs().set(value) },
-                    label = { Text(value.toString()) },
-                )
-            }
-        }
-
+        val precision by screenModel.preferences.realCuganPrecision().collectAsState()
         SettingsChipRow(stringResource(MR.strings.reader_precision)) {
-            val precision by screenModel.preferences.realCuganPrecision().collectAsState()
             listOf(
                 0 to stringResource(MR.strings.reader_precision_fp16),
                 1 to stringResource(MR.strings.reader_precision_fp32),
@@ -303,6 +288,13 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                     label = { Text(name) },
                 )
             }
+        }
+
+        if (precision == 0) {
+            CheckboxItem(
+                label = stringResource(MR.strings.reader_fp16_arithmetic),
+                pref = screenModel.preferences.realCuganFp16Arithmetic(),
+            )
         }
 
         val processMaxWidth by screenModel.preferences.realCuganMaxSizeWidth().collectAsState()

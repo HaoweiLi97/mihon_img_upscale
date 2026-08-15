@@ -19,8 +19,9 @@ import tachiyomi.presentation.core.util.plus
 fun BrowseSourceList(
     mangaList: LazyPagingItems<StateFlow<Manga>>,
     contentPadding: PaddingValues,
-    onMangaClick: (Manga) -> Unit,
-    onMangaLongClick: (Manga) -> Unit,
+    selectedMangaIds: Set<Long>,
+    onMangaClick: (Int, Manga) -> Unit,
+    onMangaLongClick: (Int, Manga) -> Unit,
 ) {
     LazyColumn(
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
@@ -35,8 +36,9 @@ fun BrowseSourceList(
             val manga by mangaList[index]?.collectAsState() ?: return@items
             BrowseSourceListItem(
                 manga = manga,
-                onClick = { onMangaClick(manga) },
-                onLongClick = { onMangaLongClick(manga) },
+                selected = manga.id in selectedMangaIds,
+                onClick = { onMangaClick(index, manga) },
+                onLongClick = { onMangaLongClick(index, manga) },
             )
         }
 
@@ -51,6 +53,7 @@ fun BrowseSourceList(
 @Composable
 private fun BrowseSourceListItem(
     manga: Manga,
+    selected: Boolean,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
 ) {
@@ -64,6 +67,7 @@ private fun BrowseSourceListItem(
             lastModified = manga.coverLastModified,
         ),
         coverAlpha = if (manga.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
+        isSelected = selected,
         badge = {
             InLibraryBadge(enabled = manga.favorite)
         },

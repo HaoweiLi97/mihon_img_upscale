@@ -53,6 +53,7 @@ import mihon.core.archive.ZipWriter
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNow
 import tachiyomi.core.common.util.lang.withIOContext
@@ -349,13 +350,92 @@ class Downloader(
         }
     }
 
+    fun isCloudSyncAvailable(): Boolean {
+        return downloadPreferences.saveChaptersAsCBZ().get() && cloudSyncTargetOrNull() != null
+    }
+
+    internal suspend fun queueChaptersForCloudSync(
+        manga: Manga,
+        chapters: List<Chapter>,
+        autoStart: Boolean,
+    ): CloudSyncQueueResult {
+        val uniqueChapters = chapters.distinctBy { it.id }
+        if (uniqueChapters.isEmpty()) return CloudSyncQueueResult()
+
+        val source = sourceManager.get(manga.source) as? HttpSource
+            ?: return CloudSyncQueueResult(failed = uniqueChapters.size)
+        if (!isCloudSyncAvailable()) {
+            return CloudSyncQueueResult(failed = uniqueChapters.size)
+        }
+
+        var uploadsQueued = 0
+        var skipped = 0
+        var failed = 0
+        var directUploadDownload: Download? = null
+        val chaptersToDownload = mutableListOf<Chapter>()
+
+        uniqueChapters.forEach { chapter ->
+            val downloadedChapter = provider.findChapterDir(
+                chapter.name,
+                chapter.scanlator,
+                chapter.url,
+                manga.title,
+                source,
+            )
+            when (
+                cloudSyncChapterAction(
+                    isUploaded = downloadPreferences.isChapterUploadedToCloud(chapter.id),
+                    hasLocalDownload = downloadedChapter != null,
+                    isLocalCbz = downloadedChapter?.isFile == true && downloadedChapter.extension == "cbz",
+                )
+            ) {
+                CloudSyncChapterAction.Skip -> skipped++
+                CloudSyncChapterAction.Download -> chaptersToDownload += chapter
+                CloudSyncChapterAction.Upload -> {
+                    val download = Download(source, manga, chapter)
+                    if (maybeEnqueueDownloadedChapterUpload(download, downloadedChapter!!)) {
+                        uploadsQueued++
+                        directUploadDownload = directUploadDownload ?: download
+                    } else {
+                        failed++
+                    }
+                }
+                CloudSyncChapterAction.UnsupportedLocalDownload -> failed++
+            }
+        }
+
+        queueChapters(manga, chaptersToDownload, autoStart)
+        val queuedChapterIds = queueState.value.mapTo(mutableSetOf()) { it.chapter.id }
+        val downloadsQueued = chaptersToDownload.count { it.id in queuedChapterIds }
+        failed += chaptersToDownload.size - downloadsQueued
+
+        directUploadDownload?.let { download ->
+            provider.findMangaDirs(manga.title, source)
+                .firstNotNullOfOrNull { mangaDir ->
+                    mangaDir.findFile(META_INFO_FILE_NAME)
+                        ?.takeIf { it.isFile }
+                        ?.let { mangaDir to it }
+                }
+                ?.let { (mangaDir, metaInfoFile) ->
+                    maybeEnqueueMetaInfoUpload(download, mangaDir, metaInfoFile)
+                }
+        }
+
+        return CloudSyncQueueResult(
+            downloadsQueued = downloadsQueued,
+            uploadsQueued = uploadsQueued,
+            skipped = skipped,
+            failed = failed,
+        )
+    }
+
     /**
      * Downloads a chapter.
      *
      * @param download the chapter to be downloaded.
      */
     private suspend fun downloadChapter(download: Download) {
-        val mangaDir = provider.getMangaDir(download.manga.title, download.source).getOrElse { e ->
+        val mangaDir = provider.getMangaDir(download.manga, download.source).getOrElse { e ->
             download.status = Download.State.ERROR
             notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)
             return
@@ -684,11 +764,7 @@ class Downloader(
             return
         }
 
-        val remoteDirectory = combineRemotePath(
-            cloudSync.destination,
-            provider.getSourceDirName(download.source),
-            provider.getMangaDirName(download.manga.title),
-        )
+        val remoteDirectory = cloudRemoteDirectory(download, cloudSync)
 
         enqueueCloudUpload(
             CloudUploadTask.MetaInfo(
@@ -705,21 +781,17 @@ class Downloader(
         )
     }
 
-    private fun maybeEnqueueDownloadedChapterUpload(
+    private suspend fun maybeEnqueueDownloadedChapterUpload(
         download: Download,
         chapterFile: UniFile,
-    ) {
-        if (!downloadPreferences.saveChaptersAsCBZ().get()) return
-        val cloudSync = cloudSyncTargetOrNull() ?: return
-        val uploadFileName = chapterFile.name ?: return
+    ): Boolean {
+        if (!downloadPreferences.saveChaptersAsCBZ().get()) return false
+        val cloudSync = cloudSyncTargetOrNull() ?: return false
+        val uploadFileName = chapterFile.name ?: return false
 
-        val remoteDirectory = combineRemotePath(
-            cloudSync.destination,
-            provider.getSourceDirName(download.source),
-            provider.getMangaDirName(download.manga.title),
-        )
+        val remoteDirectory = cloudRemoteDirectory(download, cloudSync)
 
-        enqueueCloudUpload(
+        return enqueueCloudUpload(
             CloudUploadTask.Chapter(
                 key = "chapter:${download.chapter.id}",
                 mangaId = download.manga.id,
@@ -733,6 +805,23 @@ class Downloader(
                 uploadFileName = uploadFileName,
                 deleteAfterUpload = downloadPreferences.cloudSyncDeleteAfterUpload().get(),
             ),
+        )
+    }
+
+    private suspend fun cloudRemoteDirectory(
+        download: Download,
+        cloudSync: CloudSyncTarget,
+    ): String {
+        val categoryDirName = if (downloadPreferences.organizeDownloadsByCategory().get()) {
+            provider.getMangaCategoryDirName(download.manga)
+        } else {
+            null
+        }
+        return cloudRemoteDirectoryPath(
+            destination = cloudSync.destination,
+            categoryDirName = categoryDirName,
+            sourceDirName = provider.getSourceDirName(download.source),
+            mangaDirName = provider.getMangaDirName(download.manga.title),
         )
     }
 
@@ -760,13 +849,13 @@ class Downloader(
         return CloudSyncTarget(config, destination)
     }
 
-    private fun enqueueCloudUpload(task: CloudUploadTask) {
-        if (!queuedCloudUploadKeys.add(task.key)) return
+    private fun enqueueCloudUpload(task: CloudUploadTask): Boolean {
+        if (!queuedCloudUploadKeys.add(task.key)) return true
         cloudUploadTasks[task.key] = task
         val enqueued = cloudUploadQueue.trySend(CloudUploadQueueEntry(task, task.queueGeneration())).isSuccess
         if (!enqueued) {
             removeCloudUploadTask(task)
-            return
+            return false
         }
         if (task is CloudUploadTask.Chapter) {
             _uploadQueueState.update { uploads ->
@@ -774,6 +863,7 @@ class Downloader(
             }
         }
         ensureCloudUploadWorkers()
+        return true
     }
 
     private fun ensureCloudUploadWorkers() {
@@ -1212,6 +1302,16 @@ private fun combineRemotePath(vararg parts: String): String {
     return normalizePath(parts.joinToString("/") { it.trim('/') })
 }
 
+internal fun cloudRemoteDirectoryPath(
+    destination: String,
+    categoryDirName: String?,
+    sourceDirName: String,
+    mangaDirName: String,
+): String {
+    val parentDirName = categoryDirName ?: sourceDirName
+    return combineRemotePath(destination, parentDirName, mangaDirName)
+}
+
 private fun UniFile.sha256(): String {
     val digest = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -1239,6 +1339,26 @@ private data class CloudSyncTarget(
     val config: CloudSyncConfig,
     val destination: String,
 )
+
+internal enum class CloudSyncChapterAction {
+    Skip,
+    Download,
+    Upload,
+    UnsupportedLocalDownload,
+}
+
+internal fun cloudSyncChapterAction(
+    isUploaded: Boolean,
+    hasLocalDownload: Boolean,
+    isLocalCbz: Boolean,
+): CloudSyncChapterAction {
+    return when {
+        isUploaded -> CloudSyncChapterAction.Skip
+        !hasLocalDownload -> CloudSyncChapterAction.Download
+        isLocalCbz -> CloudSyncChapterAction.Upload
+        else -> CloudSyncChapterAction.UnsupportedLocalDownload
+    }
+}
 
 private sealed class CloudUploadTask {
     abstract val key: String

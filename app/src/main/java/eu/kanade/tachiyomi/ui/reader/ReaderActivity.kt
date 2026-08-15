@@ -111,6 +111,8 @@ import java.io.ByteArrayOutputStream
 class ReaderActivity : BaseActivity() {
 
     companion object {
+        private const val UI_BUSY_COOLDOWN_MS = 1_000L
+
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
@@ -248,7 +250,14 @@ class ReaderActivity : BaseActivity() {
         viewModel.state
             .map { it.menuVisible }
             .distinctUntilChanged()
-            .onEach { Waifu2x.setUiBusy(it) }
+            .onEach { menuVisible ->
+                if (menuVisible) {
+                    uiBusyJob?.cancel()
+                    Waifu2x.setUiBusy(true)
+                } else {
+                    onUiInteracted()
+                }
+            }
             .launchIn(lifecycleScope)
 
         if (readerPreferences.waifu2xEnabled().get()) {
@@ -357,6 +366,8 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
+        uiBusyJob?.cancel()
+        Waifu2x.setUiBusy(false)
         viewModel.state.value.viewer?.destroy()
         
         config = null
@@ -439,6 +450,7 @@ class ReaderActivity : BaseActivity() {
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val handled = viewModel.state.value.viewer?.handleKeyEvent(event) ?: false
+        if (handled) onUiInteracted()
         return handled || super.dispatchKeyEvent(event)
     }
 
@@ -461,7 +473,7 @@ class ReaderActivity : BaseActivity() {
         Waifu2x.setUiBusy(true)
         uiBusyJob?.cancel()
         uiBusyJob = lifecycleScope.launch {
-            delay(500)
+            delay(UI_BUSY_COOLDOWN_MS)
             if (!viewModel.state.value.menuVisible) {
                 Waifu2x.setUiBusy(false)
             }

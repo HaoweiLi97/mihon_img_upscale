@@ -107,6 +107,8 @@ fun MangaScreen(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onCloudSyncClicked: (() -> Unit)?,
+    onCloudSyncChapterClicked: ((ChapterList.Item) -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onEditFetchIntervalClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
@@ -156,6 +158,8 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
+            onCloudSyncClicked = onCloudSyncClicked,
+            onCloudSyncChapterClicked = onCloudSyncChapterClicked,
             onEditCategoryClicked = onEditCategoryClicked,
             onEditIntervalClicked = onEditFetchIntervalClicked,
             onMigrateClicked = onMigrateClicked,
@@ -192,6 +196,8 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
+            onCloudSyncClicked = onCloudSyncClicked,
+            onCloudSyncChapterClicked = onCloudSyncChapterClicked,
             onEditCategoryClicked = onEditCategoryClicked,
             onEditIntervalClicked = onEditFetchIntervalClicked,
             onMigrateClicked = onMigrateClicked,
@@ -238,6 +244,8 @@ private fun MangaScreenSmallImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onCloudSyncClicked: (() -> Unit)?,
+    onCloudSyncChapterClicked: ((ChapterList.Item) -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onEditIntervalClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
@@ -297,6 +305,7 @@ private fun MangaScreenSmallImpl(
                 onClickFilter = onFilterClicked,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
+                onClickCloudSync = onCloudSyncClicked,
                 onClickEditCategory = onEditCategoryClicked,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
@@ -441,6 +450,7 @@ private fun MangaScreenSmallImpl(
                         chapterSwipeEndAction = chapterSwipeEndAction,
                         onChapterClicked = onChapterClicked,
                         onDownloadChapter = onDownloadChapter,
+                        onCloudSyncChapter = onCloudSyncChapterClicked,
                         onChapterSelected = onChapterSelected,
                         onChapterSwipe = onChapterSwipe,
                     )
@@ -480,6 +490,8 @@ fun MangaScreenLargeImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    onCloudSyncClicked: (() -> Unit)?,
+    onCloudSyncChapterClicked: ((ChapterList.Item) -> Unit)?,
     onEditCategoryClicked: (() -> Unit)?,
     onEditIntervalClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
@@ -532,6 +544,7 @@ fun MangaScreenLargeImpl(
                 onClickFilter = onFilterButtonClicked,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
+                onClickCloudSync = onCloudSyncClicked,
                 onClickEditCategory = onEditCategoryClicked,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
@@ -678,6 +691,7 @@ fun MangaScreenLargeImpl(
                                 chapterSwipeEndAction = chapterSwipeEndAction,
                                 onChapterClicked = onChapterClicked,
                                 onDownloadChapter = onDownloadChapter,
+                                onCloudSyncChapter = onCloudSyncChapterClicked,
                                 onChapterSelected = onChapterSelected,
                                 onChapterSwipe = onChapterSwipe,
                             )
@@ -739,6 +753,7 @@ private fun LazyListScope.sharedChapterItems(
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
+    onCloudSyncChapter: ((ChapterList.Item) -> Unit)?,
     onChapterSelected: (ChapterList.Item, Boolean, Boolean, Boolean) -> Unit,
     onChapterSwipe: (ChapterList.Item, LibraryPreferences.ChapterSwipeAction) -> Unit,
 ) {
@@ -804,6 +819,9 @@ private fun LazyListScope.sharedChapterItems(
                     } else {
                         null
                     },
+                    onCloudSyncClick = onCloudSyncChapter
+                        ?.takeUnless { isAnyChapterSelected || item.isUploadedToCloud }
+                        ?.let { syncChapter -> { syncChapter(item) } },
                     onChapterSwipe = {
                         onChapterSwipe(item, it)
                     },

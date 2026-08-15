@@ -38,12 +38,14 @@ import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.catch
@@ -133,6 +135,9 @@ class MangaScreenModel(
 
     val source: Source?
         get() = successState?.source
+
+    val isCloudSyncAvailable: Boolean
+        get() = source is HttpSource && downloadManager.isCloudSyncAvailable()
 
     private val isFavorited: Boolean
         get() = manga?.favorite ?: false
@@ -723,6 +728,36 @@ class MangaScreenModel(
         }
         if (chaptersToDownload.isNotEmpty()) {
             startDownload(chaptersToDownload, false)
+        }
+    }
+
+    fun runCloudSyncAction(chapters: List<Chapter>? = null) {
+        val state = successState ?: return
+        val chaptersToSync = chapters ?: state.chapters.map { it.chapter }
+        screenModelScope.launchIO {
+            val result = try {
+                downloadManager.cloudSyncChapters(state.manga, chaptersToSync)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                snackbarHostState.showSnackbar(
+                    context.stringResource(
+                        MR.strings.cloud_sync_selected_manga_result,
+                        0,
+                        0,
+                        chaptersToSync.size,
+                    ),
+                )
+                return@launchIO
+            }
+            snackbarHostState.showSnackbar(
+                context.stringResource(
+                    MR.strings.cloud_sync_selected_manga_result,
+                    result.queued,
+                    result.skipped,
+                    result.failed,
+                ),
+            )
         }
     }
 

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
@@ -235,6 +236,7 @@ fun LibraryBottomActionMenu(
     onMarkAsReadClicked: () -> Unit,
     onMarkAsUnreadClicked: () -> Unit,
     onDownloadClicked: ((DownloadAction) -> Unit)?,
+    onCloudSyncClicked: (() -> Unit)?,
     onDeleteClicked: () -> Unit,
     onMigrateClicked: () -> Unit,
     modifier: Modifier = Modifier,
@@ -251,18 +253,18 @@ fun LibraryBottomActionMenu(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
             val haptic = LocalHapticFeedback.current
-            val confirm = remember { mutableStateListOf(false, false, false, false, false, false) }
+            val confirm = remember { mutableStateListOf(false, false, false, false, false, false, false) }
             var resetJob: Job? = remember { null }
             val onLongClickItem: (Int) -> Unit = { toConfirmIndex ->
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                (0..5).forEach { i -> confirm[i] = i == toConfirmIndex }
+                (0..6).forEach { i -> confirm[i] = i == toConfirmIndex }
                 resetJob?.cancel()
                 resetJob = scope.launch {
                     delay(1.seconds)
                     if (isActive) confirm[toConfirmIndex] = false
                 }
             }
-            val itemOverflow = onDownloadClicked != null
+            val itemOverflow = onDownloadClicked != null || onCloudSyncClicked != null
             Row(
                 modifier = Modifier
                     .windowInsetsPadding(
@@ -309,19 +311,28 @@ fun LibraryBottomActionMenu(
                         )
                     }
                 }
+                if (onCloudSyncClicked != null) {
+                    Button(
+                        title = stringResource(MR.strings.cloud_sync),
+                        icon = Icons.Outlined.CloudUpload,
+                        toConfirm = confirm[4],
+                        onLongClick = { onLongClickItem(4) },
+                        onClick = onCloudSyncClicked,
+                    )
+                }
                 if (!itemOverflow) {
                     Button(
                         title = stringResource(MR.strings.migrate),
                         icon = Icons.Outlined.SwapCalls,
-                        toConfirm = confirm[4],
-                        onLongClick = { onLongClickItem(4) },
+                        toConfirm = confirm[5],
+                        onLongClick = { onLongClickItem(5) },
                         onClick = onMigrateClicked,
                     )
                     Button(
                         title = stringResource(MR.strings.action_delete),
                         icon = Icons.Outlined.Delete,
-                        toConfirm = confirm[5],
-                        onLongClick = { onLongClickItem(5) },
+                        toConfirm = confirm[6],
+                        onLongClick = { onLongClickItem(6) },
                         onClick = onDeleteClicked,
                     )
                 } else {

@@ -3,6 +3,9 @@ package eu.kanade.presentation.browse.components
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.FlipToBack
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -36,6 +39,12 @@ fun BrowseSourceToolbar(
     onHelpClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onSearch: (String) -> Unit,
+    selectionMode: Boolean,
+    selectionCount: Int,
+    onEnterSelectionMode: () -> Unit,
+    onCancelSelectionMode: () -> Unit,
+    onSelectAll: () -> Unit,
+    onInvertSelection: () -> Unit,
     scrollBehavior: TopAppBarScrollBehavior? = null,
 ) {
     // Avoid capturing unstable source in actions lambda
@@ -44,6 +53,32 @@ fun BrowseSourceToolbar(
     val isConfigurableSource = source is ConfigurableSource
 
     var selectingDisplayMode by remember { mutableStateOf(false) }
+
+    if (selectionMode) {
+        AppBar(
+            titleContent = { AppBarTitle(selectionCount.toString()) },
+            actions = {
+                AppBarActions(
+                    actions = persistentListOf(
+                        AppBar.Action(
+                            title = stringResource(MR.strings.action_select_all),
+                            icon = Icons.Outlined.SelectAll,
+                            onClick = onSelectAll,
+                        ),
+                        AppBar.Action(
+                            title = stringResource(MR.strings.action_select_inverse),
+                            icon = Icons.Outlined.FlipToBack,
+                            onClick = onInvertSelection,
+                        ),
+                    ),
+                )
+            },
+            isActionMode = true,
+            onCancelActionMode = onCancelSelectionMode,
+            scrollBehavior = scrollBehavior,
+        )
+        return
+    }
 
     SearchToolbar(
         navigateUp = navigateUp,
@@ -56,6 +91,13 @@ fun BrowseSourceToolbar(
             AppBarActions(
                 actions = persistentListOf<AppBar.AppBarAction>().builder()
                     .apply {
+                        add(
+                            AppBar.Action(
+                                title = stringResource(MR.strings.action_select),
+                                icon = Icons.Outlined.Checklist,
+                                onClick = onEnterSelectionMode,
+                            ),
+                        )
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_display_mode),

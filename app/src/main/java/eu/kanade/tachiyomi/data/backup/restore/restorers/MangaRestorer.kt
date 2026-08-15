@@ -11,6 +11,7 @@ import tachiyomi.data.UpdateStrategyColumnAdapter
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.interactor.GetMangaByUrlAndSourceId
 import tachiyomi.domain.manga.model.Manga
@@ -31,6 +32,7 @@ class MangaRestorer(
     private val updateManga: UpdateManga = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
     private val insertTrack: InsertTrack = Injekt.get(),
+    private val downloadPreferences: DownloadPreferences = Injekt.get(),
     fetchInterval: FetchInterval = Injekt.get(),
 ) {
 
@@ -57,7 +59,7 @@ class MangaRestorer(
         backupManga: BackupManga,
         backupCategories: List<BackupCategory>,
     ) {
-        handler.await(inTransaction = true) {
+        val restoredManga = handler.await(inTransaction = true) {
             val dbManga = findExistingManga(backupManga)
             val manga = backupManga.getMangaImpl()
             val restoredManga = if (dbManga == null) {
@@ -75,7 +77,9 @@ class MangaRestorer(
                 tracks = backupManga.tracking,
                 excludedScanlators = backupManga.excludedScanlators,
             )
+            restoredManga
         }
+        restoreCloudSyncRecords(restoredManga, backupManga.chapters, backupManga.cloudSyncMetaInfoHash)
     }
 
     private suspend fun findExistingManga(backupManga: BackupManga): Manga? {
@@ -282,6 +286,27 @@ class MangaRestorer(
         restoreExcludedScanlators(manga, excludedScanlators)
         updateManga.awaitUpdateFetchInterval(manga, now, currentFetchWindow)
         return manga
+    }
+
+    private suspend fun restoreCloudSyncRecords(
+        manga: Manga,
+        backupChapters: List<BackupChapter>,
+        metaInfoHash: String?,
+    ) {
+        val uploadedChapterUrls = backupChapters.asSequence()
+            .filter { it.cloudSynced }
+            .map { it.url }
+            .toSet()
+        if (uploadedChapterUrls.isNotEmpty()) {
+            val uploadedChapterIds = getChaptersByMangaId.await(manga.id)
+                .filter { it.url in uploadedChapterUrls }
+                .map { it.id }
+            downloadPreferences.markChaptersUploadedToCloud(uploadedChapterIds)
+        }
+
+        metaInfoHash?.takeIf { it.isNotBlank() }?.let {
+            downloadPreferences.markMetaInfoUploadedToCloud(manga.id, it)
+        }
     }
 
     /**

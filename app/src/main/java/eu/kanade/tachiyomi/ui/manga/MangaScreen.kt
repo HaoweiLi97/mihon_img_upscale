@@ -5,6 +5,9 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -12,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -65,6 +69,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
 
 class MangaScreen(
@@ -101,6 +106,7 @@ class MangaScreen(
 
         val successState = state as MangaScreenModel.State.Success
         val isHttpSource = remember { successState.source is HttpSource }
+        var showCloudSyncConfirmation by rememberSaveable { mutableStateOf(false) }
 
         LaunchedEffect(successState.manga, screenModel.source) {
             if (isHttpSource) {
@@ -157,6 +163,11 @@ class MangaScreen(
             onCoverClicked = screenModel::showCoverDialog,
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
             onDownloadActionClicked = screenModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
+            onCloudSyncClicked = { showCloudSyncConfirmation = true }
+                .takeIf { screenModel.isCloudSyncAvailable },
+            onCloudSyncChapterClicked = { chapterItem: ChapterList.Item ->
+                screenModel.runCloudSyncAction(listOf(chapterItem.chapter))
+            }.takeIf { screenModel.isCloudSyncAvailable },
             onEditCategoryClicked = screenModel::showChangeCategoryDialog.takeIf { successState.manga.favorite },
             onEditFetchIntervalClicked = screenModel::showSetFetchIntervalDialog.takeIf {
                 successState.manga.favorite
@@ -174,6 +185,29 @@ class MangaScreen(
             onAllChapterSelected = screenModel::toggleAllSelection,
             onInvertSelection = screenModel::invertSelection,
         )
+
+        if (showCloudSyncConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showCloudSyncConfirmation = false },
+                title = { Text(stringResource(MR.strings.cloud_sync)) },
+                text = { Text(stringResource(MR.strings.cloud_sync_manga_confirmation)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showCloudSyncConfirmation = false
+                            screenModel.runCloudSyncAction()
+                        },
+                    ) {
+                        Text(stringResource(MR.strings.cloud_sync))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCloudSyncConfirmation = false }) {
+                        Text(stringResource(MR.strings.action_cancel))
+                    }
+                },
+            )
+        }
 
         var showScanlatorsDialog by remember { mutableStateOf(false) }
 

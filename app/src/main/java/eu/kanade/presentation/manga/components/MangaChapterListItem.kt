@@ -6,11 +6,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
 import androidx.compose.material.icons.outlined.Delete
@@ -19,6 +21,7 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FileDownloadOff
 import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -64,6 +67,7 @@ fun MangaChapterListItem(
     onLongClick: () -> Unit,
     onClick: () -> Unit,
     onDownloadClick: ((ChapterDownloadAction) -> Unit)?,
+    onCloudSyncClick: (() -> Unit)?,
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -176,13 +180,17 @@ fun MangaChapterListItem(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (cloudUploaded) {
-                    Icon(
-                        imageVector = Icons.Outlined.CloudDone,
-                        contentDescription = null,
-                        modifier = Modifier.padding(start = 4.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = SECONDARY_ALPHA),
-                    )
+                if (cloudUploaded || onCloudSyncClick != null) {
+                    IconButton(
+                        onClick = { onCloudSyncClick?.invoke() },
+                        enabled = !cloudUploaded && onCloudSyncClick != null,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (cloudUploaded) Icons.Outlined.CloudDone else Icons.Outlined.CloudUpload,
+                            contentDescription = stringResource(MR.strings.cloud_sync),
+                        )
+                    }
                 }
                 ChapterDownloadIndicator(
                     enabled = downloadIndicatorEnabled,

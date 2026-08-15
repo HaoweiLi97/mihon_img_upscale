@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.data.coil.customDecoder
 import logcat.LogPriority
 import java.util.concurrent.PriorityBlockingQueue
 import kotlinx.coroutines.runInterruptible
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ConcurrentHashMap
 import coil3.request.CachePolicy
@@ -64,6 +65,9 @@ object ImageEnhancer {
     private var activeJob: Job? = null
 
     @Volatile
+    private var activeRequest: EnhanceRequest? = null
+
+    @Volatile
     private var nativeResetJob: Job? = null
 
     // Current page the user is viewing. Used to prioritize requests closest to this page.
@@ -85,11 +89,14 @@ object ImageEnhancer {
         val chapterId: Long,
         val pageIndex: Int,
         val pageVariant: String,
-        val data: Any,
+        val dataProvider: () -> Any?,
         val priority: Int, // 1 = promoted/high priority, 0 = preload
         val generation: Int,
         val seq: Int = 0
     ) : Comparable<EnhanceRequest> {
+        val cancelled = AtomicBoolean(false)
+        val requeueOnCancel = AtomicBoolean(false)
+
         private fun effectivePriority(): Int {
             return when {
                 pageIndex == targetPageIndex && pageVariant == targetPageVariant -> 3
@@ -153,34 +160,37 @@ object ImageEnhancer {
         
         if (mangaId == -1L || chapterId == -1L) return
 
-        // Prioritize stream over imageUrl. For online manga, imageUrl can be a placeholder
-        // (e.g., https://127.0.0.1/...) while the actual image data is in the stream.
-        val data: Any = page.enhancementStream?.let { streamFn ->
-             try {
-                 okio.Buffer().readFrom(streamFn())
-             } catch (e: Exception) {
-                 null
-             }
-        } ?: page.stream?.let { streamFn ->
-             try {
-                 okio.Buffer().readFrom(streamFn())
-             } catch (e: Exception) {
-                 null
-             }
-        } ?: page.imageUrl ?: return
-
-        enhance(context, mangaId, chapterId, page.index, data, highPriority, page.enhancementKeySuffix)
+        enhanceLazy(
+            context = context,
+            mangaId = mangaId,
+            chapterId = chapterId,
+            pageIndex = page.index,
+            highPriority = highPriority,
+            pageVariant = page.enhancementKeySuffix,
+        ) {
+            // Streams are opened only after queue de-duplication and on the worker dispatcher.
+            page.enhancementStream?.let(::bufferStream)
+                ?: page.stream?.let(::bufferStream)
+                ?: page.imageUrl
+        }
     }
 
     fun enhance(context: Context, mangaId: Long, chapterId: Long, pageIndex: Int, data: Any, highPriority: Boolean, pageVariant: String = "") {
-        val isInitialTargetRequest = !initialTargetEnqueued && pageIndex == targetPageIndex
-        if (!highPriority && !initialTargetEnqueued && !isInitialTargetRequest) {
-            logcat(LogPriority.DEBUG) {
-                "ImageEnhancer: Deferring page $pageIndex/$pageVariant until initial target $targetPageIndex starts"
-            }
-            return
-        }
+        enhanceLazy(context, mangaId, chapterId, pageIndex, highPriority, pageVariant) { data }
+    }
 
+    fun enhanceLazy(
+        context: Context,
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        highPriority: Boolean,
+        pageVariant: String = "",
+        dataProvider: () -> Any?,
+    ) {
+        if (ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant)) return
+
+        val isInitialTargetRequest = !initialTargetEnqueued && pageIndex == targetPageIndex
         val effectiveHighPriority = highPriority || isInitialTargetRequest
         val requestKey = requestKey(mangaId, chapterId, pageIndex, pageVariant)
         val requestGeneration = generation.get()
@@ -217,8 +227,32 @@ object ImageEnhancer {
         }
 
         val priorityLevel = if (effectiveHighPriority) 1 else 0
-        val req = EnhanceRequest(context, mangaId, chapterId, pageIndex, pageVariant, data, priorityLevel, requestGeneration, seqGenerator.getAndIncrement())
+        val req = EnhanceRequest(
+            context,
+            mangaId,
+            chapterId,
+            pageIndex,
+            pageVariant,
+            dataProvider,
+            priorityLevel,
+            requestGeneration,
+            seqGenerator.getAndIncrement(),
+        )
         queue.offer(req)
+
+        // A visible page may interrupt background work, but another preloaded page should not be
+        // discarded just because the reader advanced within the preload window.
+        if (
+            effectiveHighPriority &&
+            activePageIndex >= 0 &&
+            (activePageIndex != pageIndex || activePageVariant != pageVariant) &&
+            !isFocusedTarget(activePageIndex, activePageVariant)
+        ) {
+            preemptActiveRequest(
+                reason = "visible page requested",
+                requeue = activePageIndex > targetPageIndex,
+            )
+        }
         
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Enqueued page $pageIndex/$pageVariant (priority=$priorityLevel)" }
     }
@@ -243,7 +277,9 @@ object ImageEnhancer {
         queue.clear()
         pendingRequests.clear()
         activeJob?.cancel(CancellationException("Image enhancement cancelled: $reason"))
+        activeRequest?.cancelled?.set(true)
         activeJob = null
+        activeRequest = null
         activeMangaId = -1L
         activeChapterId = -1L
         activePageIndex = -1
@@ -278,6 +314,7 @@ object ImageEnhancer {
         targetPageVariant = pageVariant
         targetSecondaryPageIndex = secondaryPageIndex ?: -1
         targetSecondaryPageVariant = if (secondaryPageIndex != null) secondaryPageVariant else ""
+        preemptActiveRequestIfBehindTarget()
         val snapshot = mutableListOf<EnhanceRequest>()
         queue.drainTo(snapshot)
         if (snapshot.isNotEmpty()) {
@@ -290,7 +327,8 @@ object ImageEnhancer {
 
 
     fun hasRequest(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = ""): Boolean {
-        return pendingRequests.containsKey(requestKey(mangaId, chapterId, pageIndex, pageVariant))
+        return pendingRequests.containsKey(requestKey(mangaId, chapterId, pageIndex, pageVariant)) ||
+            ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant)
     }
 
     fun isFocusedTarget(pageIndex: Int, pageVariant: String = ""): Boolean {
@@ -314,6 +352,14 @@ object ImageEnhancer {
              if (removed) {
                  logcat(LogPriority.DEBUG) { "ImageEnhancer: Cancelled page $pageIndex/$pageVariant" }
              }
+        }
+        if (
+            activeMangaId == mangaId &&
+            activeChapterId == chapterId &&
+            activePageIndex == pageIndex &&
+            activePageVariant == pageVariant
+        ) {
+            preemptActiveRequest("page cancelled")
         }
     }
 
@@ -348,9 +394,14 @@ object ImageEnhancer {
             activeChapterId = req.chapterId
             activePageIndex = req.pageIndex
             activePageVariant = req.pageVariant
+            activeRequest = req
             logcat(LogPriority.DEBUG) { "ImageEnhancer: Processing page ${req.pageIndex}/${req.pageVariant} (priority=${req.priority})" }
+            val data = req.dataProvider() ?: return
+            if (req.generation != generation.get() || req.cancelled.get()) return
+            Waifu2x.prepareProcessing()
+            if (req.cancelled.get()) return
             val request = ImageRequest.Builder(req.context)
-                .data(req.data)
+                .data(data)
                 .memoryCachePolicy(CachePolicy.DISABLED)
                 .customDecoder(true)
                 .enhanced(true)
@@ -361,15 +412,37 @@ object ImageEnhancer {
                 .build()
             
             val disposable = SingletonImageLoader.get(req.context).enqueue(request)
-            activeJob = disposable.job
-            disposable.job.await()
+            val job = disposable.job
+            activeJob = job
+            if (req.generation != generation.get() || req.cancelled.get()) {
+                Waifu2x.abortProcessing()
+                job.cancel(CancellationException("Image enhancement request became obsolete"))
+            }
+            job.await()
         } finally {
+            val shouldRequeue = req.requeueOnCancel.get() && req.generation == generation.get()
             activeMangaId = -1L
             activeChapterId = -1L
             activePageIndex = -1
             activePageVariant = ""
             activeJob = null
+            activeRequest = null
             pendingRequests.remove(req.key, req.generation)
+
+            if (shouldRequeue) {
+                logcat(LogPriority.DEBUG) {
+                    "ImageEnhancer: Re-queueing preempted preload page ${req.pageIndex}/${req.pageVariant}"
+                }
+                enhanceLazy(
+                    context = req.context,
+                    mangaId = req.mangaId,
+                    chapterId = req.chapterId,
+                    pageIndex = req.pageIndex,
+                    highPriority = false,
+                    pageVariant = req.pageVariant,
+                    dataProvider = req.dataProvider,
+                )
+            }
         }
     }
 
@@ -378,5 +451,34 @@ object ImageEnhancer {
 
     private fun requestKey(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String): String {
         return "${mangaId}_${chapterId}_${pageIndex}_${pageVariant}"
+    }
+
+    private fun bufferStream(streamFactory: () -> java.io.InputStream): Any? {
+        return try {
+            streamFactory().use { okio.Buffer().readFrom(it) }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "ImageEnhancer: Failed to read enhancement source" }
+            null
+        }
+    }
+
+    private fun preemptActiveRequestIfBehindTarget() {
+        if (activePageIndex >= 0 && activePageIndex < targetPageIndex) {
+            preemptActiveRequest("active page is behind visible target")
+        }
+    }
+
+    private fun preemptActiveRequest(reason: String, requeue: Boolean = false) {
+        val request = activeRequest ?: return
+        if (requeue) {
+            request.requeueOnCancel.set(true)
+        }
+        if (!request.cancelled.compareAndSet(false, true)) return
+
+        logcat(LogPriority.DEBUG) {
+            "ImageEnhancer: Preempting active page $activePageIndex/$activePageVariant ($reason)"
+        }
+        Waifu2x.abortProcessing()
+        activeJob?.cancel(CancellationException("Image enhancement preempted: $reason"))
     }
 }

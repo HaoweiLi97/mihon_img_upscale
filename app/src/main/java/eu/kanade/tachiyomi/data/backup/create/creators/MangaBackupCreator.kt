@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.data.backup.models.backupTrackMapper
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import tachiyomi.data.DatabaseHandler
 import tachiyomi.domain.category.interactor.GetCategories
+import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.history.interactor.GetHistory
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.Injekt
@@ -18,17 +19,24 @@ class MangaBackupCreator(
     private val handler: DatabaseHandler = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val getHistory: GetHistory = Injekt.get(),
+    private val downloadPreferences: DownloadPreferences = Injekt.get(),
 ) {
 
     suspend operator fun invoke(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
+        val cloudUploadedChapterIds = downloadPreferences.cloudUploadedChapterIds().get()
         return mangas.map {
-            backupManga(it, options)
+            backupManga(it, options, cloudUploadedChapterIds)
         }
     }
 
-    private suspend fun backupManga(manga: Manga, options: BackupOptions): BackupManga {
+    private suspend fun backupManga(
+        manga: Manga,
+        options: BackupOptions,
+        cloudUploadedChapterIds: Set<String>,
+    ): BackupManga {
         // Entry for this manga
         val mangaObject = manga.toBackupManga()
+        mangaObject.cloudSyncMetaInfoHash = downloadPreferences.uploadedMetaInfoHash(manga.id)
 
         mangaObject.excludedScanlators = handler.awaitList {
             excluded_scanlatorsQueries.getExcludedScanlatorsByMangaId(manga.id)
@@ -40,7 +48,7 @@ class MangaBackupCreator(
                 chaptersQueries.getChaptersByMangaId(
                     mangaId = manga.id,
                     applyScanlatorFilter = 0, // false
-                    mapper = backupChapterMapper,
+                    mapper = backupChapterMapper(cloudUploadedChapterIds),
                 )
             }
                 .takeUnless(List<BackupChapter>::isEmpty)

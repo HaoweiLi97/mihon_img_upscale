@@ -11,6 +11,14 @@ class ReaderPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
 
+    init {
+        val model = preferenceStore.getInt("pref_realcugan_model", 0)
+        val selectedModel = model.get()
+        if (selectedModel in REMOVED_ENHANCEMENT_MODELS || selectedModel >= FIRST_CUSTOM_MODEL_ID) {
+            model.set(8)
+        }
+    }
+
     // region General
 
     fun pageTransitions() = preferenceStore.getBoolean("pref_enable_transitions_key", true)
@@ -93,8 +101,6 @@ class ReaderPreferences(
 
     fun realCuganScale() = preferenceStore.getInt("pref_realcugan_scale", 2) // 2x, 3x, 4x
 
-    fun realCuganInputScale() = preferenceStore.getInt("pref_realcugan_input_scale", 100) // 100 = 1.0x, 75 = 0.75x, 50 = 0.5x
-
     fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", 0)
 
     fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 3)
@@ -105,9 +111,9 @@ class ReaderPreferences(
 
     fun realCuganTileSize() = preferenceStore.getInt("pref_realcugan_tile_size", 128)
 
-    fun realCuganJobs() = preferenceStore.getInt("pref_realcugan_jobs", 3)
-
     fun realCuganPrecision() = preferenceStore.getInt("pref_realcugan_precision", 0) // 0: FP16, 1: FP32, 2: INT8, 3: BF16
+
+    fun realCuganFp16Arithmetic() = preferenceStore.getBoolean("pref_realcugan_fp16_arithmetic", false)
 
     fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 1600)
 
@@ -117,8 +123,6 @@ class ReaderPreferences(
 
     fun realCuganSkipMaxSizeHeight() = preferenceStore.getInt("pref_realcugan_skip_max_size_height", 0)
     
-    fun realCuganResizeLargeImage() = preferenceStore.getBoolean("pref_realcugan_resize_large_image", true)
-
     fun realCuganShowStatus() = preferenceStore.getBoolean("pref_realcugan_show_status", false)
 
     fun inkFilter() = preferenceStore.getBoolean("ink_filter", false)
@@ -226,6 +230,9 @@ class ReaderPreferences(
     }
 
     companion object {
+        private const val FIRST_CUSTOM_MODEL_ID = 1000
+        private val REMOVED_ENHANCEMENT_MODELS = setOf(7, 10, 11, 12, 13, 14, 15, 17)
+
         const val WEBTOON_PADDING_MIN = 0
         const val WEBTOON_PADDING_MAX = 25
         const val PAGER_VERTICAL_PADDING_MIN = 0

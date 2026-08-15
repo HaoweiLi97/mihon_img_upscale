@@ -60,6 +60,7 @@ class PreferenceRestorer(
         val backupCategoriesById = backupCategories?.associateBy { it.id.toString() }.orEmpty()
         val prefs = preferenceStore.getAll()
         toRestore.forEach { (key, value) ->
+            if (key in DownloadPreferences.cloudSyncRecordPreferenceKeys) return@forEach
             try {
                 when (value) {
                     is IntPreferenceValue -> {

@@ -14,17 +14,22 @@ import androidx.paging.map
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.core.preference.asState
+import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.interactor.UpdateManga
+import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -36,9 +41,11 @@ import kotlinx.coroutines.launch
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.SetMangaDefaultChapterFlags
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
@@ -69,11 +76,16 @@ class BrowseSourceScreenModel(
     private val updateManga: UpdateManga = Injekt.get(),
     private val addTracks: AddTracks = Injekt.get(),
     private val getIncognitoState: GetIncognitoState = Injekt.get(),
+    private val syncChaptersWithSource: SyncChaptersWithSource = Injekt.get(),
+    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
+    private val downloadManager: DownloadManager = Injekt.get(),
 ) : StateScreenModel<BrowseSourceScreenModel.State>(State(Listing.valueOf(listingQuery))) {
 
     var displayMode by sourcePreferences.sourceDisplayMode().asState(screenModelScope)
 
     val source = sourceManager.getOrStub(sourceId)
+    val isCloudSyncAvailable: Boolean
+        get() = source is HttpSource && downloadManager.isCloudSyncAvailable()
 
     init {
         if (source is CatalogueSource) {
@@ -137,7 +149,15 @@ class BrowseSourceScreenModel(
     }
 
     fun setListing(listing: Listing) {
-        mutableState.update { it.copy(listing = listing, toolbarQuery = null) }
+        selectionAnchor = null
+        mutableState.update {
+            it.copy(
+                listing = listing,
+                toolbarQuery = null,
+                selectionMode = false,
+                selectedMangaIds = emptySet(),
+            )
+        }
     }
 
     fun setFilters(filters: FilterList) {
@@ -156,6 +176,7 @@ class BrowseSourceScreenModel(
         val input = state.value.listing as? Listing.Search
             ?: Listing.Search(query = null, filters = source.getFilterList())
 
+        selectionAnchor = null
         mutableState.update {
             it.copy(
                 listing = input.copy(
@@ -163,6 +184,8 @@ class BrowseSourceScreenModel(
                     filters = filters ?: input.filters,
                 ),
                 toolbarQuery = query ?: input.query,
+                selectionMode = false,
+                selectedMangaIds = emptySet(),
             )
         }
     }
@@ -273,6 +296,158 @@ class BrowseSourceScreenModel(
         }
     }
 
+    fun addFavorites(mangas: List<Manga>, categoryIds: List<Long>? = null) {
+        val candidates = mangas.filterNot { it.favorite }.distinctBy { it.id }
+        if (candidates.isEmpty()) {
+            clearSelection()
+            return
+        }
+
+        screenModelScope.launch {
+            if (categoryIds != null) {
+                addFavoritesToCategories(candidates, categoryIds)
+                clearSelection()
+                return@launch
+            }
+
+            val categories = getCategories()
+            val defaultCategoryId = libraryPreferences.defaultCategory().get()
+            val defaultCategory = categories.find { it.id == defaultCategoryId.toLong() }
+            when {
+                defaultCategory != null -> {
+                    addFavoritesToCategories(candidates, listOf(defaultCategory.id))
+                    clearSelection()
+                }
+                defaultCategoryId == 0 || categories.isEmpty() -> {
+                    addFavoritesToCategories(candidates, emptyList())
+                    clearSelection()
+                }
+                else -> {
+                    setDialog(
+                        Dialog.ChangeMangaCategories(
+                            mangas = candidates,
+                            initialSelection = categories.mapAsCheckboxState { false }.toImmutableList(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun addFavoritesToCategories(mangas: List<Manga>, categoryIds: List<Long>) {
+        mangas.forEach { manga ->
+            setMangaCategories.await(manga.id, categoryIds.filterNot { it == 0L })
+            setMangaDefaultChapterFlags.await(manga)
+            addTracks.bindEnhancedTrackers(manga, source)
+            updateManga.await(
+                manga.copy(
+                    favorite = true,
+                    dateAdded = Instant.now().toEpochMilli(),
+                ).toMangaUpdate(),
+            )
+        }
+    }
+
+    suspend fun downloadMangas(mangas: List<Manga>): BatchDownloadResult = withIOContext {
+        val httpSource = source as? HttpSource ?: return@withIOContext BatchDownloadResult(0, mangas.size)
+        var successful = 0
+        var failed = 0
+
+        mangas.distinctBy { it.id }.forEach { manga ->
+            try {
+                val sourceChapters = httpSource.getChapterList(manga.toSManga())
+                syncChaptersWithSource.await(sourceChapters, manga, httpSource, manualFetch = true)
+                val chapters = getChaptersByMangaId.await(manga.id)
+                downloadManager.downloadChapters(manga, chapters, autoStart = false)
+                successful++
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                failed++
+            }
+        }
+
+        if (successful > 0) downloadManager.startDownloads()
+        BatchDownloadResult(successful, failed)
+    }
+
+    suspend fun cloudSyncMangas(mangas: List<Manga>): BatchCloudSyncResult = withIOContext {
+        val httpSource = source as? HttpSource
+            ?: return@withIOContext BatchCloudSyncResult(queued = 0, skipped = 0, failed = mangas.size)
+        var downloadsQueued = 0
+        var queued = 0
+        var skipped = 0
+        var failed = 0
+
+        mangas.distinctBy { it.id }.forEach { manga ->
+            try {
+                val sourceChapters = httpSource.getChapterList(manga.toSManga())
+                syncChaptersWithSource.await(sourceChapters, manga, httpSource, manualFetch = true)
+                val chapters = getChaptersByMangaId.await(manga.id)
+                val result = downloadManager.cloudSyncChapters(manga, chapters, autoStart = false)
+                downloadsQueued += result.downloadsQueued
+                queued += result.queued
+                skipped += result.skipped
+                failed += result.failed
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                failed++
+            }
+        }
+
+        if (downloadsQueued > 0) downloadManager.startDownloads()
+        BatchCloudSyncResult(
+            queued = queued,
+            skipped = skipped,
+            failed = failed,
+        )
+    }
+
+    private var selectionAnchor: Int? = null
+
+    fun enterSelectionMode() {
+        selectionAnchor = null
+        mutableState.update { it.copy(selectionMode = true) }
+    }
+
+    fun clearSelection() {
+        selectionAnchor = null
+        mutableState.update { it.copy(selectionMode = false, selectedMangaIds = emptySet()) }
+    }
+
+    fun toggleSelection(index: Int, mangaId: Long) {
+        selectionAnchor = index
+        mutableState.update { state ->
+            state.copy(
+                selectedMangaIds = state.selectedMangaIds.toMutableSet().apply {
+                    if (!remove(mangaId)) add(mangaId)
+                },
+            )
+        }
+    }
+
+    fun selectRange(index: Int, loadedMangaIds: List<Long>) {
+        val result = selectRange(
+            selectedIds = state.value.selectedMangaIds,
+            loadedIds = loadedMangaIds,
+            anchorIndex = selectionAnchor,
+            selectedIndex = index,
+        )
+        selectionAnchor = result.anchorIndex
+        mutableState.update { it.copy(selectedMangaIds = result.selectedIds) }
+    }
+
+    fun selectAll(loadedMangaIds: List<Long>) {
+        selectionAnchor = null
+        mutableState.update { it.copy(selectedMangaIds = loadedMangaIds.toSet()) }
+    }
+
+    fun invertSelection(loadedMangaIds: List<Long>) {
+        selectionAnchor = null
+        mutableState.update { state ->
+            state.copy(selectedMangaIds = loadedMangaIds.filterNot { it in state.selectedMangaIds }.toSet())
+        }
+    }
+
     /**
      * Get user categories.
      *
@@ -341,6 +516,10 @@ class BrowseSourceScreenModel(
             val manga: Manga,
             val initialSelection: ImmutableList<CheckboxState.State<Category>>,
         ) : Dialog
+        data class ChangeMangaCategories(
+            val mangas: List<Manga>,
+            val initialSelection: ImmutableList<CheckboxState.State<Category>>,
+        ) : Dialog
         data class Migrate(val target: Manga, val current: Manga) : Dialog
     }
 
@@ -350,7 +529,34 @@ class BrowseSourceScreenModel(
         val filters: FilterList = FilterList(),
         val toolbarQuery: String? = null,
         val dialog: Dialog? = null,
+        val selectionMode: Boolean = false,
+        val selectedMangaIds: Set<Long> = emptySet(),
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }
+
+    data class BatchDownloadResult(val successful: Int, val failed: Int)
+    data class BatchCloudSyncResult(val queued: Int, val skipped: Int, val failed: Int)
+}
+
+internal data class RangeSelectionResult(
+    val selectedIds: Set<Long>,
+    val anchorIndex: Int,
+)
+
+internal fun selectRange(
+    selectedIds: Set<Long>,
+    loadedIds: List<Long>,
+    anchorIndex: Int?,
+    selectedIndex: Int,
+): RangeSelectionResult {
+    if (selectedIndex !in loadedIds.indices) {
+        return RangeSelectionResult(selectedIds, anchorIndex ?: selectedIndex)
+    }
+    val validAnchor = anchorIndex?.takeIf { it in loadedIds.indices } ?: selectedIndex
+    val range = if (validAnchor <= selectedIndex) validAnchor..selectedIndex else selectedIndex..validAnchor
+    return RangeSelectionResult(
+        selectedIds = selectedIds + range.map(loadedIds::get),
+        anchorIndex = selectedIndex,
+    )
 }

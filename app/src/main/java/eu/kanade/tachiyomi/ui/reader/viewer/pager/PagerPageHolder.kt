@@ -492,15 +492,14 @@ class PagerPageHolder(
         val configHash = ImageEnhancementCache.getConfigHash(
             noise = readerPreferences.realCuganNoiseLevel().get(),
             scale = readerPreferences.realCuganScale().get(),
-            inputScale = readerPreferences.realCuganInputScale().get(),
             model = readerPreferences.realCuganModel().get(),
             maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
             maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
             skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
             skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
-            resizeEnabled = true,
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
+            fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
         )
         return ImageEnhancementCache.getCachedImage(mangaId, chapterId, targetPage.index, configHash, enhancementVariantFor(targetPage))
     }
@@ -513,15 +512,14 @@ class PagerPageHolder(
         val configHash = ImageEnhancementCache.getConfigHash(
             noise = readerPreferences.realCuganNoiseLevel().get(),
             scale = readerPreferences.realCuganScale().get(),
-            inputScale = readerPreferences.realCuganInputScale().get(),
             model = readerPreferences.realCuganModel().get(),
             maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
             maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
             skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
             skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
-            resizeEnabled = true,
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
+            fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
         )
         return when {
             ImageEnhancementCache.isSkipped(mangaId, chapterId, targetPage.index, configHash, enhancementVariantFor(targetPage)) -> "skipped"
@@ -669,15 +667,14 @@ class PagerPageHolder(
         val configHash = ImageEnhancementCache.getConfigHash(
             noise = readerPreferences.realCuganNoiseLevel().get(),
             scale = readerPreferences.realCuganScale().get(),
-            inputScale = readerPreferences.realCuganInputScale().get(),
             model = readerPreferences.realCuganModel().get(),
             maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
             maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
             skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
             skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
-            resizeEnabled = true,
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
+            fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
         )
 
         return when {
@@ -1068,15 +1065,14 @@ class PagerPageHolder(
         val configHash = ImageEnhancementCache.getConfigHash(
             noise = readerPreferences.realCuganNoiseLevel().get(),
             scale = readerPreferences.realCuganScale().get(),
-            inputScale = readerPreferences.realCuganInputScale().get(),
             model = readerPreferences.realCuganModel().get(),
             maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
             maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
             skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
             skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
-            resizeEnabled = true,
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
+            fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
         )
 
         val pageVariant = enhancementVariantFor(targetPage)

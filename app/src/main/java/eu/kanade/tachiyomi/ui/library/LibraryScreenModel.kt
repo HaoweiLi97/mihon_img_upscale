@@ -25,6 +25,8 @@ import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -44,6 +46,7 @@ import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.compareToWithCollator
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
@@ -84,6 +87,9 @@ class LibraryScreenModel(
     private val downloadCache: DownloadCache = Injekt.get(),
     private val trackerManager: TrackerManager = Injekt.get(),
 ) : StateScreenModel<LibraryScreenModel.State>(State()) {
+
+    val isCloudSyncAvailable: Boolean
+        get() = downloadManager.isCloudSyncAvailable()
 
     init {
         mutableState.update { state ->
@@ -496,6 +502,30 @@ class LibraryScreenModel(
         }
     }
 
+    suspend fun cloudSyncMangas(mangas: List<Manga>): BatchCloudSyncResult = withIOContext {
+        var downloadsQueued = 0
+        var queued = 0
+        var skipped = 0
+        var failed = 0
+
+        mangas.distinctBy { it.id }.forEach { manga ->
+            try {
+                val chapters = getChaptersByMangaId.await(manga.id)
+                val result = downloadManager.cloudSyncChapters(manga, chapters, autoStart = false)
+                downloadsQueued += result.downloadsQueued
+                queued += result.queued
+                skipped += result.skipped
+                failed += result.failed
+            } catch (_: Throwable) {
+                currentCoroutineContext().ensureActive()
+                failed++
+            }
+        }
+
+        if (downloadsQueued > 0) downloadManager.startDownloads()
+        BatchCloudSyncResult(queued = queued, skipped = skipped, failed = failed)
+    }
+
     /**
      * Marks mangas' chapters read status.
      */
@@ -706,6 +736,8 @@ class LibraryScreenModel(
         ) : Dialog
         data class DeleteManga(val manga: List<Manga>) : Dialog
     }
+
+    data class BatchCloudSyncResult(val queued: Int, val skipped: Int, val failed: Int)
 
     @Immutable
     private data class ItemPreferences(

@@ -94,28 +94,41 @@ class DownloadCache(
         .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     private val diskCacheFile: File
+        get() = File(context.cacheDir, "dl_index_cache_v4")
+    private val legacyDiskCacheFile: File
         get() = File(context.cacheDir, "dl_index_cache_v3")
 
     private val rootDownloadsDirMutex = Mutex()
     private var rootDownloadsDir = RootDirectory(storageManager.getDownloadsDirectory())
+    private var diskCacheLoadJob: Job? = null
 
     init {
         // Attempt to read cache file
-        scope.launch {
+        diskCacheLoadJob = scope.launch {
             rootDownloadsDirMutex.withLock {
                 try {
-                    if (diskCacheFile.exists()) {
-                        val diskCache = diskCacheFile.inputStream().use {
-                            ProtoBuf.decodeFromByteArray<RootDirectory>(it.readBytes())
-                        }
+                    val cacheFile = when {
+                        diskCacheFile.exists() -> diskCacheFile
+                        legacyDiskCacheFile.exists() -> legacyDiskCacheFile
+                        else -> null
+                    }
+                    if (cacheFile != null) {
+                        val bytes = cacheFile.readBytes()
+                        val diskCache = ProtoBuf.decodeFromByteArray<RootDirectory>(bytes)
                         rootDownloadsDir = diskCache
                         lastRenew = System.currentTimeMillis()
+                        if (cacheFile != diskCacheFile) {
+                            diskCacheFile.writeBytes(bytes)
+                            legacyDiskCacheFile.delete()
+                        }
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "Failed to initialize from disk cache" }
                     diskCacheFile.delete()
+                    legacyDiskCacheFile.delete()
                 }
             }
+            _changes.send(Unit)
         }
 
         storageManager.changes
@@ -205,9 +218,7 @@ class DownloadCache(
             // Retrieve the cached source directory or cache a new one
             var sourceDir = rootDownloadsDir.sourceDirs[manga.source]
             if (sourceDir == null) {
-                val source = sourceManager.get(manga.source) ?: return
-                val sourceUniFile = provider.findSourceDir(source) ?: return
-                sourceDir = SourceDirectory(sourceUniFile)
+                sourceDir = SourceDirectory(null)
                 rootDownloadsDir.sourceDirs += manga.source to sourceDir
             }
 
@@ -330,8 +341,11 @@ class DownloadCache(
 
     fun invalidateCache() {
         lastRenew = 0L
+        diskCacheLoadJob?.cancel()
+        diskCacheLoadJob = null
         renewalJob?.cancel()
         diskCacheFile.delete()
+        legacyDiskCacheFile.delete()
         renewCache()
     }
 
@@ -345,6 +359,11 @@ class DownloadCache(
         }
 
         renewalJob = scope.launchIO {
+            diskCacheLoadJob?.join()
+            if (lastRenew + renewInterval >= System.currentTimeMillis()) {
+                return@launchIO
+            }
+
             if (lastRenew == 0L) {
                 _isInitializing.emit(true)
             }
@@ -363,41 +382,26 @@ class DownloadCache(
             rootDownloadsDirMutex.withLock {
                 val updatedRootDir = RootDirectory(storageManager.getDownloadsDirectory())
 
-                updatedRootDir.sourceDirs = updatedRootDir.dir?.listFiles().orEmpty()
+                val rootChildren = updatedRootDir.dir?.listFiles().orEmpty()
                     .filter { it.isDirectory && !it.name.isNullOrBlank() }
-                    .mapNotNull { dir ->
-                        val sourceId = sourceMap[dir.name!!.lowercase()]
-                        sourceId?.let { it to SourceDirectory(dir) }
-                    }
-                    .toMap()
-
-                updatedRootDir.sourceDirs.values.map { sourceDir ->
-                    async {
-                        sourceDir.mangaDirs = sourceDir.dir?.listFiles().orEmpty()
+                val sourceDirectories = buildList {
+                    rootChildren.forEach { rootChild ->
+                        sourceMap[rootChild.name!!.lowercase()]?.let { add(it to rootChild) }
+                        rootChild.listFiles().orEmpty()
                             .filter { it.isDirectory && !it.name.isNullOrBlank() }
-                            .associate { it.name!! to MangaDirectory(it) }
-
-                        sourceDir.mangaDirs.values.forEach { mangaDir ->
-                            val chapterDirs = mangaDir.dir?.listFiles().orEmpty()
-                                .mapNotNull {
-                                    when {
-                                        // Ignore incomplete downloads
-                                        it.name?.endsWith(Downloader.TMP_DIR_SUFFIX) == true -> null
-                                        // Folder of images
-                                        it.isDirectory -> it.name
-                                        // CBZ files
-                                        it.isFile && it.extension == "cbz" -> it.nameWithoutExtension
-                                        // Anything else is irrelevant
-                                        else -> null
-                                    }
-                                }
-                                .toMutableSet()
-
-                            mangaDir.chapterDirs = chapterDirs
-                        }
+                            .forEach { nestedDir ->
+                                sourceMap[nestedDir.name!!.lowercase()]?.let { add(it to nestedDir) }
+                            }
                     }
-                }
-                    .awaitAll()
+                }.distinctBy { (sourceId, dir) -> sourceId to dir.uri }
+
+                val scannedSourceDirectories = sourceDirectories.map { (sourceId, sourceDir) ->
+                    async { sourceId to scanSourceDirectory(sourceDir) }
+                }.awaitAll()
+
+                updatedRootDir.sourceDirs = scannedSourceDirectories
+                    .groupBy({ it.first }, { it.second })
+                    .mapValues { (_, sourceDirs) -> mergeSourceDirectories(sourceDirs) }
 
                 rootDownloadsDir = updatedRootDir
             }
@@ -412,13 +416,45 @@ class DownloadCache(
                 notifyChanges()
             }
         }
-
-        // Mainly to notify the indexing notifier UI
-        notifyChanges()
     }
 
     private fun getSources(): List<Source> {
         return sourceManager.getOnlineSources() + sourceManager.getStubSources()
+    }
+
+    private fun scanSourceDirectory(dir: UniFile): SourceDirectory {
+        val sourceDir = SourceDirectory(dir)
+        sourceDir.mangaDirs = dir.listFiles().orEmpty()
+            .filter { it.isDirectory && !it.name.isNullOrBlank() }
+            .associate { mangaDir ->
+                val chapterDirs = mangaDir.listFiles().orEmpty()
+                    .mapNotNull {
+                        when {
+                            it.name?.endsWith(Downloader.TMP_DIR_SUFFIX) == true -> null
+                            it.isDirectory -> it.name
+                            it.isFile && it.extension == "cbz" -> it.nameWithoutExtension
+                            else -> null
+                        }
+                    }
+                    .toMutableSet()
+                mangaDir.name!! to MangaDirectory(mangaDir, chapterDirs)
+            }
+        return sourceDir
+    }
+
+    private fun mergeSourceDirectories(sourceDirs: List<SourceDirectory>): SourceDirectory {
+        val merged = SourceDirectory(sourceDirs.firstOrNull()?.dir)
+        sourceDirs.forEach { sourceDir ->
+            sourceDir.mangaDirs.forEach { (mangaName, mangaDir) ->
+                val existing = merged.mangaDirs[mangaName]
+                if (existing == null) {
+                    merged.mangaDirs += mangaName to mangaDir
+                } else {
+                    existing.chapterDirs += mangaDir.chapterDirs
+                }
+            }
+        }
+        return merged
     }
 
     private fun notifyChanges() {

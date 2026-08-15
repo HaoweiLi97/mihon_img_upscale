@@ -29,6 +29,39 @@ endif()
 
 find_package(ncnn REQUIRED)
 
+file(GLOB GLSLC_CANDIDATES
+    "${ANDROID_NDK}/shader-tools/*/glslc"
+    "${ANDROID_NDK}/shader-tools/*/glslc.exe"
+)
+if(GLSLC_CANDIDATES)
+    list(GET GLSLC_CANDIDATES 0 GLSLC_EXECUTABLE)
+else()
+    find_program(GLSLC_EXECUTABLE glslc REQUIRED)
+endif()
+
+set(GENERATED_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders")
+file(MAKE_DIRECTORY "${GENERATED_SHADER_DIR}")
+
+set(FUSED_PREPROC_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/waifu2x_fused_preproc.comp")
+set(FUSED_POSTPROC_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/waifu2x_fused_postproc.comp")
+set(FUSED_SHADER_OUTPUTS
+    "${GENERATED_SHADER_DIR}/waifu2x_fused_preproc_fp16.inc"
+    "${GENERATED_SHADER_DIR}/waifu2x_fused_postproc_fp16.inc"
+    "${GENERATED_SHADER_DIR}/waifu2x_fused_preproc_fp32.inc"
+    "${GENERATED_SHADER_DIR}/waifu2x_fused_postproc_fp32.inc"
+)
+
+add_custom_command(
+    OUTPUT ${FUSED_SHADER_OUTPUTS}
+    COMMAND "${GLSLC_EXECUTABLE}" -g -fshader-stage=compute --target-env=vulkan1.0 -DFUSED_FP16=1 -mfmt=c "${FUSED_PREPROC_SHADER}" -o "${GENERATED_SHADER_DIR}/waifu2x_fused_preproc_fp16.inc"
+    COMMAND "${GLSLC_EXECUTABLE}" -g -fshader-stage=compute --target-env=vulkan1.0 -DFUSED_FP16=1 -mfmt=c "${FUSED_POSTPROC_SHADER}" -o "${GENERATED_SHADER_DIR}/waifu2x_fused_postproc_fp16.inc"
+    COMMAND "${GLSLC_EXECUTABLE}" -g -fshader-stage=compute --target-env=vulkan1.0 -mfmt=c "${FUSED_PREPROC_SHADER}" -o "${GENERATED_SHADER_DIR}/waifu2x_fused_preproc_fp32.inc"
+    COMMAND "${GLSLC_EXECUTABLE}" -g -fshader-stage=compute --target-env=vulkan1.0 -mfmt=c "${FUSED_POSTPROC_SHADER}" -o "${GENERATED_SHADER_DIR}/waifu2x_fused_postproc_fp32.inc"
+    DEPENDS "${FUSED_PREPROC_SHADER}" "${FUSED_POSTPROC_SHADER}"
+    VERBATIM
+)
+add_custom_target(waifu2x-fused-shaders DEPENDS ${FUSED_SHADER_OUTPUTS})
+
 # Source files
 set(WAIFU2X_SOURCES
     waifu2x.cpp
@@ -38,10 +71,12 @@ set(WAIFU2X_SOURCES
 
 # Create shared library
 add_library(waifu2x-jni SHARED ${WAIFU2X_SOURCES})
+add_dependencies(waifu2x-jni waifu2x-fused-shaders)
 
 # Include directories
 target_include_directories(waifu2x-jni PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${GENERATED_SHADER_DIR}
 )
 
 # Link libraries
