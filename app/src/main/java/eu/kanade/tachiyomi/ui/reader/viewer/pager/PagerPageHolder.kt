@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.Drawable
 import android.view.LayoutInflater
 import android.view.Gravity
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -66,6 +67,13 @@ class PagerPageHolder(
     val page: ReaderPage,
     private var extraPage: ReaderPage? = null,
 ) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {
+
+    private data class RenderedPage(
+        val source: BufferedSource,
+        val isAnimated: Boolean,
+        val background: Drawable?,
+        val splitPages: Set<ReaderPage>,
+    )
 
     /**
      * Item that identifies this view. Needed by the adapter to not recreate views.
@@ -251,7 +259,8 @@ class PagerPageHolder(
         val streamFn2 = extraPage?.stream
 
         try {
-            val (source, isAnimated, background) = withIOContext {
+            val renderedPage = withIOContext {
+                val splitPages = mutableSetOf<ReaderPage>()
                 val source = currentDisplayStream(page)?.use { s1 ->
                     val primarySource = Buffer().readFrom(s1)
                     if (extraPage != null) {
@@ -262,7 +271,10 @@ class PagerPageHolder(
                             )
                         }
                     } else {
-                        detectPageSpread(primarySource)
+                        splitPages += detectPageSpread(primarySource)
+                        if (requiresSplitBeforeSpreadDetection(page, primarySource)) {
+                            splitPages += page
+                        }
                         process(item, primarySource)
                     }
                 }!!
@@ -272,12 +284,12 @@ class PagerPageHolder(
                 } else {
                     null
                 }
-                Triple(source, isAnimated, background)
+                RenderedPage(source, isAnimated, background, splitPages)
             }
             withUIContext {
                 setImage(
-                    source,
-                    isAnimated,
+                    renderedPage.source,
+                    renderedPage.isAnimated,
                     Config(
                         zoomDuration = viewer.config.doubleTapAnimDuration,
                         minimumScaleType = viewer.config.imageScaleType,
@@ -287,12 +299,15 @@ class PagerPageHolder(
                     ),
                     streamFn.takeUnless { usesTransformedEnhancedDisplay() },
                 )
-                if (!isAnimated) {
-                    pageBackground = background
+                if (!renderedPage.isAnimated) {
+                    pageBackground = renderedPage.background
                 }
                 removeErrorLayout()
                 startExtraEnhancementWatcherIfNeeded()
                 startHalfStatusWatcherIfNeeded()
+                // The current half is now visible. Inserting its sibling before this point can
+                // detach this holder and cancel its image load, which briefly shows a black page.
+                insertSplitPagesAfterDisplay(renderedPage.splitPages)
             }
         } catch (_: CancellationException) {
             return
@@ -322,21 +337,20 @@ class PagerPageHolder(
         return width > 0 && height > 0
     }
 
-    private fun detectPageSpread(primarySource: BufferedSource) {
+    private fun detectPageSpread(primarySource: BufferedSource): Set<ReaderPage> {
         val candidate = viewer.getPageSpreadCandidate(page) ?: run {
             logcat(LogPriority.INFO) {
                 "PageSpread: no candidate for page ${page.index}; auto=${viewer.config.autoDetectPageSpreads}, double=${viewer.config.doublePages}"
             }
-            return
+            return emptySet()
         }
         logcat(LogPriority.INFO) {
             "PageSpread: checking pages ${candidate.first.index} and ${candidate.second.index}"
         }
         if (requiresSplitBeforeSpreadDetection(page, primarySource)) {
             logcat(LogPriority.INFO) { "PageSpread: deferring page ${page.index} until its wide source is split" }
-            viewer.onPageSplit(page, InsertPage(page))
             viewer.onPageSpreadDeferred(candidate)
-            return
+            return setOf(page)
         }
 
         val adjacentPage = if (candidate.first === page) candidate.second else candidate.first
@@ -346,14 +360,13 @@ class PagerPageHolder(
                 "PageSpread: waiting for adjacent page ${adjacentPage.index}; state=${adjacentPage.status}"
             }
             deferPageSpreadUntilAdjacentIsReady(candidate, adjacentPage)
-            return
+            return emptySet()
         }
 
         if (requiresSplitBeforeSpreadDetection(adjacentPage, adjacentSource)) {
             logcat(LogPriority.INFO) { "PageSpread: deferring until adjacent wide page ${adjacentPage.index} is split" }
-            viewer.onPageSplit(adjacentPage, InsertPage(adjacentPage))
             viewer.onPageSpreadDeferred(candidate)
-            return
+            return setOf(adjacentPage)
         }
 
         val firstSource = if (candidate.first === page) primarySource else adjacentSource
@@ -369,6 +382,7 @@ class PagerPageHolder(
                 "spatial=${result.spatialMatchingBlocks}"
         }
         viewer.onPageSpreadChecked(candidate, result.isSpread)
+        return emptySet()
     }
 
     private fun deferPageSpreadUntilAdjacentIsReady(
@@ -386,7 +400,10 @@ class PagerPageHolder(
             pageSpreadRetryJob = null
             withIOContext {
                 currentDisplayStream(page)?.use { source ->
-                    detectPageSpread(Buffer().readFrom(source))
+                    val splitPages = detectPageSpread(Buffer().readFrom(source))
+                    withUIContext {
+                        insertSplitPagesAfterDisplay(splitPages)
+                    }
                 }
             }
         }
@@ -416,8 +433,17 @@ class PagerPageHolder(
     }
 
     private fun shouldSplitWidePagesInSinglePageMode(): Boolean {
-        return !viewer.config.doublePages &&
-            (viewer.config.autoSplitPages || viewer.config.autoDoublePages)
+        return !viewer.config.doublePages && viewer.config.autoSplitPages
+    }
+
+    private fun insertSplitPagesAfterDisplay(pages: Set<ReaderPage>) {
+        if (!shouldSplitWidePagesInSinglePageMode()) return
+
+        pages.forEach { targetPage ->
+            if (targetPage !is InsertPage && !viewer.hasSplitPage(targetPage)) {
+                onPageSplit(targetPage)
+            }
+        }
     }
 
     private fun refreshEnhancementTargets() {
@@ -894,9 +920,6 @@ class PagerPageHolder(
         }
 
         if (shouldSplitWidePagesInSinglePageMode() && isWideImage(imageSource)) {
-            if (page !is InsertPage) {
-                onPageSplit(page)
-            }
             return splitInHalf(imageSource, page)
         }
 

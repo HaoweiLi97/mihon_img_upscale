@@ -623,8 +623,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
     }
 
     private fun shouldKeepSplitPages(): Boolean {
-        return !viewer.config.doublePages &&
-            (viewer.config.autoSplitPages || viewer.config.autoDoublePages)
+        return !viewer.config.doublePages && viewer.config.autoSplitPages
     }
 
     fun onWidePageDetected(page: ReaderPage) {
