@@ -26,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.BookmarkRemove
-import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
@@ -236,7 +235,6 @@ fun LibraryBottomActionMenu(
     onMarkAsReadClicked: () -> Unit,
     onMarkAsUnreadClicked: () -> Unit,
     onDownloadClicked: ((DownloadAction) -> Unit)?,
-    onCloudSyncClicked: (() -> Unit)?,
     onDeleteClicked: () -> Unit,
     onMigrateClicked: () -> Unit,
     modifier: Modifier = Modifier,
@@ -264,7 +262,7 @@ fun LibraryBottomActionMenu(
                     if (isActive) confirm[toConfirmIndex] = false
                 }
             }
-            val itemOverflow = onDownloadClicked != null || onCloudSyncClicked != null
+            val itemOverflow = onDownloadClicked != null
             Row(
                 modifier = Modifier
                     .windowInsetsPadding(
@@ -310,15 +308,6 @@ fun LibraryBottomActionMenu(
                             offset = BottomBarMenuDpOffset,
                         )
                     }
-                }
-                if (onCloudSyncClicked != null) {
-                    Button(
-                        title = stringResource(MR.strings.cloud_sync),
-                        icon = Icons.Outlined.CloudUpload,
-                        toConfirm = confirm[4],
-                        onLongClick = { onLongClickItem(4) },
-                        onClick = onCloudSyncClicked,
-                    )
                 }
                 if (!itemOverflow) {
                     Button(

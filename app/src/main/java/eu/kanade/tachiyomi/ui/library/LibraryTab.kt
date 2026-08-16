@@ -98,7 +98,6 @@ data object LibraryTab : Tab {
         val state by screenModel.state.collectAsState()
 
         val snackbarHostState = remember { SnackbarHostState() }
-        var showCloudSyncConfirmation by rememberSaveable { mutableStateOf(false) }
 
         val onClickRefresh: (Category?) -> Boolean = { category ->
             val started = LibraryUpdateJob.startNow(context, category)
@@ -156,11 +155,6 @@ data object LibraryTab : Tab {
                     onMarkAsUnreadClicked = { screenModel.markReadSelection(false) },
                     onDownloadClicked = screenModel::performDownloadAction
                         .takeIf { state.selectedManga.fastAll { !it.isLocal() } },
-                    onCloudSyncClicked = { showCloudSyncConfirmation = true }
-                        .takeIf {
-                            screenModel.isCloudSyncAvailable &&
-                                state.selectedManga.fastAll { !it.isLocal() }
-                        },
                     onDeleteClicked = screenModel::openDeleteMangaDialog,
                     onMigrateClicked = {
                         val selection = state.selection
@@ -232,47 +226,6 @@ data object LibraryTab : Tab {
         }
 
         val onDismissRequest = screenModel::closeDialog
-        if (showCloudSyncConfirmation) {
-            AlertDialog(
-                onDismissRequest = { showCloudSyncConfirmation = false },
-                title = { Text(stringResource(MR.strings.cloud_sync)) },
-                text = {
-                    Text(
-                        stringResource(
-                            MR.strings.cloud_sync_selected_manga_confirmation,
-                            state.selectedManga.size,
-                        ),
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            val selectedManga = state.selectedManga
-                            showCloudSyncConfirmation = false
-                            scope.launch {
-                                val result = screenModel.cloudSyncMangas(selectedManga)
-                                snackbarHostState.showSnackbar(
-                                    context.stringResource(
-                                        MR.strings.cloud_sync_selected_manga_result,
-                                        result.queued,
-                                        result.skipped,
-                                        result.failed,
-                                    ),
-                                )
-                                screenModel.clearSelection()
-                            }
-                        },
-                    ) {
-                        Text(stringResource(MR.strings.cloud_sync))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showCloudSyncConfirmation = false }) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-            )
-        }
         when (val dialog = state.dialog) {
             is LibraryScreenModel.Dialog.SettingsSheet -> run {
                 LibrarySettingsDialog(

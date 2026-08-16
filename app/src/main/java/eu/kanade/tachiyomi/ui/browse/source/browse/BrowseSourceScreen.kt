@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FilterList
@@ -131,7 +130,6 @@ data class BrowseSourceScreen(
         val loadedMangaIds = loadedMangas.map { it.id }
         val selectedMangas = loadedMangas.filter { it.id in state.selectedMangaIds }
         var showDownloadConfirmation by rememberSaveable { mutableStateOf(false) }
-        var showCloudSyncConfirmation by rememberSaveable { mutableStateOf(false) }
         var showPageDialog by rememberSaveable { mutableStateOf(false) }
 
         BackHandler(enabled = state.selectionMode) {
@@ -172,47 +170,6 @@ data class BrowseSourceScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showDownloadConfirmation = false }) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-            )
-        }
-
-        if (showCloudSyncConfirmation) {
-            AlertDialog(
-                onDismissRequest = { showCloudSyncConfirmation = false },
-                title = { Text(stringResource(MR.strings.cloud_sync)) },
-                text = {
-                    Text(
-                        stringResource(
-                            MR.strings.cloud_sync_selected_manga_confirmation,
-                            selectedMangas.size,
-                        ),
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            showCloudSyncConfirmation = false
-                            scope.launch {
-                                val result = screenModel.cloudSyncMangas(selectedMangas)
-                                snackbarHostState.showSnackbar(
-                                    message = context.contextStringResource(
-                                        MR.strings.cloud_sync_selected_manga_result,
-                                        result.queued,
-                                        result.skipped,
-                                        result.failed,
-                                    ),
-                                )
-                                screenModel.clearSelection()
-                            }
-                        },
-                    ) {
-                        Text(stringResource(MR.strings.cloud_sync))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showCloudSyncConfirmation = false }) {
                         Text(stringResource(MR.strings.action_cancel))
                     }
                 },
@@ -342,10 +299,8 @@ data class BrowseSourceScreen(
                     visible = state.selectionMode,
                     canAdd = selectedMangas.any { !it.favorite },
                     canDownload = selectedMangas.isNotEmpty() && screenModel.source is HttpSource,
-                    canCloudSync = selectedMangas.isNotEmpty() && screenModel.isCloudSyncAvailable,
                     onAdd = { screenModel.addFavorites(selectedMangas) },
                     onDownload = { showDownloadConfirmation = true },
-                    onCloudSync = { showCloudSyncConfirmation = true },
                 )
             },
             floatingActionButton = {
@@ -496,10 +451,8 @@ private fun BrowseSourceSelectionBottomBar(
     visible: Boolean,
     canAdd: Boolean,
     canDownload: Boolean,
-    canCloudSync: Boolean,
     onAdd: () -> Unit,
     onDownload: () -> Unit,
-    onCloudSync: () -> Unit,
 ) {
     if (!visible) return
 
@@ -519,12 +472,6 @@ private fun BrowseSourceSelectionBottomBar(
                 icon = Icons.Outlined.Download,
                 enabled = canDownload,
                 onClick = onDownload,
-            )
-            SelectionActionButton(
-                title = stringResource(MR.strings.cloud_sync),
-                icon = Icons.Outlined.CloudUpload,
-                enabled = canCloudSync,
-                onClick = onCloudSync,
             )
         }
     }
