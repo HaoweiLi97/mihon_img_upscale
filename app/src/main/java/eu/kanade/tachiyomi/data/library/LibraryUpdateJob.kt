@@ -330,14 +330,41 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
      */
     private suspend fun updateManga(manga: Manga, fetchWindow: Pair<Long, Long>): List<Chapter> {
         val source = sourceManager.getOrStub(manga.source)
+        var mangaForChapterUpdate = manga
 
-        // Update manga metadata if needed
-        if (libraryPreferences.autoUpdateMetadata().get()) {
-            val networkManga = source.getMangaDetails(manga.toSManga())
-            updateManga.awaitUpdateFromSource(manga, networkManga, manualFetch = false, coverCache)
+        // Some sources need the manga details request to initialize their chapter endpoint.
+        // This is especially important for manga added directly from a source, whose
+        // initialized flag is still false even when metadata auto-update is disabled.
+        if (libraryPreferences.autoUpdateMetadata().get() || !manga.initialized) {
+            try {
+                val networkManga = source.getMangaDetails(manga.toSManga())
+                val updated = updateManga.awaitUpdateFromSource(
+                    manga,
+                    networkManga,
+                    manualFetch = false,
+                    coverCache,
+                )
+                if (updated) {
+                    mangaForChapterUpdate = getManga.await(manga.id)
+                        ?.takeIf { it.favorite }
+                        ?: return emptyList()
+                } else {
+                    logcat(LogPriority.ERROR) {
+                        "Failed to persist manga details before chapter update: " +
+                            "source=${source.name}, manga=${manga.title}, mangaId=${manga.id}"
+                    }
+                }
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.ERROR, e) {
+                    "Failed to fetch manga details before chapter update; " +
+                        "falling back to stored manga: source=${source.name}, " +
+                        "manga=${manga.title}, mangaId=${manga.id}"
+                }
+            }
         }
 
-        val chapters = source.getChapterList(manga.toSManga())
+        val chapters = source.getChapterList(mangaForChapterUpdate.toSManga())
 
         // Get manga from database to account for if it was removed during the update and
         // to get latest data so it doesn't get overwritten later on
