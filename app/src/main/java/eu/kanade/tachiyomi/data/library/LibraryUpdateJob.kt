@@ -177,6 +177,10 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         mangaToUpdate = listToUpdate
             .filter {
                 when {
+                    // Always initialize newly added manga once before applying normal update restrictions.
+                    // Some sources cannot return chapters until their details endpoint has been requested.
+                    !it.manga.initialized -> true
+
                     it.manga.updateStrategy == UpdateStrategy.ONLY_FETCH_ONCE && it.totalChapters > 0L -> {
                         skippedUpdates.add(
                             it.manga to context.stringResource(MR.strings.skipped_reason_not_always_update),

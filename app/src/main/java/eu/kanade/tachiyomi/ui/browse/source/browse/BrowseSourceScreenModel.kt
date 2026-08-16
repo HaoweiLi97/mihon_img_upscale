@@ -40,10 +40,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import logcat.LogPriority
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
@@ -316,7 +318,10 @@ class BrowseSourceScreenModel(
                 addTracks.bindEnhancedTrackers(manga, source)
             }
 
-            updateManga.await(new.toMangaUpdate())
+            val updated = updateManga.await(new.toMangaUpdate())
+            if (updated && new.favorite) {
+                initializeAddedManga(new)
+            }
         }
     }
 
@@ -365,7 +370,6 @@ class BrowseSourceScreenModel(
         screenModelScope.launch {
             if (categoryIds != null) {
                 addFavoritesToCategories(candidates, categoryIds)
-                clearSelection()
                 return@launch
             }
 
@@ -375,11 +379,9 @@ class BrowseSourceScreenModel(
             when {
                 defaultCategory != null -> {
                     addFavoritesToCategories(candidates, listOf(defaultCategory.id))
-                    clearSelection()
                 }
                 defaultCategoryId == 0 || categories.isEmpty() -> {
                     addFavoritesToCategories(candidates, emptyList())
-                    clearSelection()
                 }
                 else -> {
                     setDialog(
@@ -394,16 +396,64 @@ class BrowseSourceScreenModel(
     }
 
     private suspend fun addFavoritesToCategories(mangas: List<Manga>, categoryIds: List<Long>) {
+        val addedManga = mutableListOf<Manga>()
         mangas.forEach { manga ->
             setMangaCategories.await(manga.id, categoryIds.filterNot { it == 0L })
             setMangaDefaultChapterFlags.await(manga)
             addTracks.bindEnhancedTrackers(manga, source)
-            updateManga.await(
-                manga.copy(
-                    favorite = true,
-                    dateAdded = Instant.now().toEpochMilli(),
-                ).toMangaUpdate(),
+            val favoriteManga = manga.copy(
+                favorite = true,
+                dateAdded = Instant.now().toEpochMilli(),
             )
+            if (updateManga.await(favoriteManga.toMangaUpdate())) {
+                addedManga += favoriteManga
+            }
+        }
+
+        clearSelection()
+        addedManga.forEach { initializeAddedManga(it) }
+    }
+
+    private suspend fun initializeAddedManga(manga: Manga) = withIOContext {
+        var mangaForChapterUpdate = getManga.await(manga.id)
+            ?.takeIf { it.favorite && !it.initialized }
+            ?: return@withIOContext
+
+        try {
+            val networkManga = source.getMangaDetails(mangaForChapterUpdate.toSManga())
+            if (updateManga.awaitUpdateFromSource(mangaForChapterUpdate, networkManga, manualFetch = false)) {
+                mangaForChapterUpdate = getManga.await(manga.id)
+                    ?.takeIf { it.favorite }
+                    ?: return@withIOContext
+            } else {
+                logcat(LogPriority.ERROR) {
+                    "Failed to persist manga details after adding to library: " +
+                        "source=${source.name}, manga=${manga.title}, mangaId=${manga.id}"
+                }
+            }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            logcat(LogPriority.ERROR, error) {
+                "Failed to fetch manga details after adding to library; " +
+                    "falling back to stored manga: source=${source.name}, " +
+                    "manga=${manga.title}, mangaId=${manga.id}"
+            }
+        }
+
+        try {
+            val sourceChapters = source.getChapterList(mangaForChapterUpdate.toSManga())
+            syncChaptersWithSource.await(
+                sourceChapters,
+                mangaForChapterUpdate,
+                source,
+                manualFetch = false,
+            )
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            logcat(LogPriority.ERROR, error) {
+                "Failed to fetch chapters after adding to library: " +
+                    "source=${source.name}, manga=${manga.title}, mangaId=${manga.id}"
+            }
         }
     }
 
