@@ -1,8 +1,8 @@
 package eu.kanade.presentation.reader.settings
 
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -151,6 +151,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
     )
     if (realCuganEnabled) {
         val realCuganModel by screenModel.preferences.realCuganModel().collectAsState()
+        val realEsrganStyle by screenModel.preferences.realEsrganStyle().collectAsState()
         val realCuganNoiseLevel by screenModel.preferences.realCuganNoiseLevel().collectAsState()
         val realCuganScale by screenModel.preferences.realCuganScale().collectAsState()
         val processingBackend by screenModel.preferences.realCuganProcessingBackend().collectAsState()
@@ -164,7 +165,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
         LaunchedEffect(useQualcommNpu, realCuganModel, realCuganScale) {
             if (useQualcommNpu) {
-                if (realCuganModel != 0 && realCuganModel != 2) {
+                if (realCuganModel != 0 && realCuganModel != Waifu2x.MODEL_REAL_ESRGAN_ANIME) {
                     screenModel.preferences.realCuganModel().set(0)
                 }
                 if (realCuganScale != 2) {
@@ -195,13 +196,13 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             val models = if (useQualcommNpu) {
                 listOf(
                     0 to "Real-CUGAN SE",
-                    2 to "Real-ESRGAN",
+                    Waifu2x.MODEL_REAL_ESRGAN_ANIME to "Real-ESRGAN",
                 )
             } else {
                 listOf(
                     0 to "Real-CUGAN SE",
                     1 to "Real-CUGAN Pro",
-                    2 to "Real-ESRGAN",
+                    Waifu2x.MODEL_REAL_ESRGAN_ANIME to "Real-ESRGAN",
                     3 to "Real-CUGAN Nose",
                     4 to "Waifu2x",
                     5 to "Waifu2x (Fast)",
@@ -221,17 +222,42 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
+        if (realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME) {
+            SettingsChipRow(stringResource(MR.strings.reader_model_style)) {
+                listOf(
+                    Waifu2x.REAL_ESRGAN_STYLE_ANIME to "Anime",
+                    Waifu2x.REAL_ESRGAN_STYLE_PHOTO to "Photo",
+                ).map { (style, name) ->
+                    FilterChip(
+                        selected = realEsrganStyle == style,
+                        onClick = { screenModel.preferences.realEsrganStyle().set(style) },
+                        label = { Text(name) },
+                    )
+                }
+            }
+        }
+
         if (realCuganModel == 0 || realCuganModel == 1 || realCuganModel == 4 || realCuganModel == 5) {
             val levels = if (realCuganModel == 1) { // Pro only has no-denoise, denoise3x, conservative
-                listOf(0 to stringResource(MR.strings.reader_none), 3 to "3x", 4 to stringResource(MR.strings.reader_conservative))
+                listOf(
+                    0 to stringResource(MR.strings.reader_none),
+                    3 to "3x",
+                    4 to stringResource(MR.strings.reader_conservative),
+                )
             } else if (realCuganModel == 4) { // Waifu2x
                 listOf(0 to "1x", 1 to "2x", 2 to "3x")
             } else if (realCuganModel == 5) { // Waifu2x Fast (UpConv7)
                 listOf(0 to stringResource(MR.strings.reader_none), 1 to "1x", 2 to "2x", 3 to "3x")
             } else { // SE
-                listOf(0 to stringResource(MR.strings.reader_none), 1 to "1x", 2 to "2x", 3 to "3x", 4 to stringResource(MR.strings.reader_conservative))
+                listOf(
+                    0 to stringResource(MR.strings.reader_none),
+                    1 to "1x",
+                    2 to "2x",
+                    3 to "3x",
+                    4 to stringResource(MR.strings.reader_conservative),
+                )
             }
-            
+
             SettingsChipRow(stringResource(MR.strings.reader_denoise_level)) {
                 levels.map { (index, name) ->
                     FilterChip(
@@ -244,14 +270,25 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
 
         val fixedW2xExScale = Waifu2x.w2xExScaleFor(realCuganModel)
-        if (useQualcommNpu || realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 || fixedW2xExScale == 2) {
-             SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
-                  FilterChip(
-                      selected = true,
-                      onClick = {},
-                      label = { Text(stringResource(MR.strings.reader_scale_fixed_2x)) }
-                  )
-             }
+        if (useQualcommNpu || realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 ||
+            (realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME && realEsrganStyle == Waifu2x.REAL_ESRGAN_STYLE_PHOTO) ||
+            fixedW2xExScale == 2
+        ) {
+            SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
+                FilterChip(
+                    selected = true,
+                    onClick = {},
+                    label = {
+                        Text(
+                            if (fixedW2xExScale == 4) {
+                                "4x"
+                            } else {
+                                stringResource(MR.strings.reader_scale_fixed_2x)
+                            },
+                        )
+                    },
+                )
+            }
         } else if (fixedW2xExScale == 4) {
             SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
                 FilterChip(
@@ -323,7 +360,14 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
 
         val precision by screenModel.preferences.realCuganPrecision().collectAsState()
         val supportedPrecisions = if (useQualcommNpu) {
-            if (realCuganModel == 0 || realCuganModel == 2) listOf(0, 2) else listOf(0)
+            if (
+                realCuganModel == 0 ||
+                realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME
+            ) {
+                listOf(0, 2)
+            } else {
+                listOf(0)
+            }
         } else {
             listOf(0, 1, 2, 3)
         }

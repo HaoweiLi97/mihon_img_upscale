@@ -53,13 +53,14 @@ val qnnContextDir = providers.gradleProperty("qnnContextDir").orNull
     ?: System.getenv("QNN_CONTEXT_DIR")
 
 val qnnSdkRoot = qnnSdkDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
-val generatedQnnJniDir = layout.buildDirectory.dir("generated/qnnJniLibs")
 val qnnContextRoot = qnnContextDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
 val generatedQnnAssetsDir = layout.buildDirectory.dir("generated/qnnAssets")
 val qnnSocModels = listOf("SM8475", "SM8550", "SM8650", "SM8750", "SM8850")
 val qnnModelNames = listOf(
     "realesrgan-animevideov3-x2",
     "realesrgan-animevideov3-x2-int8",
+    "realesrgan-general-x4v3-x2",
+    "realesrgan-general-x4v3-x2-int8",
     "realcugan-se-x2-no-denoise",
     "realcugan-se-x2-denoise1x",
     "realcugan-se-x2-denoise2x",
@@ -72,35 +73,6 @@ val qnnModelNames = listOf(
     "realcugan-se-x2-conservative-int8",
 )
 val qnnContextFiles = qnnSocModels.flatMap { soc -> qnnModelNames.map { model -> "$model.$soc.bin" } }
-val stageQnnRuntime = qnnSdkRoot?.let { sdkRoot ->
-    tasks.register<Sync>("stageQnnRuntime") {
-        into(generatedQnnJniDir.map { it.dir("arm64-v8a") })
-        from(sdkRoot.resolve("lib/aarch64-android")) {
-            include(
-                "libQnnHtp.so",
-                "libQnnHtpPrepare.so",
-                "libQnnSystem.so",
-            )
-            qnnHtpArchs.forEach { arch -> include("libQnnHtpV${arch}Stub.so") }
-        }
-        qnnHtpArchs.forEach { arch ->
-            from(sdkRoot.resolve("lib/hexagon-v$arch/unsigned")) {
-                include("libQnnHtpV${arch}Skel.so")
-            }
-        }
-
-        doFirst {
-            val requiredFiles = listOf(
-                sdkRoot.resolve("include/QNN/QnnInterface.h"),
-                sdkRoot.resolve("lib/aarch64-android/libQnnHtp.so"),
-            ) + qnnHtpArchs.map { arch -> sdkRoot.resolve("lib/aarch64-android/libQnnHtpV${arch}Stub.so") }
-            val missingFiles = requiredFiles.filterNot(File::isFile)
-            check(missingFiles.isEmpty()) {
-                "QNN SDK is incomplete for HTP architectures ${qnnHtpArchs.joinToString()}: ${missingFiles.joinToString()}"
-            }
-        }
-    }
-}
 val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
     tasks.register<Sync>("stageQnnContexts") {
         from(contextRoot) {
@@ -126,8 +98,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 29
-        versionName = "1.3.2"
+        versionCode = 30
+        versionName = "1.3.3"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
@@ -203,9 +175,6 @@ android {
     sourceSets {
         getByName("preview").res.srcDirs("src/debug/res")
         getByName("benchmark").res.srcDirs("src/debug/res")
-        if (stageQnnRuntime != null) {
-            getByName("main").jniLibs.srcDir(generatedQnnJniDir)
-        }
         if (stageQnnContexts != null) {
             getByName("main").assets.srcDir(generatedQnnAssetsDir)
         }
@@ -223,6 +192,14 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            excludes += listOf(
+                "**/libQnnDsp.so",
+                "**/libQnnDspV66Skel.so",
+                "**/libQnnDspV66Stub.so",
+                "**/libQnnGpu.so",
+                "**/libQnnHtpV68Skel.so",
+                "**/libQnnHtpV68Stub.so",
+            )
             keepDebugSymbols += listOf(
                 "libandroidx.graphics.path",
                 "libarchive-jni",
@@ -273,18 +250,9 @@ android {
 
     ndkVersion = "28.2.13676358"
 
-
     lint {
         abortOnError = false
         checkReleaseBuilds = false
-    }
-}
-
-if (stageQnnRuntime != null) {
-    tasks.configureEach {
-        if (name.startsWith("merge") && (name.endsWith("JniLibFolders") || name.endsWith("NativeLibs"))) {
-            dependsOn(stageQnnRuntime)
-        }
     }
 }
 
@@ -316,6 +284,9 @@ kotlin {
 }
 
 dependencies {
+    // Packages the matching HTP Stub/Skel libraries for every supported Snapdragon generation.
+    implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
+
     implementation(projects.i18n)
     implementation(projects.core.archive)
     implementation(projects.core.common)

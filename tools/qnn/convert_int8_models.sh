@@ -11,19 +11,26 @@ CONVERTER="$QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter"
 
 mkdir -p "$OUTPUT_DIR"
 
-models="\
+models=${QNN_MODELS:-"\
     realesrgan-animevideov3-x2 \
+    realesrgan-general-x4v3-x2 \
     realcugan-se-x2-no-denoise \
     realcugan-se-x2-denoise1x \
     realcugan-se-x2-denoise2x \
     realcugan-se-x2-denoise3x \
-    realcugan-se-x2-conservative"
+    realcugan-se-x2-conservative"}
 
 for name in $models; do
     model="$ONNX_DIR/$name.onnx"
     if [ ! -f "$model" ]; then
         echo "Missing ONNX model: $model" >&2
         exit 1
+    fi
+    act_bitwidth=8
+    if [ "$name" = "realesrgan-general-x4v3-x2" ]; then
+        # Photo accumulates visible noise with 8-bit activations even after photo calibration.
+        # Keep 8-bit weights but use 16-bit activations for image quality.
+        act_bitwidth=16
     fi
     "$CONVERTER" \
         --input_network "$model" \
@@ -32,7 +39,7 @@ for name in $models; do
         --float_bitwidth 16 \
         --exclude_named_tensors \
         --input_list "$CALIBRATION_INPUT_LIST" \
-        --act_bitwidth 8 \
+        --act_bitwidth "$act_bitwidth" \
         --weights_bitwidth 8 \
         --bias_bitwidth 32 \
         --use_per_channel_quantization \

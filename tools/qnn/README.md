@@ -14,6 +14,7 @@ fixed 256x256 RGB NCHW input tile and produce a 512x512 RGB NCHW output tile.
 Supported models:
 
 - Real-ESRGAN animevideov3 2x: FP16 and INT8
+- Real-ESRGAN general-x4v3 Photo 2x output: FP16 and W8A16 mixed precision
 - Real-CUGAN SE 2x: FP16 and INT8 for no-denoise, denoise1x, denoise2x,
   denoise3x, and conservative
 
@@ -24,6 +25,11 @@ qnn.sdk.dir=/absolute/path/to/qairt/version
 qnn.htp.archs=69,73,75,79,81
 qnn.context.dir=/absolute/path/to/generated/contexts
 ```
+
+Gradle downloads Qualcomm's official `com.qualcomm.qti:qnn-runtime:2.49.0` Android runtime.
+It packages the matching HTP Stub and Skel libraries for v69, v73, v75, v79, and v81, so
+these runtime files do not need to be copied from the local SDK. The SDK path is still needed
+for QNN headers and the model conversion/context generation tools.
 
 Export the upstream PyTorch weights to ONNX with `export_models.py`. The resulting ONNX
 files are development inputs and should not be committed. QNN conversion and quantization

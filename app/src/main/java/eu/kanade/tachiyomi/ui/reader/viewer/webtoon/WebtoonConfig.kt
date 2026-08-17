@@ -122,6 +122,15 @@ class WebtoonConfig(
             }
             .launchIn(scope)
 
+        readerPreferences.realEsrganStyle().changes()
+            .drop(1)
+            .onEach {
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realEsrganStyle changed")
+                eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(appContext)
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
         readerPreferences.realCuganNoiseLevel().changes()
             .drop(1)
             .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganNoiseLevel changed") }

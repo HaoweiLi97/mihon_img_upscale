@@ -103,6 +103,8 @@ class ReaderPreferences(
 
     fun realCuganModel() = preferenceStore.getInt("pref_realcugan_model", 0)
 
+    fun realEsrganStyle() = preferenceStore.getInt("pref_realesrgan_style", 0) // 0: Anime, 1: Photo
+
     fun realCuganPreloadSize() = preferenceStore.getInt("pref_realcugan_preload_size", 3)
 
     fun realCuganProEnabled() = preferenceStore.getBoolean("pref_realcugan_pro_enabled", false)

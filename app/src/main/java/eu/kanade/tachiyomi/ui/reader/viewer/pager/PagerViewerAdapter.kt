@@ -351,14 +351,17 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
     private fun findReaderPage(page: ReaderPage?): ReaderPage? {
         page ?: return null
-        if (page is InsertPage) return page
+        if (page is InsertPage) {
+            return findCurrentInsertPage(subItems, page)
+        }
         return displayReaderPages.firstOrNull { candidate -> candidate.isFromSamePage(page) }
     }
 
     fun getPositionForPage(page: ReaderPage, preferCurrentAsFirstPage: Boolean = false): Int {
         if (page is InsertPage) {
+            val currentInsertPage = findReaderPage(page) ?: return -1
             return joinedItems.indexOfFirst { pair ->
-                pair.first === page || pair.second === page
+                pair.first === currentInsertPage || pair.second === currentInsertPage
             }
         }
         var index = if (preferCurrentAsFirstPage) {
@@ -660,5 +663,11 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
     fun refresh() {
         readerThemedContext = viewer.activity.createReaderThemeContext()
+    }
+}
+
+internal fun findCurrentInsertPage(items: List<ReaderItem>, anchor: InsertPage): InsertPage? {
+    return items.filterIsInstance<InsertPage>().firstOrNull { candidate ->
+        candidate === anchor || candidate.parent.isFromSamePage(anchor.parent)
     }
 }

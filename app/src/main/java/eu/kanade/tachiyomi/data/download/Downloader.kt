@@ -605,13 +605,12 @@ class Downloader(
                 source.getImage(page, file.length()).use { response ->
                     response.body.source().saveTo(file.openOutputStream(response.code == 206))
                     val extension = getImageExtension(response, file)
-                    file.renameTo("$filename.$extension")
+                    emit(finalizeDownloadFile(file, tmpDir, "$filename.$extension"))
                 }
             } catch (e: HttpException) {
                 if (e.code == 416) file.delete()
                 throw e
             }
-            emit(file)
         }
             // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
             .retryWhen { _, attempt ->
@@ -641,9 +640,9 @@ class Downloader(
             }
         }
         val extension = ImageUtil.findImageType(cacheFile.inputStream()) ?: return tmpFile
-        tmpFile.renameTo("$filename.${extension.extension}")
+        val imageFile = finalizeDownloadFile(tmpFile, tmpDir, "$filename.${extension.extension}")
         cacheFile.delete()
-        return tmpFile
+        return imageFile
     }
 
     /**
@@ -744,9 +743,9 @@ class Downloader(
                 )
             }
         }
-        zip.renameTo("$dirname.cbz")
+        val archive = finalizeDownloadFile(zip, mangaDir, "$dirname.cbz")
         tmpDir.delete()
-        return mangaDir.findFile("$dirname.cbz")
+        return archive
     }
 
     private suspend fun maybeEnqueueMetaInfoUpload(
@@ -1153,10 +1152,10 @@ class Downloader(
                 tempDir.findFile(asset.entryName)?.let(writer::write)
             }
         }
-        tempArchive.renameTo(META_INFO_FILE_NAME)
+        val metaInfoFile = finalizeDownloadFile(tempArchive, mangaDir, META_INFO_FILE_NAME)
         tempDir.delete()
 
-        return mangaDir.findFile(META_INFO_FILE_NAME) ?: error("Failed to finalize meta.info")
+        return metaInfoFile
     }
 
     private suspend fun resolveMetaInfoCoverAsset(

@@ -258,6 +258,10 @@ public:
       input_fp16_buffer_.resize(input_elements);
       set_client_buffer(input_, input_fp16_buffer_.data(),
                         input_fp16_buffer_.size() * sizeof(uint16_t));
+    } else if (is_quant16_tensor(input_)) {
+      input_quant16_buffer_.resize(input_elements);
+      set_client_buffer(input_, input_quant16_buffer_.data(),
+                        input_quant16_buffer_.size() * sizeof(uint16_t));
     } else {
       input_quant8_buffer_.resize(input_elements);
       set_client_buffer(input_, input_quant8_buffer_.data(),
@@ -267,6 +271,10 @@ public:
       output_fp16_buffer_.resize(output_elements);
       set_client_buffer(output_, output_fp16_buffer_.data(),
                         output_fp16_buffer_.size() * sizeof(uint16_t));
+    } else if (is_quant16_tensor(output_)) {
+      output_quant16_buffer_.resize(output_elements);
+      set_client_buffer(output_, output_quant16_buffer_.data(),
+                        output_quant16_buffer_.size() * sizeof(uint16_t));
     } else {
       output_quant8_buffer_.resize(output_elements);
       set_client_buffer(output_, output_quant8_buffer_.data(),
@@ -277,7 +285,8 @@ public:
     initialized_ = true;
     LOGD("Loaded QNN graph %s with tile %dx%d, scale %dx, %s IO and padding %d",
          graph_name_.c_str(), tile_size_, tile_size_, scale_,
-         is_fp16_tensor(input_) ? "FP16" : "INT8", padding_);
+         is_fp16_tensor(input_) ? "FP16" : (is_quant16_tensor(input_) ? "INT16" : "INT8"),
+         padding_);
     return true;
   }
 
@@ -365,6 +374,8 @@ public:
     context_ = nullptr;
     input_fp16_buffer_.clear();
     output_fp16_buffer_.clear();
+    input_quant16_buffer_.clear();
+    output_quant16_buffer_.clear();
     input_quant8_buffer_.clear();
     output_quant8_buffer_.clear();
     binary_.clear();
@@ -612,9 +623,18 @@ private:
            tensor.v2.quantizeParams.scaleOffsetEncoding.scale > 0.0f;
   }
 
+  static bool is_quant16_tensor(const Qnn_Tensor_t &tensor) {
+    return tensor.v2.dataType == QNN_DATATYPE_UFIXED_POINT_16 &&
+           tensor.v2.quantizeParams.encodingDefinition == QNN_DEFINITION_DEFINED &&
+           tensor.v2.quantizeParams.quantizationEncoding ==
+               QNN_QUANTIZATION_ENCODING_SCALE_OFFSET &&
+           tensor.v2.quantizeParams.scaleOffsetEncoding.scale > 0.0f;
+  }
+
   static bool validate_tensor(const Qnn_Tensor_t &tensor) {
     return tensor.version == QNN_TENSOR_VERSION_2 && tensor.v2.rank == 4 &&
-           (is_fp16_tensor(tensor) || is_quant8_tensor(tensor)) &&
+           (is_fp16_tensor(tensor) || is_quant8_tensor(tensor) ||
+            is_quant16_tensor(tensor)) &&
            tensor.v2.dimensions[0] == 1 && tensor.v2.dimensions[1] > 0 &&
            tensor.v2.dimensions[2] > 0 && tensor.v2.dimensions[3] == 3;
   }
@@ -629,6 +649,17 @@ private:
   static float dequantize_uint8(uint8_t value, const Qnn_Tensor_t &tensor) {
     const auto &encoding = tensor.v2.quantizeParams.scaleOffsetEncoding;
     return (static_cast<int>(value) + encoding.offset) * encoding.scale;
+  }
+
+  static uint16_t quantize_uint16(float value, const Qnn_Tensor_t &tensor) {
+    const auto &encoding = tensor.v2.quantizeParams.scaleOffsetEncoding;
+    const long quantized = std::lround(value / encoding.scale - encoding.offset);
+    return static_cast<uint16_t>(std::clamp(quantized, 0L, 65535L));
+  }
+
+  static float dequantize_uint16(uint16_t value, const Qnn_Tensor_t &tensor) {
+    const auto &encoding = tensor.v2.quantizeParams.scaleOffsetEncoding;
+    return (static_cast<int32_t>(value) + encoding.offset) * encoding.scale;
   }
 
   static void set_client_buffer(Qnn_Tensor_t &tensor, void *data, uint32_t size) {
@@ -649,6 +680,8 @@ private:
           const float value = pixel[channel] / 255.0f;
           if (is_fp16_tensor(input_)) {
             input_fp16_buffer_[index] = float_to_half(value);
+          } else if (is_quant16_tensor(input_)) {
+            input_quant16_buffer_[index] = quantize_uint16(value, input_);
           } else {
             input_quant8_buffer_[index] = quantize_uint8(value, input_);
           }
@@ -672,9 +705,12 @@ private:
              source_offset + x) * 3;
         for (int channel = 0; channel < 3; ++channel) {
           const size_t index = source_index + channel;
-          const float raw_value = is_fp16_tensor(output_)
-                                      ? half_to_float(output_fp16_buffer_[index])
-                                      : dequantize_uint8(output_quant8_buffer_[index], output_);
+          const float raw_value =
+              is_fp16_tensor(output_)
+                  ? half_to_float(output_fp16_buffer_[index])
+                  : (is_quant16_tensor(output_)
+                         ? dequantize_uint16(output_quant16_buffer_[index], output_)
+                         : dequantize_uint8(output_quant8_buffer_[index], output_));
           const float value = std::clamp(raw_value, 0.0f, 1.0f);
           row[x * 4 + channel] = static_cast<uint8_t>(value * 255.0f + 0.5f);
         }
@@ -704,6 +740,8 @@ private:
   std::vector<uint8_t> binary_;
   std::vector<uint16_t> input_fp16_buffer_;
   std::vector<uint16_t> output_fp16_buffer_;
+  std::vector<uint16_t> input_quant16_buffer_;
+  std::vector<uint16_t> output_quant16_buffer_;
   std::vector<uint8_t> input_quant8_buffer_;
   std::vector<uint8_t> output_quant8_buffer_;
   int padding_ = 0;

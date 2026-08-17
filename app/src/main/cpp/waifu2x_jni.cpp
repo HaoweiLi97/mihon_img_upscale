@@ -587,8 +587,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcessRealCugan(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
-    JNIEnv *env, jobject thiz, jstring model_dir, jint scale, jint precision,
-    jboolean fp16_arithmetic) {
+    JNIEnv *env, jobject thiz, jstring model_dir, jint model_scale,
+    jint output_scale, jint precision, jboolean fp16_arithmetic) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -604,14 +604,16 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
   const char *model_dir_str = env->GetStringUTFChars(model_dir, 0);
   std::string model_path = std::string(model_dir_str);
 
-  // Real-ESRGAN v3 anime uses x2, x3, x4 naming
-  std::string param_file = model_path + "/x" + std::to_string(scale) + ".param";
-  std::string bin_file = model_path + "/x" + std::to_string(scale) + ".bin";
+  // General x4v3 keeps its x4 weights while its graph can resize to 2x.
+  std::string param_file =
+      model_path + "/x" + std::to_string(model_scale) + ".param";
+  std::string bin_file =
+      model_path + "/x" + std::to_string(model_scale) + ".bin";
 
   g_waifu2x = new Waifu2x(0, false, 0, precision,
                           fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->noise = 0;
-  g_waifu2x->scale = scale;
+  g_waifu2x->scale = output_scale;
   g_waifu2x->prepadding = 10; // Real-ESRGAN usually uses smaller padding, 10 is
                               // common in ncnn impls
   g_waifu2x->progress_ptr = &g_progress;
@@ -624,7 +626,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
   if (ret != 0) {
     LOGE("Real-ESRGAN init failed: %s", param_file.c_str());
   } else {
-    LOGD("Real-ESRGAN loaded: x%d", scale);
+    LOGD("Real-ESRGAN loaded: model=x%d output=x%d", model_scale,
+         output_scale);
   }
 
   env->ReleaseStringUTFChars(model_dir, model_dir_str);

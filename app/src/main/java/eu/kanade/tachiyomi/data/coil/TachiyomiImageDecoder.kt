@@ -141,6 +141,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                     noise = preferences.realCuganNoiseLevel().get(),
                                     scale = preferences.realCuganScale().get(),
                                     model = preferences.realCuganModel().get(),
+                                    realEsrganStyle = preferences.realEsrganStyle().get(),
                                     maxWidth = preferences.realCuganMaxSizeWidth().get(),
                                     maxHeight = preferences.realCuganMaxSizeHeight().get(),
                                     skipMaxWidth = preferences.realCuganSkipMaxSizeWidth().get(),
@@ -178,6 +179,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                     // Not in cache or decode failed, perform enhancement on-the-fly
                                     try {
                                         val model = preferences.realCuganModel().get()
+                                        val realEsrganStyle = preferences.realEsrganStyle().get()
                                         val noise = preferences.realCuganNoiseLevel().get()
                                         val scale = preferences.realCuganScale().get()
 
@@ -212,7 +214,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                         val fp16Arithmetic = preferences.realCuganFp16Arithmetic().get()
 
                                         // Validate scale based on model capabilities
-                                        val effectiveScale = ImageEnhancementCache.getEffectiveScale(model, scale)
+                                        val effectiveScale = ImageEnhancementCache.getEffectiveScale(model, scale, realEsrganStyle)
                                         val processingBackend = Waifu2x.resolveProcessingBackend(
                                             preferences.realCuganProcessingBackend().get(),
                                             model,
@@ -264,19 +266,19 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                         val initialized = when (model) {
                                             0 -> Waifu2x.initRealCugan(context, noise, effectiveScale, isPro = false, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic, processingBackend = processingBackend)
                                             1 -> Waifu2x.initRealCugan(context, noise, effectiveScale, isPro = true, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic, processingBackend = processingBackend)
-                                            2 -> Waifu2x.initRealESRGAN(context, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic, processingBackend = processingBackend)
+                                            Waifu2x.MODEL_REAL_ESRGAN_ANIME -> Waifu2x.initRealESRGAN(context, effectiveScale, style = realEsrganStyle, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic, processingBackend = processingBackend)
                                             3 -> Waifu2x.initNose(context, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic)
                                             4 -> Waifu2x.initWaifu2x(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic)
                                             5 -> Waifu2x.initWaifu2xUpconv7(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic)
                                             else -> if (Waifu2x.isW2xExModel(model)) {
-                                                Waifu2x.initW2xEx(context, model, scale = effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic)
+                                                Waifu2x.initW2xEx(context, model, scale = effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic, processingBackend = processingBackend)
                                             } else {
                                                 Waifu2x.initRealCugan(context, noise, effectiveScale, tileSleepMs = tileSleepMs, tileSize = tileSize, precision = precision, fp16Arithmetic = fp16Arithmetic, processingBackend = processingBackend)
                                             }
                                         }
                                         val processed = if (initialized) when (model) {
                                             0, 1 -> Waifu2x.processRealCugan(bitmap, pageIndex)
-                                            2 -> Waifu2x.processRealESRGAN(bitmap, pageIndex)
+                                            Waifu2x.MODEL_REAL_ESRGAN_ANIME -> Waifu2x.processRealESRGAN(bitmap, pageIndex)
                                             3 -> Waifu2x.processNose(bitmap, pageIndex)
                                             4, 5 -> Waifu2x.processWaifu2x(bitmap, pageIndex)
                                             else -> if (Waifu2x.isW2xExModel(model)) {
@@ -384,6 +386,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
             noise = preferences.realCuganNoiseLevel().get(),
             scale = preferences.realCuganScale().get(),
             model = preferences.realCuganModel().get(),
+            realEsrganStyle = preferences.realEsrganStyle().get(),
             maxWidth = preferences.realCuganMaxSizeWidth().get(),
             maxHeight = preferences.realCuganMaxSizeHeight().get(),
             skipMaxWidth = preferences.realCuganSkipMaxSizeWidth().get(),

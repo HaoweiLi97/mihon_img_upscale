@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
  */
 object ImageEnhancementCache {
     private const val CACHE_DIR_NAME = "realcugan_cache"
+    private const val PHOTO_NPU_INT8_CACHE_REVISION = 4
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
     private var lastTrimTime = 0L
@@ -305,6 +306,7 @@ object ImageEnhancementCache {
         noise: Int, 
         scale: Int, 
         model: Int = 0,
+        realEsrganStyle: Int = Waifu2x.REAL_ESRGAN_STYLE_ANIME,
         maxWidth: Int = 0,
         maxHeight: Int = 0,
         skipMaxWidth: Int = 0,
@@ -314,16 +316,27 @@ object ImageEnhancementCache {
         fp16Arithmetic: Boolean = false,
         processingBackend: Int = Waifu2x.PROCESSING_BACKEND_VULKAN,
     ): String {
-        val effectiveScale = getEffectiveScale(model, scale)
+        val effectiveScale = getEffectiveScale(model, scale, realEsrganStyle)
         val resolvedBackend = Waifu2x.resolveProcessingBackend(processingBackend, model, effectiveScale)
         val resolvedPrecision = Waifu2x.resolvePrecision(precision, resolvedBackend, model, effectiveScale)
-        return "${noise}x${effectiveScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${resolvedPrecision}_fa${if (fp16Arithmetic) 1 else 0}_b${resolvedBackend}"
+        val modelRevision = if (
+            model == Waifu2x.MODEL_REAL_ESRGAN_ANIME &&
+            realEsrganStyle == Waifu2x.REAL_ESRGAN_STYLE_PHOTO &&
+            resolvedPrecision == 2 &&
+            resolvedBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU
+        ) {
+            "_mv$PHOTO_NPU_INT8_CACHE_REVISION"
+        } else {
+            ""
+        }
+        return "${noise}x${effectiveScale}_m${model}_rs${realEsrganStyle}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${resolvedPrecision}_fa${if (fp16Arithmetic) 1 else 0}_b${resolvedBackend}$modelRevision"
     }
 
-    fun getEffectiveScale(model: Int, scale: Int): Int {
+    fun getEffectiveScale(model: Int, scale: Int, realEsrganStyle: Int = Waifu2x.REAL_ESRGAN_STYLE_ANIME): Int {
         Waifu2x.w2xExScaleFor(model)?.let { return it }
         return when (model) {
             3, 4, 5 -> 2
+            Waifu2x.MODEL_REAL_ESRGAN_ANIME -> if (realEsrganStyle == Waifu2x.REAL_ESRGAN_STYLE_PHOTO) 2 else scale
             else -> scale
         }
     }

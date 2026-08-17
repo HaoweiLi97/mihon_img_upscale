@@ -204,6 +204,7 @@ internal class HttpPageLoader(
                         noise = preferences.realCuganNoiseLevel().get(),
                         scale = preferences.realCuganScale().get(),
                         model = preferences.realCuganModel().get(),
+                        realEsrganStyle = preferences.realEsrganStyle().get(),
                         maxWidth = preferences.realCuganMaxSizeWidth().get(),
                         maxHeight = preferences.realCuganMaxSizeHeight().get(),
                         skipMaxWidth = preferences.realCuganSkipMaxSizeWidth().get(),

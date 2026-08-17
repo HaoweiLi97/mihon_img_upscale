@@ -17,9 +17,12 @@ object Waifu2x {
 
     const val PROCESSING_BACKEND_VULKAN = 0
     const val PROCESSING_BACKEND_QUALCOMM_NPU = 1
+    const val MODEL_REAL_ESRGAN_ANIME = 2
+    const val REAL_ESRGAN_STYLE_ANIME = 0
+    const val REAL_ESRGAN_STYLE_PHOTO = 1
 
     // Bump when bundled model assets change so existing installations refresh their cache.
-    private const val BUNDLED_MODEL_CACHE_VERSION = "8"
+    private const val BUNDLED_MODEL_CACHE_VERSION = "14"
 
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
@@ -39,15 +42,15 @@ object Waifu2x {
 
     fun init(context: Context, noiseLevel: Int = 2, scale: Int = 2): Boolean {
         if (isInitialized) return true
-        
+
         return synchronized(this) {
             if (isInitialized) return true
-    
+
             val modelDir = extractModelsToCache(context, "waifu2x-models")
             if (modelDir == null) {
                 return false
             }
-    
+
             isInitialized = nativeInit(modelDir, noiseLevel, scale, 0, false)
             if (isInitialized) {
                 // Invalidate all other models
@@ -64,7 +67,7 @@ object Waifu2x {
 
     /**
      * Process a bitmap image with Waifu2x upscaling.
-     * 
+     *
      * @param input Input bitmap (will not be modified)
      * @return Upscaled bitmap, or null if processing failed
      */
@@ -116,25 +119,25 @@ object Waifu2x {
 
         return synchronized(this) {
             val currentConfig = RealCuganConfig(noiseLevel, scale, isPro, resolvedPrecision, fp16Arithmetic, resolvedBackend)
-            
+
             // Force reinit only if model parameters changed (not tileSleepMs)
             if (lastRealCuganConfig != currentConfig) {
                 android.util.Log.d("Waifu2x", "Config changed from $lastRealCuganConfig to $currentConfig, reinitializing...")
                 isRealCuganInitialized = false
             }
-            
+
             if (isRealCuganInitialized) {
                 // Model already loaded, just update performance params
                 nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
                 return true
             }
-    
+
             val assetPath = if (isPro) "realcugan-pro-models" else "realcugan-models"
             val modelDir = extractModelsToCache(context, assetPath)
             if (modelDir == null) {
                 return false
             }
-    
+
             isRealCuganInitialized = nativeInitRealCugan(modelDir, noiseLevel, scale, tileSleepMs, currentConfig.precision, currentConfig.fp16Arithmetic)
             if (isRealCuganInitialized) {
                 if (currentConfig.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
@@ -154,7 +157,7 @@ object Waifu2x {
                 }
                 lastRealCuganConfig = currentConfig
                 nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
-                
+
                 // Invalidate all other models
                 isInitialized = false
                 isRealEsrganInitialized = false
@@ -162,7 +165,7 @@ object Waifu2x {
                 isWaifu2xInitialized = false
                 isAnime4kInitialized = false
                 isW2xExInitialized = false
-                
+
                 android.util.Log.d("Waifu2x", "Initialized Real-CUGAN: isPro=$isPro, noise=$noiseLevel, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${currentConfig.precision}, backend=${backendName(currentConfig.processingBackend)}")
             }
             isRealCuganInitialized
@@ -170,55 +173,77 @@ object Waifu2x {
     }
 
     // Track Real-ESRGAN config
-    private data class RealEsrganConfig(val scale: Int, val precision: Int, val fp16Arithmetic: Boolean, val processingBackend: Int)
+    private data class RealEsrganConfig(val style: Int, val scale: Int, val precision: Int, val fp16Arithmetic: Boolean, val processingBackend: Int)
     private var lastRealEsrganConfig: RealEsrganConfig? = null
 
     fun initRealESRGAN(
         context: Context,
         scale: Int,
+        style: Int = REAL_ESRGAN_STYLE_ANIME,
         tileSleepMs: Int = 0,
         tileSize: Int = 128,
         precision: Int = 0,
         fp16Arithmetic: Boolean = false,
         processingBackend: Int = PROCESSING_BACKEND_VULKAN,
     ): Boolean = synchronized(this) {
-        val resolvedBackend = resolveProcessingBackend(processingBackend, model = 2, scale = scale)
-        val resolvedPrecision = resolvePrecision(precision, resolvedBackend, model = 2, scale = scale)
-        val config = RealEsrganConfig(scale, resolvedPrecision, fp16Arithmetic, resolvedBackend)
+        val isPhotoStyle = style == REAL_ESRGAN_STYLE_PHOTO
+        val outputScale = if (isPhotoStyle) 2 else scale
+        val resolvedBackend = resolveProcessingBackend(processingBackend, MODEL_REAL_ESRGAN_ANIME, outputScale)
+        val resolvedPrecision = resolvePrecision(precision, resolvedBackend, MODEL_REAL_ESRGAN_ANIME, outputScale)
+        val config = RealEsrganConfig(style, outputScale, resolvedPrecision, fp16Arithmetic, resolvedBackend)
         // Force reinit if config changed
         if (lastRealEsrganConfig != config) {
             android.util.Log.d("Waifu2x", "Real-ESRGAN config changed from $lastRealEsrganConfig to $config, reinitializing...")
             isRealEsrganInitialized = false
         }
-        
+
         if (isRealEsrganInitialized) {
             // Update throttling
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
             return true
         }
 
-        // Asset path: realesrgan-models/v3-anime
-        val modelDir = extractModelsToCache(context, "realesrgan-models/v3-anime")
+        val assetPath = if (isPhotoStyle) {
+            "realesrgan-models/v3-general"
+        } else {
+            "realesrgan-models/v3-anime"
+        }
+        val modelDir = extractModelsToCache(context, assetPath)
         if (modelDir == null) {
             return false
         }
 
-        isRealEsrganInitialized = nativeInitRealESRGAN(modelDir, scale, config.precision, config.fp16Arithmetic)
+        val modelScale = if (isPhotoStyle) 4 else outputScale
+        isRealEsrganInitialized = nativeInitRealESRGAN(
+            modelDir,
+            modelScale,
+            outputScale,
+            config.precision,
+            config.fp16Arithmetic,
+        )
         if (isRealEsrganInitialized) {
             if (config.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
                 initializeQnnIfAvailable(
                     context,
-                    if (config.precision == 2) {
-                        "realesrgan-animevideov3-x2-int8"
+                    if (isPhotoStyle) {
+                        if (config.precision == 2) {
+                            "realesrgan-general-x4v3-x2-int8"
+                        } else {
+                            "realesrgan-general-x4v3-x2"
+                        }
                     } else {
-                        "realesrgan-animevideov3-x2"
+                        if (config.precision == 2) {
+                            "realesrgan-animevideov3-x2-int8"
+                        } else {
+                            "realesrgan-animevideov3-x2"
+                        }
                     },
-                    padding = 16,
+                    padding = if (isPhotoStyle) 32 else 16,
                 )
             }
             lastRealEsrganConfig = config
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
-            
+
             // Invalidate all other models
             isInitialized = false
             isRealCuganInitialized = false
@@ -226,8 +251,9 @@ object Waifu2x {
             isWaifu2xInitialized = false
             isAnime4kInitialized = false
             isW2xExInitialized = false
-            
-            android.util.Log.d("Waifu2x", "Initialized Real-ESRGAN: scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}, backend=${backendName(config.processingBackend)}")
+
+            val variant = if (isPhotoStyle) "general-x4v3" else "animevideov3"
+            android.util.Log.d("Waifu2x", "Initialized Real-ESRGAN $variant: outputScale=$outputScale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}, backend=${backendName(config.processingBackend)}")
         }
         isRealEsrganInitialized
     }
@@ -254,7 +280,7 @@ object Waifu2x {
         if (isNoseInitialized) {
             lastNoseConfig = config
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
-            
+
             // Invalidate all other models
             isInitialized = false
             isRealCuganInitialized = false
@@ -262,7 +288,7 @@ object Waifu2x {
             isWaifu2xInitialized = false
             isAnime4kInitialized = false
             isW2xExInitialized = false
-            
+
             android.util.Log.d("Waifu2x", "Initialized Nose model, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}")
         }
         isNoseInitialized
@@ -274,26 +300,26 @@ object Waifu2x {
 
     fun initWaifu2x(context: Context, noise: Int, scale: Int, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(this) {
         val newConfig = Waifu2xConfig(noise, scale, precision.coerceIn(0, 3), fp16Arithmetic)
-        
+
         // Force reinit if config changed
         if (lastWaifu2xConfig != newConfig) {
             android.util.Log.d("Waifu2x", "Waifu2x config changed from $lastWaifu2xConfig to $newConfig, reinitializing...")
             isWaifu2xInitialized = false
         }
-        
+
         if (isWaifu2xInitialized) {
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
             return true
         }
-        
+
         val modelDir = extractModelsToCache(context, "waifu2x-models")
         if (modelDir == null) return false
-        
+
         isWaifu2xInitialized = nativeInit(modelDir, noise, scale, newConfig.precision, newConfig.fp16Arithmetic)
         if (isWaifu2xInitialized) {
             lastWaifu2xConfig = newConfig
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
-            
+
             // Invalidate all other models
             isInitialized = false
             isRealCuganInitialized = false
@@ -301,7 +327,7 @@ object Waifu2x {
             isNoseInitialized = false
             isAnime4kInitialized = false
             isW2xExInitialized = false
-            
+
             android.util.Log.d("Waifu2x", "Initialized Waifu2x: noise=$noise, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${newConfig.precision}")
         }
         isWaifu2xInitialized
@@ -328,7 +354,7 @@ object Waifu2x {
         if (isWaifu2xInitialized) {
             lastWaifu2xConfig = newConfig
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
-            
+
             // Invalidate all other models
             isInitialized = false
             isRealCuganInitialized = false
@@ -336,13 +362,19 @@ object Waifu2x {
             isNoseInitialized = false
             isAnime4kInitialized = false
             isW2xExInitialized = false
-            
+
             android.util.Log.d("Waifu2x", "Initialized Waifu2x UpConv7: noise=$noise, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${newConfig.precision}")
         }
         isWaifu2xInitialized
     }
 
-    private data class W2xExConfig(val model: Int, val scale: Int, val precision: Int, val fp16Arithmetic: Boolean)
+    private data class W2xExConfig(
+        val model: Int,
+        val scale: Int,
+        val precision: Int,
+        val fp16Arithmetic: Boolean,
+        val processingBackend: Int,
+    )
     private var lastW2xExConfig: W2xExConfig? = null
 
     private data class W2xExModel(
@@ -370,13 +402,24 @@ object Waifu2x {
 
     fun isW2xExModel(model: Int): Boolean = w2xExModelFor(model) != null
 
-    fun initW2xEx(context: Context, model: Int, scale: Int = 2, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(this) {
+    fun initW2xEx(
+        context: Context,
+        model: Int,
+        scale: Int = 2,
+        tileSleepMs: Int = 0,
+        tileSize: Int = 128,
+        precision: Int = 0,
+        fp16Arithmetic: Boolean = false,
+        processingBackend: Int = PROCESSING_BACKEND_VULKAN,
+    ): Boolean = synchronized(this) {
         val selectedModel = w2xExModelFor(model) ?: return false
         val effectiveScale = selectedModel.scale
         val modelDir = extractModelsToCache(context, selectedModel.assetPath) ?: return false
         val modelStem = selectedModel.stem
+        val resolvedBackend = resolveProcessingBackend(processingBackend, model, effectiveScale)
+        val resolvedPrecision = resolvePrecision(precision, resolvedBackend, model, effectiveScale)
 
-        val config = W2xExConfig(model, effectiveScale, precision.coerceIn(0, 3), fp16Arithmetic)
+        val config = W2xExConfig(model, effectiveScale, resolvedPrecision, fp16Arithmetic, resolvedBackend)
         if (lastW2xExConfig != config) {
             isW2xExInitialized = false
         }
@@ -404,7 +447,10 @@ object Waifu2x {
             isWaifu2xInitialized = false
             isAnime4kInitialized = false
 
-            android.util.Log.d("Waifu2x", "Initialized generic ncnn model: $modelStem, scale=$effectiveScale, precision=${config.precision}")
+            android.util.Log.d(
+                "Waifu2x",
+                "Initialized generic ncnn model: $modelStem, scale=$effectiveScale, precision=${config.precision}, backend=${backendName(config.processingBackend)}",
+            )
         }
         isW2xExInitialized
     }
@@ -417,7 +463,7 @@ object Waifu2x {
         if (!isRealEsrganInitialized) return null
         return processBitmapHelper(input, id)
     }
-    
+
     fun processNose(input: Bitmap, id: Int = -1): Bitmap? {
         if (!isNoseInitialized) return null
         return processBitmapHelper(input, id)
@@ -432,12 +478,12 @@ object Waifu2x {
         if (!isW2xExInitialized) return null
         return processBitmapHelper(input, id)
     }
-    
+
     @Volatile var processingId: Int = -1
 
     private fun processBitmapHelper(input: Bitmap, id: Int): Bitmap? {
         if (input.isRecycled) return null
-        
+
         val argbBitmap = if (input.config != Bitmap.Config.ARGB_8888) {
             try {
                 input.copy(Bitmap.Config.ARGB_8888, false)
@@ -447,7 +493,7 @@ object Waifu2x {
         } else {
             input
         } ?: return null
-        
+
         processingId = id
         try {
             val result = nativeProcessRealCugan(argbBitmap, id)
@@ -465,7 +511,7 @@ object Waifu2x {
      * Format: [ID (upper 32 bits)] [Progress (lower 32 bits)]
      */
     fun getProgress(): Long = nativeGetProgress()
-    
+
     /**
      * Get only the progress percentage (0-100) from the packed value.
      */
@@ -473,7 +519,7 @@ object Waifu2x {
         val packed = nativeGetProgress()
         return (packed and 0xFFFFFFFF).toInt()
     }
-    
+
     /**
      * Get only the processing ID from the packed value.
      */
@@ -598,7 +644,7 @@ object Waifu2x {
         try {
             return nativeProcessAnime4K(argbBitmap)
         } finally {
-            // We don't recycle argbBitmap if it's the same as input, 
+            // We don't recycle argbBitmap if it's the same as input,
             // but here it's always a copy (true).
             // Actually, nativeProcessAnime4K returns the SAME bitmap (in-place)
             // so we SHOULD NOT recycle it here if it's the result.
@@ -819,7 +865,7 @@ object Waifu2x {
     fun isQualcommNpuAvailable(): Boolean = isQualcommNpuDeviceAvailable
 
     fun isQualcommNpuModelSupported(model: Int, scale: Int): Boolean {
-        return (model == 0 || model == 2) && scale == 2
+        return (model == 0 || model == MODEL_REAL_ESRGAN_ANIME) && scale == 2
     }
 
     fun resolveProcessingBackend(requestedBackend: Int, model: Int, scale: Int): Int {
@@ -839,7 +885,7 @@ object Waifu2x {
         if (resolveProcessingBackend(processingBackend, model, scale) != PROCESSING_BACKEND_QUALCOMM_NPU) {
             return precision
         }
-        return if ((model == 0 || model == 2) && precision == 2) 2 else 0
+        return if (isQualcommNpuModelSupported(model, scale) && precision == 2) 2 else 0
     }
 
     private fun backendName(backend: Int): String {
@@ -859,7 +905,7 @@ object Waifu2x {
             val filename = "$modelName.${target.socModel}.bin"
             val directory = File(context.cacheDir, "qnn-contexts-${target.socModel.lowercase()}").apply { mkdirs() }
             val output = File(directory, filename)
-            val version = File(directory, ".version")
+            val version = File(directory, ".$filename.version")
             if (!output.isFile || version.takeIf(File::isFile)?.readText() != BUNDLED_MODEL_CACHE_VERSION) {
                 context.assets.open("qnn-contexts/$filename").use { input ->
                     output.outputStream().use(input::copyTo)
@@ -921,7 +967,7 @@ object Waifu2x {
     private external fun nativeIsQnnRuntimeAvailable(): Boolean
     private external fun nativeInitQnn(contextPath: String, nativeLibraryDir: String, padding: Int): Boolean
     private external fun nativeIsQnnInitialized(): Boolean
-    
+
     // ... (Anime4K signatures unchanged)
 
     private external fun nativeInitAnime4K(shaders: Array<String>, names: Array<String>): Boolean
@@ -929,14 +975,14 @@ object Waifu2x {
 
     private external fun nativeInitRealCugan(modelDir: String, noiseLevel: Int, scale: Int, tileSleepMs: Int, precision: Int, fp16Arithmetic: Boolean): Boolean
     private external fun nativeUpdatePerformanceConfig(tileSleepMs: Int, tileSize: Int)
-    
+
     fun updatePerformance(tileSleepMs: Int, tileSize: Int) {
         if (isRealCuganInitialized || isRealEsrganInitialized || isNoseInitialized || isWaifu2xInitialized || isW2xExInitialized) {
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
         }
     }
-    
-    private external fun nativeInitRealESRGAN(modelDir: String, scale: Int, precision: Int, fp16Arithmetic: Boolean): Boolean
+
+    private external fun nativeInitRealESRGAN(modelDir: String, modelScale: Int, outputScale: Int, precision: Int, fp16Arithmetic: Boolean): Boolean
     private external fun nativeInitNose(modelDir: String, precision: Int, fp16Arithmetic: Boolean): Boolean
     private external fun nativeProcessRealCugan(input: Bitmap, id: Int): Bitmap?
     private external fun nativeScaleBitmap(input: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap?

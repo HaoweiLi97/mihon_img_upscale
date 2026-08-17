@@ -21,7 +21,8 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 | **Real-CUGAN SE** | 2x / 3x / 4x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
 | **Real-CUGAN Pro** | 2x / 3x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
 | **Real-CUGAN Nose** | 2x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-ESRGAN** | 2x / 3x / 4x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
+| **Real-ESRGAN animevideov3** | 2x / 3x / 4x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
+| **Real-ESRGAN general-x4v3 (Photo)** | 2x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
 | **Waifu2x** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
 | **Waifu2x (Fast)** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
 | **W2xEX Universal Fast** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
@@ -32,7 +33,7 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 
 ## Qualcomm NPU Acceleration
 
-Version 1.3.2 adds an optional Qualcomm QNN/HTP backend alongside the existing Vulkan
+Version 1.3.3 adds an optional Qualcomm QNN/HTP backend alongside the existing Vulkan
 backend. Vulkan and NPU are independent choices in the reader settings. Selecting NPU limits
 the model list to models with compatible offline contexts; unsupported devices keep the NPU
 option disabled and continue to use Vulkan.
@@ -50,16 +51,18 @@ option disabled and continue to use Vulkan.
 | Model | Scale | Precision | Variants |
 | :--- | :---: | :---: | :--- |
 | Real-ESRGAN animevideov3 | 2x | FP16 / INT8 | Standard |
+| Real-ESRGAN general-x4v3 (Photo) | 2x | FP16 / W8A16 | Standard |
 | Real-CUGAN SE | 2x | FP16 / INT8 | No denoise, denoise1x, denoise2x, denoise3x, conservative |
 
 Real-CUGAN SE INT8 has been validated on SM8475 with QNN HTP execution at approximately
 1.6-2.0 seconds per tested manga page. Actual speed depends on image dimensions, model variant,
 thermal state, and device firmware.
 
-NPU-enabled local builds require Qualcomm AI Runtime, the matching HTP Stub libraries, and
-the generated offline contexts. See the [QNN model pipeline](tools/qnn/README.md) for conversion
-and build configuration. When these dependencies are not configured, the project still builds
-as a Vulkan-only version and disables the NPU option.
+NPU-enabled local builds require Qualcomm AI Runtime and the generated offline contexts. The
+matching HTP Stub and Skel libraries are bundled from Qualcomm's official Maven runtime. See the
+[QNN model pipeline](tools/qnn/README.md) for conversion and build configuration. When the local
+SDK or contexts are not configured, the project still builds as a Vulkan-only version and disables
+the NPU option.
 
 ---
 

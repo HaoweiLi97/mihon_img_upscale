@@ -11,10 +11,10 @@ from torch.nn import functional as functional
 
 
 class SrvggNetCompact(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, num_conv: int) -> None:
         super().__init__()
         layers: list[nn.Module] = [nn.Conv2d(3, 64, 3, 1, 1), nn.PReLU(num_parameters=64)]
-        for _ in range(16):
+        for _ in range(num_conv):
             layers.extend((nn.Conv2d(64, 64, 3, 1, 1), nn.PReLU(num_parameters=64)))
         layers.append(nn.Conv2d(64, 3 * 4 * 4, 3, 1, 1))
         self.body = nn.Sequential(*layers)
@@ -25,23 +25,27 @@ class SrvggNetCompact(nn.Module):
 
 
 class RealEsrgan(nn.Module):
-    def __init__(self, weights: Path, scale: int) -> None:
+    def __init__(self, weights: Path, scale: int, num_conv: int) -> None:
         super().__init__()
-        self.model = SrvggNetCompact()
+        self.model = SrvggNetCompact(num_conv)
         self.scale = scale
         checkpoint = torch.load(weights, map_location="cpu", weights_only=True)
-        self.model.load_state_dict(checkpoint["params"], strict=True)
+        params = checkpoint.get("params_ema", checkpoint.get("params"))
+        if params is None:
+            raise RuntimeError(f"No params or params_ema weights in {weights}")
+        self.model.load_state_dict(params, strict=True)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         output_x4 = self.model(image)
-        if self.scale == 4:
-            return output_x4
-        return functional.interpolate(
-            output_x4,
-            scale_factor=self.scale / 4,
-            mode="bilinear",
-            align_corners=False,
-        )
+        output = output_x4
+        if self.scale != 4:
+            output = functional.interpolate(
+                output_x4,
+                scale_factor=self.scale / 4,
+                mode="bilinear",
+                align_corners=False,
+            )
+        return torch.clamp(output, 0, 1)
 
 
 class _CuganFunctionalProxy:
@@ -118,35 +122,53 @@ def export(model: nn.Module, output: Path, tile_size: int, scale: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export Mihon 2x enhancement models for QNN conversion")
-    parser.add_argument("--realesrgan-weights", type=Path, required=True)
-    parser.add_argument("--realcugan-source", type=Path, required=True)
-    parser.add_argument("--realcugan-weights-dir", type=Path, required=True)
+    parser.add_argument("--realesrgan-weights", type=Path)
+    parser.add_argument("--realesrgan-general-weights", type=Path)
+    parser.add_argument("--realcugan-source", type=Path)
+    parser.add_argument("--realcugan-weights-dir", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--tile-size", type=int, default=128)
     parser.add_argument("--scales", type=int, nargs="+", choices=(2, 3, 4), default=(2, 3, 4))
     args = parser.parse_args()
 
-    for scale in args.scales:
-        export(
-            RealEsrgan(args.realesrgan_weights, scale),
-            args.output_dir / f"realesrgan-animevideov3-x{scale}.onnx",
-            args.tile_size,
-            scale,
-        )
+    if not any((args.realesrgan_weights, args.realesrgan_general_weights, args.realcugan_source)):
+        parser.error("Provide at least one model source")
 
-        variants = (
-            ("no-denoise", "denoise3x", "conservative")
-            if scale > 2
-            else ("no-denoise", "denoise1x", "denoise2x", "denoise3x", "conservative")
-        )
-        for variant in variants:
-            weights = args.realcugan_weights_dir / f"up{scale}x-latest-{variant}.pth"
+    if args.realesrgan_weights:
+        for scale in args.scales:
             export(
-                RealCugan(args.realcugan_source, weights, scale),
-                args.output_dir / f"realcugan-se-x{scale}-{variant}.onnx",
+                RealEsrgan(args.realesrgan_weights, scale, num_conv=16),
+                args.output_dir / f"realesrgan-animevideov3-x{scale}.onnx",
                 args.tile_size,
                 scale,
             )
+
+    if args.realesrgan_general_weights and 2 in args.scales:
+        export(
+            RealEsrgan(args.realesrgan_general_weights, 2, num_conv=32),
+            args.output_dir / "realesrgan-general-x4v3-x2.onnx",
+            args.tile_size,
+            2,
+        )
+
+    if args.realcugan_source or args.realcugan_weights_dir:
+        if not args.realcugan_source or not args.realcugan_weights_dir:
+            parser.error("Real-CUGAN export requires both --realcugan-source and --realcugan-weights-dir")
+    if args.realcugan_source and args.realcugan_weights_dir:
+        for scale in args.scales:
+            variants = (
+                ("no-denoise", "denoise3x", "conservative")
+                if scale > 2
+                else ("no-denoise", "denoise1x", "denoise2x", "denoise3x", "conservative")
+            )
+            for variant in variants:
+                weights = args.realcugan_weights_dir / f"up{scale}x-latest-{variant}.pth"
+                export(
+                    RealCugan(args.realcugan_source, weights, scale),
+                    args.output_dir / f"realcugan-se-x{scale}-{variant}.onnx",
+                    args.tile_size,
+                    scale,
+                )
 
 
 if __name__ == "__main__":
