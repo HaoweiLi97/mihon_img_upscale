@@ -1,7 +1,7 @@
 # Qualcomm QNN model pipeline
 
 Supported targets are Snapdragon 8+ Gen 1 through Snapdragon 8 Elite Gen 5. Models use a
-fixed 256x256 RGB NCHW input tile and produce a 512x512 RGB NCHW output tile.
+fixed 256x256 RGB NCHW input tile and produce a 512x512 or 768x768 RGB NCHW output tile.
 
 | Product | SoC | HTP architecture |
 | --- | --- | --- |
@@ -15,8 +15,9 @@ Supported models:
 
 - Real-ESRGAN animevideov3 2x: FP16 and INT8
 - Real-ESRGAN general-x4v3 Photo 2x output: FP16 and W8A16 mixed precision
-- Real-CUGAN SE 2x: FP16 and INT8 for no-denoise, denoise1x, denoise2x,
+- Real-CUGAN SE 2x: FP16 and W8A16 for no-denoise, denoise1x, denoise2x,
   denoise3x, and conservative
+- Real-CUGAN Pro 2x and 3x: FP16 and W8A16 for no-denoise, denoise3x, and conservative
 - W2xEX Photo Small 2x: FP16 and W8A16 mixed precision
 - SPAN NomosUni Photo 2x: FP16 and W8A16 mixed precision
 
@@ -37,6 +38,19 @@ Export the upstream PyTorch weights to ONNX with `export_models.py`. The resulti
 files are development inputs and should not be committed. QNN conversion and quantization
 scripts will consume these fixed-shape graphs and emit Android context binaries. Build the
 amd64 Linux converter environment before running either conversion path:
+
+Real-CUGAN Pro is reconstructed from the official NCNN `models-pro` parameter and FP16 weight
+files because an equivalent upstream PyTorch checkpoint is not published. Export SE and Pro with:
+
+```sh
+python tools/qnn/export_models.py \
+  --realcugan-source "$REALCUGAN_SOURCE/upcunet_v3.py" \
+  --realcugan-weights-dir "$REALCUGAN_WEIGHTS" \
+  --realcugan-pro-model-dir "$REALCUGAN_NCNN/models-pro" \
+  --output-dir "$ONNX_DIR" \
+  --tile-size 256 \
+  --scales 2 3
+```
 
 SPAN export additionally requires `spandrel`, `spandrel-extra-arches`, and `pnnx`. Use
 `export_span_ncnn.py` to create the BGR-compatible NCNN asset; its first layer,
@@ -61,7 +75,7 @@ docker run --rm --platform linux/amd64 \
   convert-qnn-models
 ```
 
-Create calibration inputs and convert the supported x2 models to INT8. The calibration input
+Create calibration inputs and convert the supported models to W8A16. The calibration input
 list paths must match the path mounted inside the converter container.
 
 ```sh

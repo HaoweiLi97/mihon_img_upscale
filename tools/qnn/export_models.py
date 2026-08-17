@@ -2,8 +2,10 @@
 
 import argparse
 import importlib.util
+import struct
 from pathlib import Path
 
+import numpy as np
 import onnx
 import torch
 from torch import nn
@@ -62,10 +64,76 @@ class _CuganFunctionalProxy:
         return functional.pad(image, padding, *args, **kwargs)
 
 
+def load_ncnn_weights(model: nn.Module, model_prefix: Path) -> None:
+    weighted_layers: list[tuple[str, int, int]] = []
+    lines = model_prefix.with_suffix(".param").read_text().splitlines()[2:]
+    for line in lines:
+        fields = line.split()
+        layer_type = fields[0]
+        if layer_type not in ("Convolution", "Deconvolution", "InnerProduct"):
+            continue
+        parameter_start = 4 + int(fields[2]) + int(fields[3])
+        parameters = {
+            int(key): value
+            for field in fields[parameter_start:]
+            if "=" in field
+            for key, value in (field.split("=", 1),)
+        }
+        weight_key = 2 if layer_type == "InnerProduct" else 6
+        bias_key = 1 if layer_type == "InnerProduct" else 5
+        weighted_layers.append(
+            (layer_type, int(parameters[weight_key]), int(parameters.get(bias_key, "0"))),
+        )
+
+    state = model.state_dict()
+    state_items = list(state.items())
+    if len(state_items) != len(weighted_layers) * 2:
+        raise RuntimeError(
+            f"NCNN layer count does not match PyTorch model: {len(weighted_layers)} layers, "
+            f"{len(state_items)} tensors",
+        )
+
+    with model_prefix.with_suffix(".bin").open("rb") as stream:
+        loaded: dict[str, torch.Tensor] = {}
+        for index, (layer_type, weight_count, has_bias) in enumerate(weighted_layers):
+            weight_name, weight_template = state_items[index * 2]
+            bias_name, bias_template = state_items[index * 2 + 1]
+            if not weight_name.endswith(".weight") or not bias_name.endswith(".bias") or not has_bias:
+                raise RuntimeError(f"Unexpected state layout at NCNN layer {index}: {weight_name}, {bias_name}")
+            if weight_template.numel() != weight_count:
+                raise RuntimeError(
+                    f"Weight size mismatch for {weight_name}: NCNN={weight_count}, "
+                    f"PyTorch={weight_template.numel()}",
+                )
+
+            tag_bytes = stream.read(4)
+            if len(tag_bytes) != 4 or struct.unpack("<I", tag_bytes)[0] != 0x01306B47:
+                raise RuntimeError(f"Expected FP16 NCNN weights for {weight_name}")
+            weights = np.frombuffer(stream.read(weight_count * 2), dtype="<f2").astype(np.float32)
+            if weights.size != weight_count:
+                raise RuntimeError(f"Truncated NCNN weights for {weight_name}")
+            if layer_type == "Deconvolution":
+                shape = tuple(weight_template.shape)
+                weights = weights.reshape(shape[1], shape[0], *shape[2:]).transpose(1, 0, 2, 3)
+            else:
+                weights = weights.reshape(tuple(weight_template.shape))
+
+            bias_bytes = stream.read(bias_template.numel() * 4)
+            biases = np.frombuffer(bias_bytes, dtype="<f4").copy()
+            if biases.size != bias_template.numel():
+                raise RuntimeError(f"Truncated NCNN biases for {bias_name}")
+            loaded[weight_name] = torch.from_numpy(weights.copy())
+            loaded[bias_name] = torch.from_numpy(biases.reshape(tuple(bias_template.shape)))
+
+        if stream.read(1):
+            raise RuntimeError(f"Unexpected trailing data in {model_prefix.with_suffix('.bin')}")
+    model.load_state_dict(loaded, strict=True)
+
+
 class RealCugan(nn.Module):
     PADDING = {2: 18, 3: 14, 4: 19}
 
-    def __init__(self, source: Path, weights: Path, scale: int) -> None:
+    def __init__(self, source: Path, scale: int, weights: Path | None = None, ncnn_model: Path | None = None) -> None:
         super().__init__()
         spec = importlib.util.spec_from_file_location("realcugan_upcunet", source)
         if spec is None or spec.loader is None:
@@ -77,8 +145,13 @@ class RealCugan(nn.Module):
         model_class = getattr(module, f"UpCunet{scale}x")
         self.model = model_class()
         self.scale = scale
-        checkpoint = torch.load(weights, map_location="cpu", weights_only=True)
-        self.model.load_state_dict(checkpoint, strict=True)
+        if weights is not None:
+            checkpoint = torch.load(weights, map_location="cpu", weights_only=True)
+            self.model.load_state_dict(checkpoint, strict=True)
+        elif ncnn_model is not None:
+            load_ncnn_weights(self.model, ncnn_model)
+        else:
+            raise ValueError("Real-CUGAN requires PyTorch weights or an NCNN model")
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         padding = self.PADDING[self.scale]
@@ -142,13 +215,22 @@ def main() -> None:
     parser.add_argument("--realesrgan-general-weights", type=Path)
     parser.add_argument("--realcugan-source", type=Path)
     parser.add_argument("--realcugan-weights-dir", type=Path)
+    parser.add_argument("--realcugan-pro-model-dir", type=Path)
     parser.add_argument("--span-weights", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--tile-size", type=int, default=128)
     parser.add_argument("--scales", type=int, nargs="+", choices=(2, 3, 4), default=(2, 3, 4))
     args = parser.parse_args()
 
-    if not any((args.realesrgan_weights, args.realesrgan_general_weights, args.realcugan_source, args.span_weights)):
+    if not any(
+        (
+            args.realesrgan_weights,
+            args.realesrgan_general_weights,
+            args.realcugan_weights_dir,
+            args.realcugan_pro_model_dir,
+            args.span_weights,
+        ),
+    ):
         parser.error("Provide at least one model source")
 
     if args.realesrgan_weights:
@@ -168,10 +250,9 @@ def main() -> None:
             2,
         )
 
-    if args.realcugan_source or args.realcugan_weights_dir:
-        if not args.realcugan_source or not args.realcugan_weights_dir:
-            parser.error("Real-CUGAN export requires both --realcugan-source and --realcugan-weights-dir")
-    if args.realcugan_source and args.realcugan_weights_dir:
+    if args.realcugan_weights_dir and not args.realcugan_source:
+        parser.error("Real-CUGAN SE export requires --realcugan-source")
+    if args.realcugan_weights_dir:
         for scale in args.scales:
             variants = (
                 ("no-denoise", "denoise3x", "conservative")
@@ -181,8 +262,21 @@ def main() -> None:
             for variant in variants:
                 weights = args.realcugan_weights_dir / f"up{scale}x-latest-{variant}.pth"
                 export(
-                    RealCugan(args.realcugan_source, weights, scale),
+                    RealCugan(args.realcugan_source, scale, weights=weights),
                     args.output_dir / f"realcugan-se-x{scale}-{variant}.onnx",
+                    args.tile_size,
+                    scale,
+                )
+
+    if args.realcugan_pro_model_dir:
+        if not args.realcugan_source:
+            parser.error("Real-CUGAN Pro export requires --realcugan-source")
+        for scale in (candidate for candidate in args.scales if candidate in (2, 3)):
+            for variant in ("no-denoise", "denoise3x", "conservative"):
+                model_prefix = args.realcugan_pro_model_dir / f"up{scale}x-{variant}"
+                export(
+                    RealCugan(args.realcugan_source, scale, ncnn_model=model_prefix),
+                    args.output_dir / f"realcugan-pro-x{scale}-{variant}.onnx",
                     args.tile_size,
                     scale,
                 )

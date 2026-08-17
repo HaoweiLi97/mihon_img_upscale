@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 object ImageEnhancementCache {
     private const val CACHE_DIR_NAME = "realcugan_cache"
     private const val PHOTO_NPU_INT8_CACHE_REVISION = 4
+    private const val REAL_CUGAN_NPU_INT8_CACHE_REVISION = 1
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
     private var lastTrimTime = 0L
@@ -326,6 +327,12 @@ object ImageEnhancementCache {
             resolvedBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU
         ) {
             "_mv$PHOTO_NPU_INT8_CACHE_REVISION"
+        } else if (
+            (model == 0 || model == 1) &&
+            resolvedPrecision == 2 &&
+            resolvedBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU
+        ) {
+            "_cv$REAL_CUGAN_NPU_INT8_CACHE_REVISION"
         } else {
             ""
         }

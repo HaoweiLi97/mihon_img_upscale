@@ -71,6 +71,18 @@ val qnnModelNames = listOf(
     "realcugan-se-x2-denoise2x-int8",
     "realcugan-se-x2-denoise3x-int8",
     "realcugan-se-x2-conservative-int8",
+    "realcugan-pro-x2-no-denoise",
+    "realcugan-pro-x2-denoise3x",
+    "realcugan-pro-x2-conservative",
+    "realcugan-pro-x2-no-denoise-int8",
+    "realcugan-pro-x2-denoise3x-int8",
+    "realcugan-pro-x2-conservative-int8",
+    "realcugan-pro-x3-no-denoise",
+    "realcugan-pro-x3-denoise3x",
+    "realcugan-pro-x3-conservative",
+    "realcugan-pro-x3-no-denoise-int8",
+    "realcugan-pro-x3-denoise3x-int8",
+    "realcugan-pro-x3-conservative-int8",
     "span-nomosuni-x2",
     "span-nomosuni-x2-int8",
     "w2xex-photo-small-x2",
@@ -102,8 +114,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 31
-        versionName = "1.3.4"
+        versionCode = 32
+        versionName = "1.3.5"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")

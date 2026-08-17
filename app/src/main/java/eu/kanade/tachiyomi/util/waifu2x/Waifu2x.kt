@@ -25,7 +25,7 @@ object Waifu2x {
 
     // Bump when bundled model assets change so existing installations refresh their cache.
     private const val BUNDLED_MODEL_CACHE_VERSION = "14"
-    private const val QNN_CONTEXT_CACHE_VERSION = "16"
+    private const val QNN_CONTEXT_CACHE_VERSION = "17"
 
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
@@ -109,10 +109,18 @@ object Waifu2x {
         fp16Arithmetic: Boolean = false,
         processingBackend: Int = PROCESSING_BACKEND_VULKAN,
     ): Boolean {
+        val effectiveNoiseLevel = if (isPro && noiseLevel !in setOf(0, 3, 4)) 3 else noiseLevel
         val model = if (isPro) 1 else 0
         val resolvedBackend = resolveProcessingBackend(processingBackend, model, scale)
         val resolvedPrecision = resolvePrecision(precision, resolvedBackend, model, scale)
-        val newConfig = RealCuganConfig(noiseLevel, scale, isPro, resolvedPrecision, fp16Arithmetic, resolvedBackend)
+        val newConfig = RealCuganConfig(
+            effectiveNoiseLevel,
+            scale,
+            isPro,
+            resolvedPrecision,
+            fp16Arithmetic,
+            resolvedBackend,
+        )
 
         // Fast path: if already initialized with same config, just update performance params and return
         if (isRealCuganInitialized && lastRealCuganConfig == newConfig) {
@@ -121,7 +129,14 @@ object Waifu2x {
         }
 
         return synchronized(this) {
-            val currentConfig = RealCuganConfig(noiseLevel, scale, isPro, resolvedPrecision, fp16Arithmetic, resolvedBackend)
+            val currentConfig = RealCuganConfig(
+                effectiveNoiseLevel,
+                scale,
+                isPro,
+                resolvedPrecision,
+                fp16Arithmetic,
+                resolvedBackend,
+            )
 
             // Force reinit only if model parameters changed (not tileSleepMs)
             if (lastRealCuganConfig != currentConfig) {
@@ -141,10 +156,17 @@ object Waifu2x {
                 return false
             }
 
-            isRealCuganInitialized = nativeInitRealCugan(modelDir, noiseLevel, scale, tileSleepMs, currentConfig.precision, currentConfig.fp16Arithmetic)
+            isRealCuganInitialized = nativeInitRealCugan(
+                modelDir,
+                effectiveNoiseLevel,
+                scale,
+                tileSleepMs,
+                currentConfig.precision,
+                currentConfig.fp16Arithmetic,
+            )
             if (isRealCuganInitialized) {
                 if (currentConfig.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
-                    val variant = when (noiseLevel) {
+                    val variant = when (effectiveNoiseLevel) {
                         1 -> "denoise1x"
                         2 -> "denoise2x"
                         3 -> "denoise3x"
@@ -152,10 +174,11 @@ object Waifu2x {
                         else -> "no-denoise"
                     }
                     val precisionSuffix = if (currentConfig.precision == 2) "-int8" else ""
+                    val family = if (isPro) "pro" else "se"
                     initializeQnnIfAvailable(
                         context,
-                        "realcugan-se-x2-$variant$precisionSuffix",
-                        padding = 18,
+                        "realcugan-$family-x$scale-$variant$precisionSuffix",
+                        padding = if (scale == 3) 14 else 18,
                     )
                 }
                 lastRealCuganConfig = currentConfig
@@ -169,7 +192,12 @@ object Waifu2x {
                 isAnime4kInitialized = false
                 isW2xExInitialized = false
 
-                android.util.Log.d("Waifu2x", "Initialized Real-CUGAN: isPro=$isPro, noise=$noiseLevel, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${currentConfig.precision}, backend=${backendName(currentConfig.processingBackend)}")
+                android.util.Log.d(
+                    "Waifu2x",
+                    "Initialized Real-CUGAN: isPro=$isPro, noise=$effectiveNoiseLevel, scale=$scale, " +
+                        "tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${currentConfig.precision}, " +
+                        "backend=${backendName(currentConfig.processingBackend)}",
+                )
             }
             isRealCuganInitialized
         }
@@ -889,6 +917,7 @@ object Waifu2x {
     fun isQualcommNpuAvailable(): Boolean = isQualcommNpuDeviceAvailable
 
     fun isQualcommNpuModelSupported(model: Int, scale: Int): Boolean {
+        if (model == 1) return scale == 2 || scale == 3
         if (scale != 2) return false
         return model == 0 ||
             model == MODEL_REAL_ESRGAN_ANIME ||

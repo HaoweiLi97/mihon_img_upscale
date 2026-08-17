@@ -167,15 +167,24 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             if (useQualcommNpu) {
                 if (
                     realCuganModel != 0 &&
+                    realCuganModel != 1 &&
                     realCuganModel != Waifu2x.MODEL_REAL_ESRGAN_ANIME &&
                     realCuganModel != Waifu2x.MODEL_W2XEX_PHOTO_SMALL &&
                     realCuganModel != Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO
                 ) {
                     screenModel.preferences.realCuganModel().set(0)
                 }
-                if (realCuganScale != 2) {
+                if (
+                    (realCuganModel == 1 && realCuganScale !in 2..3) ||
+                    (realCuganModel != 1 && realCuganScale != 2)
+                ) {
                     screenModel.preferences.realCuganScale().set(2)
                 }
+            }
+        }
+        LaunchedEffect(realCuganModel, realCuganNoiseLevel) {
+            if (realCuganModel == 1 && realCuganNoiseLevel !in setOf(0, 3, 4)) {
+                screenModel.preferences.realCuganNoiseLevel().set(3)
             }
         }
 
@@ -201,6 +210,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             val models = if (useQualcommNpu) {
                 listOf(
                     0 to "Real-CUGAN SE",
+                    1 to "Real-CUGAN Pro",
                     Waifu2x.MODEL_REAL_ESRGAN_ANIME to "Real-ESRGAN",
                     Waifu2x.MODEL_W2XEX_PHOTO_SMALL to "W2xEX Photo Small",
                     Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO to "SPAN NomosUni Photo",
@@ -278,7 +288,9 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
 
         val fixedW2xExScale = Waifu2x.w2xExScaleFor(realCuganModel)
-        if (useQualcommNpu || realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 ||
+        if (
+            (useQualcommNpu && realCuganModel != 1) ||
+            realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 ||
             (realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME && realEsrganStyle == Waifu2x.REAL_ESRGAN_STYLE_PHOTO) ||
             fixedW2xExScale == 2
         ) {
@@ -370,6 +382,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         val supportedPrecisions = if (useQualcommNpu) {
             if (
                 realCuganModel == 0 ||
+                realCuganModel == 1 ||
                 realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME ||
                 realCuganModel == Waifu2x.MODEL_W2XEX_PHOTO_SMALL ||
                 realCuganModel == Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO

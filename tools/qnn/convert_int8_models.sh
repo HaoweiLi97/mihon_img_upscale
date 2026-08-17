@@ -19,6 +19,12 @@ models=${QNN_MODELS:-"\
     realcugan-se-x2-denoise2x \
     realcugan-se-x2-denoise3x \
     realcugan-se-x2-conservative \
+    realcugan-pro-x2-no-denoise \
+    realcugan-pro-x2-denoise3x \
+    realcugan-pro-x2-conservative \
+    realcugan-pro-x3-no-denoise \
+    realcugan-pro-x3-denoise3x \
+    realcugan-pro-x3-conservative \
     span-nomosuni-x2 \
     w2xex-photo-small-x2"}
 
@@ -30,7 +36,7 @@ for name in $models; do
     fi
     act_bitwidth=8
     case "$name" in
-        realesrgan-general-x4v3-x2|span-nomosuni-x2|w2xex-photo-small-x2)
+        realesrgan-general-x4v3-x2|realcugan-se-*|realcugan-pro-*|span-nomosuni-x2|w2xex-photo-small-x2)
             # Photo-oriented models accumulate visible artifacts with 8-bit activations.
             # Keep 8-bit weights but use 16-bit activations for image quality.
             act_bitwidth=16
