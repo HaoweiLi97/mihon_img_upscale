@@ -312,9 +312,12 @@ object ImageEnhancementCache {
         tileSize: Int = 128,
         precision: Int = 0,
         fp16Arithmetic: Boolean = false,
+        processingBackend: Int = Waifu2x.PROCESSING_BACKEND_VULKAN,
     ): String {
         val effectiveScale = getEffectiveScale(model, scale)
-        return "${noise}x${effectiveScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${precision}_fa${if (fp16Arithmetic) 1 else 0}"
+        val resolvedBackend = Waifu2x.resolveProcessingBackend(processingBackend, model, effectiveScale)
+        val resolvedPrecision = Waifu2x.resolvePrecision(precision, resolvedBackend, model, effectiveScale)
+        return "${noise}x${effectiveScale}_m${model}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${resolvedPrecision}_fa${if (fp16Arithmetic) 1 else 0}_b${resolvedBackend}"
     }
 
     fun getEffectiveScale(model: Int, scale: Int): Int {

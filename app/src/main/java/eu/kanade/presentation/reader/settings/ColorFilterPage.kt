@@ -153,21 +153,66 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         val realCuganModel by screenModel.preferences.realCuganModel().collectAsState()
         val realCuganNoiseLevel by screenModel.preferences.realCuganNoiseLevel().collectAsState()
         val realCuganScale by screenModel.preferences.realCuganScale().collectAsState()
+        val processingBackend by screenModel.preferences.realCuganProcessingBackend().collectAsState()
+        val npuDeviceAvailable = remember { Waifu2x.isQualcommNpuAvailable() }
+        val useQualcommNpu = processingBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU && npuDeviceAvailable
+
+        LaunchedEffect(npuDeviceAvailable, processingBackend) {
+            if (!npuDeviceAvailable && processingBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU) {
+                screenModel.preferences.realCuganProcessingBackend().set(Waifu2x.PROCESSING_BACKEND_VULKAN)
+            }
+        }
+        LaunchedEffect(useQualcommNpu, realCuganModel, realCuganScale) {
+            if (useQualcommNpu) {
+                if (realCuganModel != 0 && realCuganModel != 2) {
+                    screenModel.preferences.realCuganModel().set(0)
+                }
+                if (realCuganScale != 2) {
+                    screenModel.preferences.realCuganScale().set(2)
+                }
+            }
+        }
+
+        SettingsChipRow(stringResource(MR.strings.reader_processing_backend)) {
+            FilterChip(
+                selected = processingBackend == Waifu2x.PROCESSING_BACKEND_VULKAN,
+                onClick = {
+                    screenModel.preferences.realCuganProcessingBackend().set(Waifu2x.PROCESSING_BACKEND_VULKAN)
+                },
+                label = { Text(stringResource(MR.strings.reader_backend_vulkan)) },
+            )
+            FilterChip(
+                selected = useQualcommNpu,
+                onClick = {
+                    screenModel.preferences.realCuganProcessingBackend().set(Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU)
+                },
+                enabled = npuDeviceAvailable,
+                label = { Text(stringResource(MR.strings.reader_backend_qualcomm_npu)) },
+            )
+        }
 
         SettingsChipRow(stringResource(MR.strings.reader_model)) {
-            listOf(
-                0 to "Real-CUGAN SE",
-                1 to "Real-CUGAN Pro",
-                2 to "Real-ESRGAN",
-                3 to "Real-CUGAN Nose",
-                4 to "Waifu2x",
-                5 to "Waifu2x (Fast)",
-                6 to "W2xEX Universal Fast",
-                8 to "W2xEX Omni Mini V2",
-                9 to "W2xEX Photo Small",
-                16 to "AnimeJaNai v2 UltraCompact",
-                18 to "sudo UltraCompact",
-            ).map { (modelId, name) ->
+            val models = if (useQualcommNpu) {
+                listOf(
+                    0 to "Real-CUGAN SE",
+                    2 to "Real-ESRGAN",
+                )
+            } else {
+                listOf(
+                    0 to "Real-CUGAN SE",
+                    1 to "Real-CUGAN Pro",
+                    2 to "Real-ESRGAN",
+                    3 to "Real-CUGAN Nose",
+                    4 to "Waifu2x",
+                    5 to "Waifu2x (Fast)",
+                    6 to "W2xEX Universal Fast",
+                    8 to "W2xEX Omni Mini V2",
+                    9 to "W2xEX Photo Small",
+                    16 to "AnimeJaNai v2 UltraCompact",
+                    18 to "sudo UltraCompact",
+                )
+            }
+            models.map { (modelId, name) ->
                 FilterChip(
                     selected = realCuganModel == modelId,
                     onClick = { screenModel.preferences.realCuganModel().set(modelId) },
@@ -199,7 +244,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
 
         val fixedW2xExScale = Waifu2x.w2xExScaleFor(realCuganModel)
-        if (realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 || fixedW2xExScale == 2) {
+        if (useQualcommNpu || realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 || fixedW2xExScale == 2) {
              SettingsChipRow(stringResource(MR.strings.reader_scale_factor)) {
                   FilterChip(
                       selected = true,
@@ -248,40 +293,52 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        SettingsChipRow(stringResource(MR.strings.reader_gpu_performance_mode)) {
-            val performanceMode by screenModel.preferences.realCuganPerformanceMode().collectAsState()
-            listOf(
-                0 to stringResource(MR.strings.reader_gpu_performance_high),
-                1 to stringResource(MR.strings.reader_gpu_performance_balanced),
-                2 to stringResource(MR.strings.reader_gpu_performance_power_saving),
-            ).map { (value, name) ->
-                FilterChip(
-                    selected = performanceMode == value,
-                    onClick = { screenModel.preferences.realCuganPerformanceMode().set(value) },
-                    label = { Text(name) },
-                )
+        if (!useQualcommNpu) {
+            SettingsChipRow(stringResource(MR.strings.reader_gpu_performance_mode)) {
+                val performanceMode by screenModel.preferences.realCuganPerformanceMode().collectAsState()
+                listOf(
+                    0 to stringResource(MR.strings.reader_gpu_performance_high),
+                    1 to stringResource(MR.strings.reader_gpu_performance_balanced),
+                    2 to stringResource(MR.strings.reader_gpu_performance_power_saving),
+                ).map { (value, name) ->
+                    FilterChip(
+                        selected = performanceMode == value,
+                        onClick = { screenModel.preferences.realCuganPerformanceMode().set(value) },
+                        label = { Text(name) },
+                    )
+                }
             }
-        }
 
-        SettingsChipRow(stringResource(MR.strings.reader_tile_size)) {
-            val tileSize by screenModel.preferences.realCuganTileSize().collectAsState()
-            listOf(64, 96, 128, 192, 256).map { value ->
-                FilterChip(
-                    selected = tileSize == value,
-                    onClick = { screenModel.preferences.realCuganTileSize().set(value) },
-                    label = { Text(value.toString()) },
-                )
+            SettingsChipRow(stringResource(MR.strings.reader_tile_size)) {
+                val tileSize by screenModel.preferences.realCuganTileSize().collectAsState()
+                listOf(64, 96, 128, 192, 256).map { value ->
+                    FilterChip(
+                        selected = tileSize == value,
+                        onClick = { screenModel.preferences.realCuganTileSize().set(value) },
+                        label = { Text(value.toString()) },
+                    )
+                }
             }
         }
 
         val precision by screenModel.preferences.realCuganPrecision().collectAsState()
+        val supportedPrecisions = if (useQualcommNpu) {
+            if (realCuganModel == 2) listOf(0, 2) else listOf(0)
+        } else {
+            listOf(0, 1, 2, 3)
+        }
+        LaunchedEffect(useQualcommNpu, realCuganModel, precision) {
+            if (precision !in supportedPrecisions) {
+                screenModel.preferences.realCuganPrecision().set(0)
+            }
+        }
         SettingsChipRow(stringResource(MR.strings.reader_precision)) {
             listOf(
                 0 to stringResource(MR.strings.reader_precision_fp16),
                 1 to stringResource(MR.strings.reader_precision_fp32),
                 2 to stringResource(MR.strings.reader_precision_int8),
                 3 to stringResource(MR.strings.reader_precision_bf16),
-            ).map { (value, name) ->
+            ).filter { (value, _) -> value in supportedPrecisions }.map { (value, name) ->
                 FilterChip(
                     selected = precision == value,
                     onClick = { screenModel.preferences.realCuganPrecision().set(value) },
@@ -290,7 +347,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             }
         }
 
-        if (precision == 0) {
+        if (!useQualcommNpu && precision == 0) {
             CheckboxItem(
                 label = stringResource(MR.strings.reader_fp16_arithmetic),
                 pref = screenModel.preferences.realCuganFp16Arithmetic(),

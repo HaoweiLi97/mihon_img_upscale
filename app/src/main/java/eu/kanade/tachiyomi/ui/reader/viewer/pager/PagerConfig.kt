@@ -207,6 +207,15 @@ class PagerConfig(
             }
             .launchIn(scope)
 
+        readerPreferences.realCuganProcessingBackend().changes()
+            .drop(1)
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganProcessingBackend changed") }
+            .debounce(500)
+            .onEach {
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
         readerPreferences.realCuganFp16Arithmetic().changes()
             .drop(1)
             .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganFp16Arithmetic changed") }

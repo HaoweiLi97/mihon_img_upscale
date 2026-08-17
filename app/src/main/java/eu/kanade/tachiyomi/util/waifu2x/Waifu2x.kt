@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.util.waifu2x
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import java.io.BufferedInputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -14,8 +15,11 @@ import java.util.zip.ZipInputStream
  */
 object Waifu2x {
 
+    const val PROCESSING_BACKEND_VULKAN = 0
+    const val PROCESSING_BACKEND_QUALCOMM_NPU = 1
+
     // Bump when bundled model assets change so existing installations refresh their cache.
-    private const val BUNDLED_MODEL_CACHE_VERSION = "4"
+    private const val BUNDLED_MODEL_CACHE_VERSION = "7"
 
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
@@ -78,11 +82,31 @@ object Waifu2x {
     }
 
     // Track current config to detect changes (excludes tileSleepMs since that doesn't require model reload)
-    private data class RealCuganConfig(val noise: Int, val scale: Int, val isPro: Boolean, val precision: Int, val fp16Arithmetic: Boolean)
+    private data class RealCuganConfig(
+        val noise: Int,
+        val scale: Int,
+        val isPro: Boolean,
+        val precision: Int,
+        val fp16Arithmetic: Boolean,
+        val processingBackend: Int,
+    )
     @Volatile private var lastRealCuganConfig: RealCuganConfig? = null
 
-    fun initRealCugan(context: Context, noiseLevel: Int, scale: Int, isPro: Boolean = false, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean {
-        val newConfig = RealCuganConfig(noiseLevel, scale, isPro, precision.coerceIn(0, 3), fp16Arithmetic)
+    fun initRealCugan(
+        context: Context,
+        noiseLevel: Int,
+        scale: Int,
+        isPro: Boolean = false,
+        tileSleepMs: Int = 0,
+        tileSize: Int = 128,
+        precision: Int = 0,
+        fp16Arithmetic: Boolean = false,
+        processingBackend: Int = PROCESSING_BACKEND_VULKAN,
+    ): Boolean {
+        val model = if (isPro) 1 else 0
+        val resolvedBackend = resolveProcessingBackend(processingBackend, model, scale)
+        val resolvedPrecision = resolvePrecision(precision, resolvedBackend, model, scale)
+        val newConfig = RealCuganConfig(noiseLevel, scale, isPro, resolvedPrecision, fp16Arithmetic, resolvedBackend)
 
         // Fast path: if already initialized with same config, just update performance params and return
         if (isRealCuganInitialized && lastRealCuganConfig == newConfig) {
@@ -91,7 +115,7 @@ object Waifu2x {
         }
 
         return synchronized(this) {
-            val currentConfig = RealCuganConfig(noiseLevel, scale, isPro, precision.coerceIn(0, 3), fp16Arithmetic)
+            val currentConfig = RealCuganConfig(noiseLevel, scale, isPro, resolvedPrecision, fp16Arithmetic, resolvedBackend)
             
             // Force reinit only if model parameters changed (not tileSleepMs)
             if (lastRealCuganConfig != currentConfig) {
@@ -113,6 +137,20 @@ object Waifu2x {
     
             isRealCuganInitialized = nativeInitRealCugan(modelDir, noiseLevel, scale, tileSleepMs, currentConfig.precision, currentConfig.fp16Arithmetic)
             if (isRealCuganInitialized) {
+                if (currentConfig.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
+                    val variant = when (noiseLevel) {
+                        1 -> "denoise1x"
+                        2 -> "denoise2x"
+                        3 -> "denoise3x"
+                        4 -> "conservative"
+                        else -> "no-denoise"
+                    }
+                    initializeQnnIfAvailable(
+                        context,
+                        "realcugan-se-x2-$variant",
+                        padding = 18,
+                    )
+                }
                 lastRealCuganConfig = currentConfig
                 nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
                 
@@ -124,18 +162,28 @@ object Waifu2x {
                 isAnime4kInitialized = false
                 isW2xExInitialized = false
                 
-                android.util.Log.d("Waifu2x", "Initialized Real-CUGAN: isPro=$isPro, noise=$noiseLevel, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${currentConfig.precision}")
+                android.util.Log.d("Waifu2x", "Initialized Real-CUGAN: isPro=$isPro, noise=$noiseLevel, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${currentConfig.precision}, backend=${backendName(currentConfig.processingBackend)}")
             }
             isRealCuganInitialized
         }
     }
 
     // Track Real-ESRGAN config
-    private data class RealEsrganConfig(val scale: Int, val precision: Int, val fp16Arithmetic: Boolean)
+    private data class RealEsrganConfig(val scale: Int, val precision: Int, val fp16Arithmetic: Boolean, val processingBackend: Int)
     private var lastRealEsrganConfig: RealEsrganConfig? = null
 
-    fun initRealESRGAN(context: Context, scale: Int, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(this) {
-        val config = RealEsrganConfig(scale, precision.coerceIn(0, 3), fp16Arithmetic)
+    fun initRealESRGAN(
+        context: Context,
+        scale: Int,
+        tileSleepMs: Int = 0,
+        tileSize: Int = 128,
+        precision: Int = 0,
+        fp16Arithmetic: Boolean = false,
+        processingBackend: Int = PROCESSING_BACKEND_VULKAN,
+    ): Boolean = synchronized(this) {
+        val resolvedBackend = resolveProcessingBackend(processingBackend, model = 2, scale = scale)
+        val resolvedPrecision = resolvePrecision(precision, resolvedBackend, model = 2, scale = scale)
+        val config = RealEsrganConfig(scale, resolvedPrecision, fp16Arithmetic, resolvedBackend)
         // Force reinit if config changed
         if (lastRealEsrganConfig != config) {
             android.util.Log.d("Waifu2x", "Real-ESRGAN config changed from $lastRealEsrganConfig to $config, reinitializing...")
@@ -156,6 +204,17 @@ object Waifu2x {
 
         isRealEsrganInitialized = nativeInitRealESRGAN(modelDir, scale, config.precision, config.fp16Arithmetic)
         if (isRealEsrganInitialized) {
+            if (config.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
+                initializeQnnIfAvailable(
+                    context,
+                    if (config.precision == 2) {
+                        "realesrgan-animevideov3-x2-int8"
+                    } else {
+                        "realesrgan-animevideov3-x2"
+                    },
+                    padding = 16,
+                )
+            }
             lastRealEsrganConfig = config
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
             
@@ -167,7 +226,7 @@ object Waifu2x {
             isAnime4kInitialized = false
             isW2xExInitialized = false
             
-            android.util.Log.d("Waifu2x", "Initialized Real-ESRGAN: scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}")
+            android.util.Log.d("Waifu2x", "Initialized Real-ESRGAN: scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}, backend=${backendName(config.processingBackend)}")
         }
         isRealEsrganInitialized
     }
@@ -731,6 +790,95 @@ object Waifu2x {
         nativeSetUiBusy(busy)
     }
 
+    fun isQnnRuntimeAvailable(): Boolean = try {
+        nativeIsQnnRuntimeAvailable()
+    } catch (_: UnsatisfiedLinkError) {
+        false
+    }
+
+    private data class QnnTarget(val socModel: String, val htpArch: Int)
+
+    private val qnnTarget: QnnTarget? by lazy {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@lazy null
+        val socModel = Build.SOC_MODEL.uppercase()
+        when {
+            socModel.startsWith("SM8475") -> QnnTarget("SM8475", 69)
+            socModel.startsWith("SM8550") -> QnnTarget("SM8550", 73)
+            socModel.startsWith("SM8650") -> QnnTarget("SM8650", 75)
+            socModel.startsWith("SM8750") -> QnnTarget("SM8750", 79)
+            socModel.startsWith("SM8850") -> QnnTarget("SM8850", 81)
+            else -> null
+        }
+    }
+
+    private val isQualcommNpuDeviceAvailable: Boolean by lazy {
+        qnnTarget != null && isQnnRuntimeAvailable()
+    }
+
+    fun isQualcommNpuAvailable(): Boolean = isQualcommNpuDeviceAvailable
+
+    fun isQualcommNpuModelSupported(model: Int, scale: Int): Boolean {
+        return (model == 0 || model == 2) && scale == 2
+    }
+
+    fun resolveProcessingBackend(requestedBackend: Int, model: Int, scale: Int): Int {
+        return if (
+            requestedBackend == PROCESSING_BACKEND_QUALCOMM_NPU &&
+            isQualcommNpuModelSupported(model, scale) &&
+            isQualcommNpuAvailable()
+        ) {
+            PROCESSING_BACKEND_QUALCOMM_NPU
+        } else {
+            PROCESSING_BACKEND_VULKAN
+        }
+    }
+
+    fun resolvePrecision(requestedPrecision: Int, processingBackend: Int, model: Int, scale: Int): Int {
+        val precision = requestedPrecision.coerceIn(0, 3)
+        if (resolveProcessingBackend(processingBackend, model, scale) != PROCESSING_BACKEND_QUALCOMM_NPU) {
+            return precision
+        }
+        return if (model == 2 && precision == 2) 2 else 0
+    }
+
+    private fun backendName(backend: Int): String {
+        return if (backend == PROCESSING_BACKEND_QUALCOMM_NPU) "Qualcomm NPU" else "Vulkan"
+    }
+
+    fun isQnnActive(): Boolean = try {
+        nativeIsQnnInitialized()
+    } catch (_: UnsatisfiedLinkError) {
+        false
+    }
+
+    private fun initializeQnnIfAvailable(context: Context, modelName: String, padding: Int) {
+        val target = qnnTarget ?: return
+        if (!isQnnRuntimeAvailable()) return
+        try {
+            val filename = "$modelName.${target.socModel}.bin"
+            val directory = File(context.cacheDir, "qnn-contexts-${target.socModel.lowercase()}").apply { mkdirs() }
+            val output = File(directory, filename)
+            val version = File(directory, ".version")
+            if (!output.isFile || version.takeIf(File::isFile)?.readText() != BUNDLED_MODEL_CACHE_VERSION) {
+                context.assets.open("qnn-contexts/$filename").use { input ->
+                    output.outputStream().use(input::copyTo)
+                }
+                version.writeText(BUNDLED_MODEL_CACHE_VERSION)
+            }
+            val active = nativeInitQnn(
+                output.absolutePath,
+                context.applicationInfo.nativeLibraryDir,
+                padding,
+            )
+            android.util.Log.d(
+                "Waifu2x",
+                "Qualcomm NPU ${if (active) "enabled" else "unavailable"}: $filename (HTP v${target.htpArch})",
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("Waifu2x", "Unable to initialize Qualcomm NPU; using Vulkan", e)
+        }
+    }
+
     fun scaleBitmapNative(input: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap? {
         if (input.isRecycled) return null
         if (input.width == targetWidth && input.height == targetHeight) return input
@@ -769,6 +917,9 @@ object Waifu2x {
     private external fun nativeAbortProcessing()
     private external fun nativeClearAbortProcessing()
     private external fun nativeSetUiBusy(busy: Boolean)
+    private external fun nativeIsQnnRuntimeAvailable(): Boolean
+    private external fun nativeInitQnn(contextPath: String, nativeLibraryDir: String, padding: Int): Boolean
+    private external fun nativeIsQnnInitialized(): Boolean
     
     // ... (Anime4K signatures unchanged)
 

@@ -934,6 +934,9 @@
     <string name="action_webview_close_tab">关闭标签</string>
     <string name="reader_image_enhancement">图像增强</string>
     <string name="reader_image_enhancement_toast">图像增强%1$s</string>
+    <string name="reader_processing_backend">处理路线</string>
+    <string name="reader_backend_vulkan">Vulkan GPU</string>
+    <string name="reader_backend_qualcomm_npu">Qualcomm NPU</string>
     <string name="reader_model">模型</string>
     <string name="reader_denoise_level">降噪等级</string>
     <string name="reader_scale_factor">放大倍率</string>
