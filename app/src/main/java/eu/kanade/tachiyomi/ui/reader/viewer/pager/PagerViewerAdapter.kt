@@ -555,13 +555,9 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         if (currentIndex == -1) return
 
         // The earlier page's old holder has already deferred its candidate because this page was
-        // wide. Recreate it after insertion so it reads the correct new half. In R2L the original
-        // source page also acquires a new following neighbour after the inserted first half.
+        // wide. Recreate it after insertion so it reads the correct new neighbouring page. Keep
+        // the current holder attached; rebuilding it here can briefly show the previous half.
         (subItems.getOrNull(currentIndex - 1) as? ReaderPage)?.let(pagesNeedingSpreadRefresh::add)
-        if (viewer is R2LPagerViewer) {
-            pagesNeedingSpreadRefresh.add(currentPage)
-        }
-
         // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter
         if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {
             preprocessed[newPage.index] = newPage
@@ -591,13 +587,16 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         // In R2L the inserted half is the right half and is the first page the reader should
         // remain on. The parent page represents the left half, so using it as the anchor would
         // make a split jump backwards after the adapter is rebuilt.
-        val anchorPage = if (
-            viewer is R2LPagerViewer &&
-                currentReaderPage?.isFromSamePage(currentPage) == true
-        ) {
-            newPage
-        } else {
-            currentReaderPage
+        val currentPageIsDisplayed = when (currentReaderPage) {
+            is InsertPage -> currentReaderPage.parent.isFromSamePage(currentPage)
+            null -> false
+            else -> currentReaderPage.isFromSamePage(currentPage)
+        }
+        val anchorPage = when {
+            viewer is R2LPagerViewer && currentPageIsDisplayed -> newPage
+            currentReaderPage != null -> currentReaderPage
+            viewer is R2LPagerViewer -> newPage
+            else -> currentPage
         }
         restoredPosition = setJoinedItems(anchorPage = anchorPage)
     }
@@ -669,5 +668,15 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 internal fun findCurrentInsertPage(items: List<ReaderItem>, anchor: InsertPage): InsertPage? {
     return items.filterIsInstance<InsertPage>().firstOrNull { candidate ->
         candidate === anchor || candidate.parent.isFromSamePage(anchor.parent)
+    }
+}
+
+internal fun isSameDisplayedPage(first: ReaderPage?, second: ReaderPage?): Boolean {
+    if (first == null || second == null) return false
+    if ((first is InsertPage) != (second is InsertPage)) return false
+    return if (first is InsertPage && second is InsertPage) {
+        first.parent.isFromSamePage(second.parent)
+    } else {
+        first.isFromSamePage(second)
     }
 }

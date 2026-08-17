@@ -30,6 +30,20 @@ models=${QNN_MODELS:-"\
     realcugan-se-x2-conservative-int8"}
 
 for soc in $(printf '%s' "$QNN_HTP_SOCS" | tr ',' ' '); do
+    soc_lower=$(printf '%s' "$soc" | tr '[:upper:]' '[:lower:]')
+    case "$soc_lower" in
+        sm8475) soc_model=42 ;;
+        sm8550) soc_model=43 ;;
+        sm8650) soc_model=57 ;;
+        sm8750) soc_model=69 ;;
+        sm8850) soc_model=87 ;;
+        *)
+            echo "Unsupported QNN HTP SoC: $soc" >&2
+            exit 1
+            ;;
+    esac
+    soc_upper=$(printf '%s' "$soc_lower" | tr '[:lower:]' '[:upper:]')
+
     for model in $models; do
         model_dir=$MODEL_LIB_DIR
         case "$model" in
@@ -43,9 +57,9 @@ for soc in $(printf '%s' "$QNN_HTP_SOCS" | tr ',' ' '); do
         "$GENERATOR" \
             --model="$model_path" \
             --backend="$BACKEND" \
-            --binary_file="$model" \
+            --binary_file="$model.$soc_upper" \
             --output_dir="$OUTPUT_DIR" \
-            --htp_socs="$soc" \
+            --soc_model="$soc_model" \
             --log_level=error
     done
 done

@@ -452,18 +452,36 @@ class PagerPageHolder(
     }
 
     private fun enhancementVariantFor(targetPage: ReaderPage): String {
-        return ""
+        val baseVariant = targetPage.enhancementKeySuffix
+        if (!shouldSplitWidePagesInSinglePageMode()) {
+            return baseVariant
+        }
+
+        val halfVariant = when (splitSideFor(targetPage)) {
+            ImageUtil.Side.LEFT -> "wide_left"
+            ImageUtil.Side.RIGHT -> "wide_right"
+        }
+        return if (baseVariant.isBlank()) {
+            halfVariant
+        } else {
+            "${baseVariant}__${halfVariant}"
+        }
     }
 
     private fun enhancementStreamFor(targetPage: ReaderPage): (() -> java.io.InputStream)? {
-        return null
+        return if (shouldSplitWidePagesInSinglePageMode()) {
+            buildSplitEnhancementStream(targetPage)
+        } else {
+            null
+        }
     }
 
     private fun buildSplitEnhancementStream(targetPage: ReaderPage): (() -> java.io.InputStream)? {
         return {
-            val originalStream = targetPage.stream ?: error("Missing source stream for split enhancement")
+            val originalStream = targetPage.enhancementStream ?: targetPage.stream
+                ?: error("Missing source stream for split enhancement")
             val source = Buffer().readFrom(originalStream())
-            if (!viewer.config.dualPageSplit || !isWideImage(source)) {
+            if (!shouldSplitWidePagesInSinglePageMode() || !isWideImage(source)) {
                 source.inputStream()
             } else {
                 ImageUtil.splitInHalf(source, splitSideFor(targetPage)).inputStream()
@@ -476,7 +494,8 @@ class PagerPageHolder(
         return try {
             when {
                 enhancedFile != null -> enhancedFile.inputStream()
-                targetPage is InsertPage && enhancementStreamFor(targetPage) != null -> enhancementStreamFor(targetPage)?.invoke()
+                shouldSplitWidePagesInSinglePageMode() && enhancementStreamFor(targetPage) != null ->
+                    enhancementStreamFor(targetPage)?.invoke()
                 else -> targetPage.stream?.invoke()
             }
         } catch (_: Throwable) {

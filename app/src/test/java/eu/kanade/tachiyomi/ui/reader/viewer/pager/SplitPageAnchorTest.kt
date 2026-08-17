@@ -6,6 +6,8 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SplitPageAnchorTest {
@@ -28,6 +30,15 @@ class SplitPageAnchorTest {
         val otherInsertPage = InsertPage(readerPage(index = 8, chapterId = 42))
 
         assertNull(findCurrentInsertPage(listOf(otherInsertPage), anchor))
+    }
+
+    @Test
+    fun `does not treat parent and inserted half as the same displayed page`() {
+        val parent = readerPage(index = 7, chapterId = 42)
+        val inserted = InsertPage(parent)
+
+        assertFalse(isSameDisplayedPage(parent, inserted))
+        assertTrue(isSameDisplayedPage(inserted, InsertPage(readerPage(index = 7, chapterId = 42))))
     }
 
     private fun readerPage(index: Int, chapterId: Long): ReaderPage {

@@ -103,9 +103,11 @@ prefix. QAIRT 2.49 still displays `--model_prefix` in the context generator help
 option is no longer applied to model libraries. Using a filename-derived prefix causes the
 generator to fail while looking up `QnnModel_composeGraphs`.
 
-Generate offline HTP contexts for all supported Snapdragon generations. Each SoC must be
-generated independently; passing multiple SoCs to one generator invocation produces invalid
-placeholder contexts for later targets with QAIRT 2.49's model-library workflow.
+Generate offline HTP contexts for all supported Snapdragon generations. QAIRT's model-library
+workflow must pass each target through `--soc_model`; `--htp_socs` only selects targets for the
+DLC offline-cache workflow and otherwise leaves model-library contexts on the default HTP
+architecture. The generation script maps the supported SoC names to their QAIRT SoC model IDs
+and invokes the generator once per model and target.
 
 ```sh
 docker run --rm --platform linux/amd64 \

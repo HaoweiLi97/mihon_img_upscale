@@ -176,8 +176,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.children
             .filterIsInstance(PagerPageHolder::class.java)
             .firstOrNull {
-                (it.item.first as? ReaderPage)?.isFromSamePage(page) == true ||
-                    (it.item.second as? ReaderPage)?.isFromSamePage(page) == true
+                isSameDisplayedPage(it.item.first as? ReaderPage, page) ||
+                    isSameDisplayedPage(it.item.second as? ReaderPage, page)
             }
 
     /**
@@ -186,11 +186,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun onPageChange(position: Int) {
         val page = adapter.joinedItems.getOrNull(position) ?: return
         val preferredReaderPage = pendingSelectedPage?.takeIf { selected ->
-            page.first == selected || page.second == selected
+            isSameDisplayedPage(page.first as? ReaderPage, selected) ||
+                isSameDisplayedPage(page.second as? ReaderPage, selected)
         }
         val retainedReaderPage = currentReaderPage?.takeIf { selected ->
-            (page.first as? ReaderPage)?.isFromSamePage(selected) == true ||
-                (page.second as? ReaderPage)?.isFromSamePage(selected) == true
+            isSameDisplayedPage(page.first as? ReaderPage, selected) ||
+                isSameDisplayedPage(page.second as? ReaderPage, selected)
         }
         val activeItem = preferredReaderPage ?: retainedReaderPage ?: adapter.getActiveReaderPage(position) ?: page.first
         logcat {

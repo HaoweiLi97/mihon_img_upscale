@@ -190,9 +190,12 @@ internal class HttpPageLoader(
 
             // Start with original stream
             var streamSource = { chapterCache.getImageFile(imageUrl).inputStream() }
+            // Keep a raw source available when pager wide-page splitting needs to enhance each
+            // half independently, even if a full-page cache was created earlier.
+            page.enhancementStream = streamSource
             
             // Check for enhanced version
-            if (preferences.realCuganEnabled().get()) {
+            if (preferences.realCuganEnabled().get() && !preferences.automaticSplitsPage().get()) {
                 val context = Injekt.get<android.app.Application>()
                 ImageEnhancementCache.init(context)
                 
