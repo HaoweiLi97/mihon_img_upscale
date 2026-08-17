@@ -95,6 +95,22 @@ class RealCugan(nn.Module):
         return torch.clamp(output, 0, 1)
 
 
+class Span(nn.Module):
+    def __init__(self, weights: Path) -> None:
+        super().__init__()
+        try:
+            from spandrel import ModelLoader
+        except ImportError as error:
+            raise RuntimeError("SPAN export requires the spandrel package") from error
+        descriptor = ModelLoader().load_from_file(weights)
+        if descriptor.scale != 2 or descriptor.input_channels != 3 or descriptor.output_channels != 3:
+            raise RuntimeError("Expected a 2x RGB SPAN image model")
+        self.model = descriptor.model
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        return torch.clamp(self.model(image), 0, 1)
+
+
 def export(model: nn.Module, output: Path, tile_size: int, scale: int) -> None:
     model.eval()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -126,12 +142,13 @@ def main() -> None:
     parser.add_argument("--realesrgan-general-weights", type=Path)
     parser.add_argument("--realcugan-source", type=Path)
     parser.add_argument("--realcugan-weights-dir", type=Path)
+    parser.add_argument("--span-weights", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--tile-size", type=int, default=128)
     parser.add_argument("--scales", type=int, nargs="+", choices=(2, 3, 4), default=(2, 3, 4))
     args = parser.parse_args()
 
-    if not any((args.realesrgan_weights, args.realesrgan_general_weights, args.realcugan_source)):
+    if not any((args.realesrgan_weights, args.realesrgan_general_weights, args.realcugan_source, args.span_weights)):
         parser.error("Provide at least one model source")
 
     if args.realesrgan_weights:
@@ -169,6 +186,14 @@ def main() -> None:
                     args.tile_size,
                     scale,
                 )
+
+    if args.span_weights:
+        export(
+            Span(args.span_weights),
+            args.output_dir / "span-nomosuni-x2.onnx",
+            args.tile_size,
+            2,
+        )
 
 
 if __name__ == "__main__":

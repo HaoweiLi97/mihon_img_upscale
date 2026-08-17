@@ -71,6 +71,8 @@ val qnnModelNames = listOf(
     "realcugan-se-x2-denoise2x-int8",
     "realcugan-se-x2-denoise3x-int8",
     "realcugan-se-x2-conservative-int8",
+    "span-nomosuni-x2",
+    "span-nomosuni-x2-int8",
 )
 val qnnContextFiles = qnnSocModels.flatMap { soc -> qnnModelNames.map { model -> "$model.$soc.bin" } }
 val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
@@ -98,8 +100,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 30
-        versionName = "1.3.3"
+        versionCode = 31
+        versionName = "1.3.4"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")

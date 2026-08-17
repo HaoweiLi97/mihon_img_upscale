@@ -18,7 +18,8 @@ models=${QNN_MODELS:-"\
     realcugan-se-x2-denoise1x \
     realcugan-se-x2-denoise2x \
     realcugan-se-x2-denoise3x \
-    realcugan-se-x2-conservative"}
+    realcugan-se-x2-conservative \
+    span-nomosuni-x2"}
 
 for name in $models; do
     model="$ONNX_DIR/$name.onnx"
@@ -27,11 +28,13 @@ for name in $models; do
         exit 1
     fi
     act_bitwidth=8
-    if [ "$name" = "realesrgan-general-x4v3-x2" ]; then
-        # Photo accumulates visible noise with 8-bit activations even after photo calibration.
-        # Keep 8-bit weights but use 16-bit activations for image quality.
-        act_bitwidth=16
-    fi
+    case "$name" in
+        realesrgan-general-x4v3-x2|span-nomosuni-x2)
+            # Photo-oriented models accumulate visible artifacts with 8-bit activations.
+            # Keep 8-bit weights but use 16-bit activations for image quality.
+            act_bitwidth=16
+            ;;
+    esac
     "$CONVERTER" \
         --input_network "$model" \
         --input_layout input NCHW \

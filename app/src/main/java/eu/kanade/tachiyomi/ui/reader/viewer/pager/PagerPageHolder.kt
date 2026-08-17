@@ -494,7 +494,7 @@ class PagerPageHolder(
         return try {
             when {
                 enhancedFile != null -> enhancedFile.inputStream()
-                shouldSplitWidePagesInSinglePageMode() && enhancementStreamFor(targetPage) != null ->
+                shouldUseSplitDisplaySource(targetPage) && enhancementStreamFor(targetPage) != null ->
                     enhancementStreamFor(targetPage)?.invoke()
                 else -> targetPage.stream?.invoke()
             }
@@ -503,8 +503,23 @@ class PagerPageHolder(
         }
     }
 
+    private fun shouldUseSplitDisplaySource(targetPage: ReaderPage): Boolean {
+        return shouldSplitWidePagesInSinglePageMode() &&
+            (targetPage is InsertPage || viewer.hasSplitPage(targetPage))
+    }
+
     private fun currentEnhancedFile(targetPage: ReaderPage): java.io.File? {
         if (!readerPreferences.realCuganEnabled().get()) return null
+        // A source page must be inspected at full width once so the pager can create its sibling
+        // half. Using a cached half before that point makes the wide-page detector see a portrait
+        // image and the InsertPage is never added.
+        if (
+            shouldSplitWidePagesInSinglePageMode() &&
+            targetPage !is InsertPage &&
+            !viewer.hasSplitPage(targetPage)
+        ) {
+            return null
+        }
         val mangaId = viewer.activity.viewModel.manga?.id ?: return null
         val chapterId = targetPage.chapter.chapter.id ?: return null
         ImageEnhancementCache.init(context)

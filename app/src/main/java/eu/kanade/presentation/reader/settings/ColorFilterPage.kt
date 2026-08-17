@@ -165,7 +165,11 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
         LaunchedEffect(useQualcommNpu, realCuganModel, realCuganScale) {
             if (useQualcommNpu) {
-                if (realCuganModel != 0 && realCuganModel != Waifu2x.MODEL_REAL_ESRGAN_ANIME) {
+                if (
+                    realCuganModel != 0 &&
+                    realCuganModel != Waifu2x.MODEL_REAL_ESRGAN_ANIME &&
+                    realCuganModel != Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO
+                ) {
                     screenModel.preferences.realCuganModel().set(0)
                 }
                 if (realCuganScale != 2) {
@@ -197,6 +201,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                 listOf(
                     0 to "Real-CUGAN SE",
                     Waifu2x.MODEL_REAL_ESRGAN_ANIME to "Real-ESRGAN",
+                    Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO to "SPAN NomosUni Photo",
                 )
             } else {
                 listOf(
@@ -211,6 +216,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                     9 to "W2xEX Photo Small",
                     16 to "AnimeJaNai v2 UltraCompact",
                     18 to "sudo UltraCompact",
+                    Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO to "SPAN NomosUni Photo",
                 )
             }
             models.map { (modelId, name) ->
@@ -362,7 +368,8 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         val supportedPrecisions = if (useQualcommNpu) {
             if (
                 realCuganModel == 0 ||
-                realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME
+                realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME ||
+                realCuganModel == Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO
             ) {
                 listOf(0, 2)
             } else {
@@ -373,7 +380,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
         }
         LaunchedEffect(useQualcommNpu, realCuganModel, precision) {
             if (precision !in supportedPrecisions) {
-                screenModel.preferences.realCuganPrecision().set(0)
+                screenModel.preferences.realCuganPrecision().set(supportedPrecisions.first())
             }
         }
         SettingsChipRow(stringResource(MR.strings.reader_precision)) {

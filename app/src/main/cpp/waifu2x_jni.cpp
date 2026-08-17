@@ -637,7 +637,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
     JNIEnv *env, jobject thiz, jstring model_dir, jstring model_stem,
-    jint scale, jint precision, jboolean fp16_arithmetic) {
+    jint scale, jint precision, jboolean fp16_arithmetic, jint padding) {
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
@@ -662,7 +662,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
                           fp16_arithmetic == JNI_TRUE);
   g_waifu2x->noise = 0;
   g_waifu2x->scale = scale;
-  g_waifu2x->prepadding = 10;
+  g_waifu2x->prepadding = std::clamp(static_cast<int>(padding), 0, 48);
   g_waifu2x->progress_ptr = &g_progress;
   g_waifu2x->ui_busy_ptr = &g_ui_busy;
   g_waifu2x->should_abort_ptr = &g_abort_processing;

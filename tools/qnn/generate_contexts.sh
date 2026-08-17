@@ -27,7 +27,9 @@ models=${QNN_MODELS:-"\
     realcugan-se-x2-denoise1x-int8 \
     realcugan-se-x2-denoise2x-int8 \
     realcugan-se-x2-denoise3x-int8 \
-    realcugan-se-x2-conservative-int8"}
+    realcugan-se-x2-conservative-int8 \
+    span-nomosuni-x2 \
+    span-nomosuni-x2-int8"}
 
 for soc in $(printf '%s' "$QNN_HTP_SOCS" | tr ',' ' '); do
     soc_lower=$(printf '%s' "$soc" | tr '[:upper:]' '[:lower:]')

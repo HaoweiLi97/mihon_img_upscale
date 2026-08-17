@@ -30,10 +30,11 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 | **W2xEX Photo Small** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
 | **AnimeJaNai v2 UltraCompact** | 2x | the-database | [OpenModelDB](https://openmodeldb.info/models/2x-AnimeJaNai-v2-UltraCompact) |
 | **sudo UltraCompact** | 2x | sudo rm -rf / --no-preserve-root#8353 | [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
+| **SPAN NomosUni Photo** | 2x | Philip Hofmann | [OpenModelDB](https://openmodeldb.info/models/2x-NomosUni-span-multijpg-ldl) |
 
 ## Qualcomm NPU Acceleration
 
-Version 1.3.3 adds an optional Qualcomm QNN/HTP backend alongside the existing Vulkan
+Version 1.3.4 adds an optional Qualcomm QNN/HTP backend alongside the existing Vulkan
 backend. Vulkan and NPU are independent choices in the reader settings. Selecting NPU limits
 the model list to models with compatible offline contexts; unsupported devices keep the NPU
 option disabled and continue to use Vulkan.
@@ -53,6 +54,7 @@ option disabled and continue to use Vulkan.
 | Real-ESRGAN animevideov3 | 2x | FP16 / INT8 | Standard |
 | Real-ESRGAN general-x4v3 (Photo) | 2x | FP16 / W8A16 | Standard |
 | Real-CUGAN SE | 2x | FP16 / INT8 | No denoise, denoise1x, denoise2x, denoise3x, conservative |
+| SPAN NomosUni Photo | 2x | FP16 / W8A16 | Standard |
 
 Real-CUGAN SE INT8 has been validated on SM8475 with QNN HTP execution at approximately
 1.6-2.0 seconds per tested manga page. Actual speed depends on image dimensions, model variant,

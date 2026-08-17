@@ -18,11 +18,13 @@ object Waifu2x {
     const val PROCESSING_BACKEND_VULKAN = 0
     const val PROCESSING_BACKEND_QUALCOMM_NPU = 1
     const val MODEL_REAL_ESRGAN_ANIME = 2
+    const val MODEL_SPAN_NOMOSUNI_PHOTO = 19
     const val REAL_ESRGAN_STYLE_ANIME = 0
     const val REAL_ESRGAN_STYLE_PHOTO = 1
 
     // Bump when bundled model assets change so existing installations refresh their cache.
     private const val BUNDLED_MODEL_CACHE_VERSION = "14"
+    private const val QNN_CONTEXT_CACHE_VERSION = "15"
 
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
@@ -381,10 +383,16 @@ object Waifu2x {
         val stem: String,
         val scale: Int,
         val assetPath: String,
+        val padding: Int = 10,
     )
 
-    private fun w2xExModel(stem: String, scale: Int, family: String): W2xExModel {
-        return W2xExModel(stem, scale, "$family/$stem")
+    private fun w2xExModel(
+        stem: String,
+        scale: Int,
+        family: String,
+        padding: Int = 10,
+    ): W2xExModel {
+        return W2xExModel(stem, scale, "$family/$stem", padding)
     }
 
     private fun w2xExModelFor(model: Int): W2xExModel? {
@@ -394,6 +402,8 @@ object Waifu2x {
             9 -> w2xExModel("Photo-Small-W2xEX", 2, "w2xex-esrgan")
             16 -> w2xExModel("animejanai-v2-ultra-compact-x2", 2, "animejanai-ncnn-vulkan")
             18 -> w2xExModel("2x-sudo-UltraCompact", 2, "sudo-ultracompact")
+            MODEL_SPAN_NOMOSUNI_PHOTO ->
+                w2xExModel("2x-NomosUni-SPAN-multijpg-ldl", 2, "span-nomosuni", padding = 24)
             else -> null
         }
     }
@@ -435,8 +445,19 @@ object Waifu2x {
             effectiveScale,
             config.precision,
             config.fp16Arithmetic,
+            selectedModel.padding,
         )
         if (isW2xExInitialized) {
+            if (
+                config.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU &&
+                model == MODEL_SPAN_NOMOSUNI_PHOTO
+            ) {
+                initializeQnnIfAvailable(
+                    context,
+                    if (config.precision == 2) "span-nomosuni-x2-int8" else "span-nomosuni-x2",
+                    padding = selectedModel.padding,
+                )
+            }
             lastW2xExConfig = config
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
 
@@ -865,7 +886,10 @@ object Waifu2x {
     fun isQualcommNpuAvailable(): Boolean = isQualcommNpuDeviceAvailable
 
     fun isQualcommNpuModelSupported(model: Int, scale: Int): Boolean {
-        return (model == 0 || model == MODEL_REAL_ESRGAN_ANIME) && scale == 2
+        if (scale != 2) return false
+        return model == 0 ||
+            model == MODEL_REAL_ESRGAN_ANIME ||
+            model == MODEL_SPAN_NOMOSUNI_PHOTO
     }
 
     fun resolveProcessingBackend(requestedBackend: Int, model: Int, scale: Int): Int {
@@ -906,11 +930,11 @@ object Waifu2x {
             val directory = File(context.cacheDir, "qnn-contexts-${target.socModel.lowercase()}").apply { mkdirs() }
             val output = File(directory, filename)
             val version = File(directory, ".$filename.version")
-            if (!output.isFile || version.takeIf(File::isFile)?.readText() != BUNDLED_MODEL_CACHE_VERSION) {
+            if (!output.isFile || version.takeIf(File::isFile)?.readText() != QNN_CONTEXT_CACHE_VERSION) {
                 context.assets.open("qnn-contexts/$filename").use { input ->
                     output.outputStream().use(input::copyTo)
                 }
-                version.writeText(BUNDLED_MODEL_CACHE_VERSION)
+                version.writeText(QNN_CONTEXT_CACHE_VERSION)
             }
             val active = nativeInitQnn(
                 output.absolutePath,
@@ -958,6 +982,7 @@ object Waifu2x {
         scale: Int,
         precision: Int,
         fp16Arithmetic: Boolean,
+        padding: Int,
     ): Boolean
     private external fun nativeProcess(input: Bitmap, id: Int): Bitmap?
     private external fun nativeDestroy()
