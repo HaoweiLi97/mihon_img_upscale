@@ -17,6 +17,7 @@ Supported models:
 - Real-ESRGAN general-x4v3 Photo 2x output: FP16 and W8A16 mixed precision
 - Real-CUGAN SE 2x: FP16 and INT8 for no-denoise, denoise1x, denoise2x,
   denoise3x, and conservative
+- W2xEX Photo Small 2x: FP16 and W8A16 mixed precision
 - SPAN NomosUni Photo 2x: FP16 and W8A16 mixed precision
 
 Local prerequisites are configured through ignored `local.properties` values:
@@ -40,6 +41,8 @@ amd64 Linux converter environment before running either conversion path:
 SPAN export additionally requires `spandrel`, `spandrel-extra-arches`, and `pnnx`. Use
 `export_span_ncnn.py` to create the BGR-compatible NCNN asset; its first layer,
 normalization mean, and PixelShuffle output are reordered without changing the RGB QNN graph.
+Use `export_w2xex_onnx.py` to reconstruct the W2xEX Photo Small ONNX graph from its upstream
+NCNN parameter and weight files. The exporter converts the model's BGR channel order to RGB.
 
 ```sh
 docker build --platform linux/amd64 -t mihon-qnn-tools:2.49.0 tools/qnn

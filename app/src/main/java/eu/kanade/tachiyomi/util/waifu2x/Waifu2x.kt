@@ -18,13 +18,14 @@ object Waifu2x {
     const val PROCESSING_BACKEND_VULKAN = 0
     const val PROCESSING_BACKEND_QUALCOMM_NPU = 1
     const val MODEL_REAL_ESRGAN_ANIME = 2
+    const val MODEL_W2XEX_PHOTO_SMALL = 9
     const val MODEL_SPAN_NOMOSUNI_PHOTO = 19
     const val REAL_ESRGAN_STYLE_ANIME = 0
     const val REAL_ESRGAN_STYLE_PHOTO = 1
 
     // Bump when bundled model assets change so existing installations refresh their cache.
     private const val BUNDLED_MODEL_CACHE_VERSION = "14"
-    private const val QNN_CONTEXT_CACHE_VERSION = "15"
+    private const val QNN_CONTEXT_CACHE_VERSION = "16"
 
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
@@ -399,7 +400,7 @@ object Waifu2x {
         return when (model) {
             6 -> w2xExModel("Universal-Fast-W2xEX", 2, "w2xex-esrgan")
             8 -> w2xExModel("Omni-MiniV2-W2xEX", 2, "w2xex-esrgan")
-            9 -> w2xExModel("Photo-Small-W2xEX", 2, "w2xex-esrgan")
+            MODEL_W2XEX_PHOTO_SMALL -> w2xExModel("Photo-Small-W2xEX", 2, "w2xex-esrgan")
             16 -> w2xExModel("animejanai-v2-ultra-compact-x2", 2, "animejanai-ncnn-vulkan")
             18 -> w2xExModel("2x-sudo-UltraCompact", 2, "sudo-ultracompact")
             MODEL_SPAN_NOMOSUNI_PHOTO ->
@@ -448,13 +449,15 @@ object Waifu2x {
             selectedModel.padding,
         )
         if (isW2xExInitialized) {
-            if (
-                config.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU &&
-                model == MODEL_SPAN_NOMOSUNI_PHOTO
-            ) {
+            val qnnModel = when (model) {
+                MODEL_W2XEX_PHOTO_SMALL -> "w2xex-photo-small-x2"
+                MODEL_SPAN_NOMOSUNI_PHOTO -> "span-nomosuni-x2"
+                else -> null
+            }
+            if (config.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU && qnnModel != null) {
                 initializeQnnIfAvailable(
                     context,
-                    if (config.precision == 2) "span-nomosuni-x2-int8" else "span-nomosuni-x2",
+                    if (config.precision == 2) "$qnnModel-int8" else qnnModel,
                     padding = selectedModel.padding,
                 )
             }
@@ -889,6 +892,7 @@ object Waifu2x {
         if (scale != 2) return false
         return model == 0 ||
             model == MODEL_REAL_ESRGAN_ANIME ||
+            model == MODEL_W2XEX_PHOTO_SMALL ||
             model == MODEL_SPAN_NOMOSUNI_PHOTO
     }
 

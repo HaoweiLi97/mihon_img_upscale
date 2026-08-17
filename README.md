@@ -54,6 +54,7 @@ option disabled and continue to use Vulkan.
 | Real-ESRGAN animevideov3 | 2x | FP16 / INT8 | Standard |
 | Real-ESRGAN general-x4v3 (Photo) | 2x | FP16 / W8A16 | Standard |
 | Real-CUGAN SE | 2x | FP16 / INT8 | No denoise, denoise1x, denoise2x, denoise3x, conservative |
+| W2xEX Photo Small | 2x | FP16 / W8A16 | Standard |
 | SPAN NomosUni Photo | 2x | FP16 / W8A16 | Standard |
 
 Real-CUGAN SE INT8 has been validated on SM8475 with QNN HTP execution at approximately

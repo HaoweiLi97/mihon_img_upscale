@@ -168,6 +168,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                 if (
                     realCuganModel != 0 &&
                     realCuganModel != Waifu2x.MODEL_REAL_ESRGAN_ANIME &&
+                    realCuganModel != Waifu2x.MODEL_W2XEX_PHOTO_SMALL &&
                     realCuganModel != Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO
                 ) {
                     screenModel.preferences.realCuganModel().set(0)
@@ -201,6 +202,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                 listOf(
                     0 to "Real-CUGAN SE",
                     Waifu2x.MODEL_REAL_ESRGAN_ANIME to "Real-ESRGAN",
+                    Waifu2x.MODEL_W2XEX_PHOTO_SMALL to "W2xEX Photo Small",
                     Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO to "SPAN NomosUni Photo",
                 )
             } else {
@@ -213,7 +215,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
                     5 to "Waifu2x (Fast)",
                     6 to "W2xEX Universal Fast",
                     8 to "W2xEX Omni Mini V2",
-                    9 to "W2xEX Photo Small",
+                    Waifu2x.MODEL_W2XEX_PHOTO_SMALL to "W2xEX Photo Small",
                     16 to "AnimeJaNai v2 UltraCompact",
                     18 to "sudo UltraCompact",
                     Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO to "SPAN NomosUni Photo",
@@ -369,6 +371,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
             if (
                 realCuganModel == 0 ||
                 realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME ||
+                realCuganModel == Waifu2x.MODEL_W2XEX_PHOTO_SMALL ||
                 realCuganModel == Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO
             ) {
                 listOf(0, 2)

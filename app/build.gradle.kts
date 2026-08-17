@@ -73,6 +73,8 @@ val qnnModelNames = listOf(
     "realcugan-se-x2-conservative-int8",
     "span-nomosuni-x2",
     "span-nomosuni-x2-int8",
+    "w2xex-photo-small-x2",
+    "w2xex-photo-small-x2-int8",
 )
 val qnnContextFiles = qnnSocModels.flatMap { soc -> qnnModelNames.map { model -> "$model.$soc.bin" } }
 val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
