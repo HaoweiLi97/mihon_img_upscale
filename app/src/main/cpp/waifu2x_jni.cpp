@@ -1,10 +1,12 @@
 #include "anime4k.h"
+#include "qnn_backend.h"
 #include "waifu2x.h"
 #include <android/bitmap.h>
 #include <android/log.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <jni.h>
 #include <mutex>
@@ -23,6 +25,38 @@ static std::atomic<int> g_ui_busy{0};
 static std::atomic<bool> g_abort_processing{false};
 
 extern "C" JNIEXPORT jboolean JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeIsQnnRuntimeAvailable(
+    JNIEnv *, jobject) {
+  return qnn_backend::is_runtime_loadable() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitQnn(
+    JNIEnv *env, jobject, jstring context_path, jstring native_library_dir,
+    jint padding) {
+  std::lock_guard<std::mutex> lock(g_lock);
+  const char *context_path_chars = env->GetStringUTFChars(context_path, nullptr);
+  const char *library_dir_chars =
+      env->GetStringUTFChars(native_library_dir, nullptr);
+  const std::string dsp_paths =
+      std::string(library_dir_chars) +
+      ";/vendor/dsp/cdsp;/vendor/lib/rfsa/cdsp;/system/vendor/lib/rfsa/cdsp";
+  setenv("ADSP_LIBRARY_PATH", dsp_paths.c_str(), 1);
+  LOGD("QNN ADSP_LIBRARY_PATH=%s", dsp_paths.c_str());
+  const bool initialized =
+      qnn_backend::initialize(context_path_chars, static_cast<int>(padding));
+  env->ReleaseStringUTFChars(native_library_dir, library_dir_chars);
+  env->ReleaseStringUTFChars(context_path, context_path_chars);
+  return initialized ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeIsQnnInitialized(
+    JNIEnv *, jobject) {
+  return qnn_backend::is_initialized() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
                                                          jobject thiz,
                                                          jstring model_dir,
@@ -33,6 +67,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+
+  qnn_backend::shutdown();
 
   ncnn::create_gpu_instance();
 
@@ -85,6 +121,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+
+  qnn_backend::shutdown();
 
   ncnn::create_gpu_instance();
 
@@ -217,7 +255,22 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
             }
           }
 
-          if (g_waifu2x->has_gpu_pipeline()) {
+          if (qnn_backend::is_initialized()) {
+            const auto qnn_start = std::chrono::steady_clock::now();
+            ret = qnn_backend::process_rgba(
+                static_cast<const uint8_t *>(packed_input.data), w, h, w * 4,
+                static_cast<uint8_t *>(outPixels), outInfo.stride, &g_progress,
+                &g_abort_processing);
+            const auto qnn_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - qnn_start)
+                                    .count();
+            LOGD("QNN HTP processing %s in %lld ms",
+                 ret == 0 ? "completed" : "failed",
+                 static_cast<long long>(qnn_ms));
+          }
+
+          if (ret != 0 && !g_abort_processing.load() &&
+              g_waifu2x->has_gpu_pipeline()) {
             const auto fused_start = std::chrono::steady_clock::now();
             ret = g_waifu2x->process_gpu(packed_input, outPixels,
                                          outInfo.stride, input_has_alpha,
@@ -335,6 +388,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeDestroy(JNIEnv *env,
                                                             jobject thiz) {
   g_abort_processing.store(true);
   std::lock_guard<std::mutex> lock(g_lock);
+  qnn_backend::shutdown();
   if (g_waifu2x) {
     delete g_waifu2x;
     g_waifu2x = nullptr;
@@ -367,6 +421,7 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitAnime4K(
     JNIEnv *env, jobject thiz, jobjectArray shaders, jobjectArray names) {
   std::lock_guard<std::mutex> lock(g_lock);
+  qnn_backend::shutdown();
   if (g_anime4k)
     delete g_anime4k;
   g_anime4k = new Anime4K();
@@ -441,6 +496,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
   g_abort_processing = true; // Signal abort to any running process
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false; // Reset
+
+  qnn_backend::shutdown();
 
   ncnn::create_gpu_instance();
 
@@ -536,6 +593,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
 
+  qnn_backend::shutdown();
+
   ncnn::create_gpu_instance();
 
   if (g_waifu2x) {
@@ -579,6 +638,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+
+  qnn_backend::shutdown();
 
   ncnn::create_gpu_instance();
 

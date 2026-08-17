@@ -3,6 +3,9 @@ project(waifu2x-jni)
 
 set(CMAKE_CXX_STANDARD 17)
 
+set(QNN_SDK_DIR "${QNN_SDK_DIR}" CACHE PATH "Path to the Qualcomm AI Runtime SDK")
+set(QNN_HTP_ARCH "69" CACHE STRING "Hexagon HTP architecture version")
+
 # Allow Gradle or the environment to provide the ncnn Android SDK path.
 set(NCNN_SDK_DIR "${NCNN_SDK_DIR}" CACHE PATH "Path to the ncnn Android Vulkan SDK")
 
@@ -66,6 +69,7 @@ add_custom_target(waifu2x-fused-shaders DEPENDS ${FUSED_SHADER_OUTPUTS})
 set(WAIFU2X_SOURCES
     waifu2x.cpp
     anime4k.cpp
+    qnn_backend.cpp
     waifu2x_jni.cpp
 )
 
@@ -79,6 +83,20 @@ target_include_directories(waifu2x-jni PRIVATE
     ${GENERATED_SHADER_DIR}
 )
 
+if(QNN_SDK_DIR AND ANDROID_ABI STREQUAL "arm64-v8a")
+    if(NOT EXISTS "${QNN_SDK_DIR}/include/QNN/QnnInterface.h")
+        message(FATAL_ERROR "QNN SDK headers not found under ${QNN_SDK_DIR}/include/QNN")
+    endif()
+    if(NOT EXISTS "${QNN_SDK_DIR}/lib/aarch64-android/libQnnHtp.so")
+        message(FATAL_ERROR "QNN Android HTP runtime not found under ${QNN_SDK_DIR}/lib/aarch64-android")
+    endif()
+
+    target_compile_definitions(waifu2x-jni PRIVATE MIHON_ENABLE_QNN=1)
+    target_include_directories(waifu2x-jni PRIVATE "${QNN_SDK_DIR}/include/QNN")
+else()
+    target_compile_definitions(waifu2x-jni PRIVATE MIHON_ENABLE_QNN=0)
+endif()
+
 # Link libraries
 target_link_libraries(waifu2x-jni
     ncnn
@@ -87,4 +105,5 @@ target_link_libraries(waifu2x-jni
     jnigraphics
     GLESv3
     EGL
+    dl
 )

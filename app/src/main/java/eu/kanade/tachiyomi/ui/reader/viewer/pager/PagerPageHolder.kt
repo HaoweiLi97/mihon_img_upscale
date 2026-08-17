@@ -500,6 +500,7 @@ class PagerPageHolder(
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
             fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
+            processingBackend = readerPreferences.realCuganProcessingBackend().get(),
         )
         return ImageEnhancementCache.getCachedImage(mangaId, chapterId, targetPage.index, configHash, enhancementVariantFor(targetPage))
     }
@@ -520,6 +521,7 @@ class PagerPageHolder(
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
             fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
+            processingBackend = readerPreferences.realCuganProcessingBackend().get(),
         )
         return when {
             ImageEnhancementCache.isSkipped(mangaId, chapterId, targetPage.index, configHash, enhancementVariantFor(targetPage)) -> "skipped"
@@ -675,6 +677,7 @@ class PagerPageHolder(
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
             fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
+            processingBackend = readerPreferences.realCuganProcessingBackend().get(),
         )
 
         return when {
@@ -1073,6 +1076,7 @@ class PagerPageHolder(
             tileSize = readerPreferences.realCuganTileSize().get(),
             precision = readerPreferences.realCuganPrecision().get(),
             fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
+            processingBackend = readerPreferences.realCuganProcessingBackend().get(),
         )
 
         val pageVariant = enhancementVariantFor(targetPage)

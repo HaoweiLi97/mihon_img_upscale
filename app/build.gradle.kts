@@ -2,6 +2,8 @@ import mihon.buildlogic.Config
 import mihon.buildlogic.getBuildTime
 import mihon.buildlogic.getCommitCount
 import mihon.buildlogic.getGitSha
+import org.gradle.api.tasks.Sync
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -35,14 +37,92 @@ val ncnnSdkDir = providers.gradleProperty("ncnnSdkDir").orNull
     ?: System.getenv("NCNN_SDK_DIR")
     ?: bundledNcnnSdkDir.takeIf { it.exists() }?.absolutePath
 
+val qnnSdkDir = providers.gradleProperty("qnnSdkDir").orNull
+    ?: localProperties.getProperty("qnn.sdk.dir")
+    ?: System.getenv("QNN_SDK_ROOT")
+
+val qnnHtpArchs = (
+    providers.gradleProperty("qnnHtpArchs").orNull
+        ?: localProperties.getProperty("qnn.htp.archs")
+        ?: localProperties.getProperty("qnn.htp.arch")
+        ?: "69,73,75,79,81"
+    ).split(',').map(String::trim).filter(String::isNotEmpty).distinct()
+
+val qnnContextDir = providers.gradleProperty("qnnContextDir").orNull
+    ?: localProperties.getProperty("qnn.context.dir")
+    ?: System.getenv("QNN_CONTEXT_DIR")
+
+val qnnSdkRoot = qnnSdkDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
+val generatedQnnJniDir = layout.buildDirectory.dir("generated/qnnJniLibs")
+val qnnContextRoot = qnnContextDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
+val generatedQnnAssetsDir = layout.buildDirectory.dir("generated/qnnAssets")
+val qnnSocModels = listOf("SM8475", "SM8550", "SM8650", "SM8750", "SM8850")
+val qnnModelNames = listOf(
+    "realesrgan-animevideov3-x2",
+    "realesrgan-animevideov3-x2-int8",
+    "realcugan-se-x2-no-denoise",
+    "realcugan-se-x2-denoise1x",
+    "realcugan-se-x2-denoise2x",
+    "realcugan-se-x2-denoise3x",
+    "realcugan-se-x2-conservative",
+)
+val qnnContextFiles = qnnSocModels.flatMap { soc -> qnnModelNames.map { model -> "$model.$soc.bin" } }
+val stageQnnRuntime = qnnSdkRoot?.let { sdkRoot ->
+    tasks.register<Sync>("stageQnnRuntime") {
+        into(generatedQnnJniDir.map { it.dir("arm64-v8a") })
+        from(sdkRoot.resolve("lib/aarch64-android")) {
+            include(
+                "libQnnHtp.so",
+                "libQnnHtpPrepare.so",
+                "libQnnSystem.so",
+            )
+            qnnHtpArchs.forEach { arch -> include("libQnnHtpV${arch}Stub.so") }
+        }
+        qnnHtpArchs.forEach { arch ->
+            from(sdkRoot.resolve("lib/hexagon-v$arch/unsigned")) {
+                include("libQnnHtpV${arch}Skel.so")
+            }
+        }
+
+        doFirst {
+            val requiredFiles = listOf(
+                sdkRoot.resolve("include/QNN/QnnInterface.h"),
+                sdkRoot.resolve("lib/aarch64-android/libQnnHtp.so"),
+            ) + qnnHtpArchs.map { arch -> sdkRoot.resolve("lib/aarch64-android/libQnnHtpV${arch}Stub.so") }
+            val missingFiles = requiredFiles.filterNot(File::isFile)
+            check(missingFiles.isEmpty()) {
+                "QNN SDK is incomplete for HTP architectures ${qnnHtpArchs.joinToString()}: ${missingFiles.joinToString()}"
+            }
+        }
+    }
+}
+val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
+    tasks.register<Sync>("stageQnnContexts") {
+        from(contextRoot) {
+            include(qnnContextFiles)
+            into("qnn-contexts")
+        }
+        into(generatedQnnAssetsDir)
+
+        doFirst {
+            val missingFiles = qnnContextFiles
+                .map(contextRoot::resolve)
+                .filterNot(File::isFile)
+            check(missingFiles.isEmpty()) {
+                "QNN multi-SoC context directory is incomplete: ${missingFiles.joinToString()}"
+            }
+        }
+    }
+}
+
 android {
     namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 28
-        versionName = "1.3.1"
+        versionCode = 29
+        versionName = "1.3.2"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
@@ -56,6 +136,10 @@ android {
             cmake {
                 if (!ncnnSdkDir.isNullOrBlank()) {
                     arguments += "-DNCNN_SDK_DIR=$ncnnSdkDir"
+                }
+                if (qnnSdkRoot != null) {
+                    arguments += "-DQNN_SDK_DIR=${qnnSdkRoot.absolutePath}"
+                    arguments += "-DQNN_HTP_ARCH=${qnnHtpArchs.first()}"
                 }
             }
         }
@@ -114,6 +198,12 @@ android {
     sourceSets {
         getByName("preview").res.srcDirs("src/debug/res")
         getByName("benchmark").res.srcDirs("src/debug/res")
+        if (stageQnnRuntime != null) {
+            getByName("main").jniLibs.srcDir(generatedQnnJniDir)
+        }
+        if (stageQnnContexts != null) {
+            getByName("main").assets.srcDir(generatedQnnAssetsDir)
+        }
     }
 
     splits {
@@ -127,6 +217,7 @@ android {
 
     packaging {
         jniLibs {
+            useLegacyPackaging = true
             keepDebugSymbols += listOf(
                 "libandroidx.graphics.path",
                 "libarchive-jni",
@@ -181,6 +272,22 @@ android {
     lint {
         abortOnError = false
         checkReleaseBuilds = false
+    }
+}
+
+if (stageQnnRuntime != null) {
+    tasks.configureEach {
+        if (name.startsWith("merge") && (name.endsWith("JniLibFolders") || name.endsWith("NativeLibs"))) {
+            dependsOn(stageQnnRuntime)
+        }
+    }
+}
+
+if (stageQnnContexts != null) {
+    tasks.configureEach {
+        if (name.startsWith("merge") && name.endsWith("Assets")) {
+            dependsOn(stageQnnContexts)
+        }
     }
 }
 

@@ -1083,6 +1083,9 @@
     <string name="migrationListScreen.matchWithoutChapterToast">No chapters found, this entry cannot be used for migration</string>
     <string name="reader_image_enhancement">Image enhancement</string>
     <string name="reader_image_enhancement_toast">Image enhancement %1$s</string>
+    <string name="reader_processing_backend">Processing backend</string>
+    <string name="reader_backend_vulkan">Vulkan GPU</string>
+    <string name="reader_backend_qualcomm_npu">Qualcomm NPU</string>
     <string name="reader_model">Model</string>
     <string name="reader_denoise_level">Denoise level</string>
     <string name="reader_scale_factor">Scale factor</string>

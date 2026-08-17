@@ -211,6 +211,7 @@ internal class HttpPageLoader(
                         tileSize = preferences.realCuganTileSize().get(),
                         precision = preferences.realCuganPrecision().get(),
                         fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
+                        processingBackend = preferences.realCuganProcessingBackend().get(),
                     )
                     val cachedFile = ImageEnhancementCache.getCachedImage(
                         mangaId,

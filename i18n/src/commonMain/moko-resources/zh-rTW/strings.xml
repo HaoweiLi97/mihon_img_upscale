@@ -914,6 +914,9 @@
     <string name="pref_download_concurrent_pages">同時下載的頁數</string>
     <string name="pref_download_concurrent_pages_summary">每個來源同時下載的頁數</string>
     <string name="action_webview_close_tab">關閉頁籤</string>
+    <string name="reader_processing_backend">處理路線</string>
+    <string name="reader_backend_vulkan">Vulkan GPU</string>
+    <string name="reader_backend_qualcomm_npu">Qualcomm NPU</string>
     <string name="reader_tile_size">分塊大小</string>
     <string name="reader_precision">精度</string>
     <string name="reader_precision_fp16">FP16</string>

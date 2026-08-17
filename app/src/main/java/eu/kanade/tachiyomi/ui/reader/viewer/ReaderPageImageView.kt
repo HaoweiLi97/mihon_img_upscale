@@ -694,6 +694,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             tileSize = tileSize,
             precision = preferences.realCuganPrecision().get(),
             fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
+            processingBackend = preferences.realCuganProcessingBackend().get(),
         )
         val pageVariant = enhancementVariant()
 
@@ -798,6 +799,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     tileSize = tileSize,
                     precision = preferences.realCuganPrecision().get(),
                     fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
+                    processingBackend = preferences.realCuganProcessingBackend().get(),
                 )
                  val pageVariant = enhancementVariant()
                  
@@ -1093,6 +1095,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             tileSize = tileSize,
             precision = preferences.realCuganPrecision().get(),
             fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
+            processingBackend = preferences.realCuganProcessingBackend().get(),
         )
         val pageVariant = enhancementVariant()
 

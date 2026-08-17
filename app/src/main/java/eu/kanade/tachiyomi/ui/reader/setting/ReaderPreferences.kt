@@ -113,6 +113,8 @@ class ReaderPreferences(
 
     fun realCuganPrecision() = preferenceStore.getInt("pref_realcugan_precision", 0) // 0: FP16, 1: FP32, 2: INT8, 3: BF16
 
+    fun realCuganProcessingBackend() = preferenceStore.getInt("pref_realcugan_processing_backend", 1) // 0: Vulkan, 1: Qualcomm NPU
+
     fun realCuganFp16Arithmetic() = preferenceStore.getBoolean("pref_realcugan_fp16_arithmetic", false)
 
     fun realCuganMaxSizeWidth() = preferenceStore.getInt("pref_realcugan_max_size_width", 1600)
