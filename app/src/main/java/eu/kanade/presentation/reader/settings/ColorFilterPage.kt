@@ -323,7 +323,7 @@ internal fun ColumnScope.ColorFilterPage(screenModel: ReaderSettingsScreenModel)
 
         val precision by screenModel.preferences.realCuganPrecision().collectAsState()
         val supportedPrecisions = if (useQualcommNpu) {
-            if (realCuganModel == 2) listOf(0, 2) else listOf(0)
+            if (realCuganModel == 0 || realCuganModel == 2) listOf(0, 2) else listOf(0)
         } else {
             listOf(0, 1, 2, 3)
         }

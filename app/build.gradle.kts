@@ -65,6 +65,11 @@ val qnnModelNames = listOf(
     "realcugan-se-x2-denoise2x",
     "realcugan-se-x2-denoise3x",
     "realcugan-se-x2-conservative",
+    "realcugan-se-x2-no-denoise-int8",
+    "realcugan-se-x2-denoise1x-int8",
+    "realcugan-se-x2-denoise2x-int8",
+    "realcugan-se-x2-denoise3x-int8",
+    "realcugan-se-x2-conservative-int8",
 )
 val qnnContextFiles = qnnSocModels.flatMap { soc -> qnnModelNames.map { model -> "$model.$soc.bin" } }
 val stageQnnRuntime = qnnSdkRoot?.let { sdkRoot ->

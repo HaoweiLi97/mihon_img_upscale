@@ -15,6 +15,10 @@ def main() -> None:
     parser.add_argument("--tile-size", type=int, default=256)
     parser.add_argument("--samples", type=int, default=64)
     parser.add_argument("--seed", type=int, default=8475)
+    parser.add_argument(
+        "--input-list-prefix",
+        help="Optional path prefix used in input-list.txt inside a container, such as /calibration",
+    )
     args = parser.parse_args()
 
     images = sorted(path for path in args.image_dir.rglob("*") if path.is_file())
@@ -42,7 +46,11 @@ def main() -> None:
         tensor = np.asarray(crop, dtype=np.float32).transpose(2, 0, 1) / 255.0
         output = (args.output_dir / f"input-{index:03d}.raw").resolve()
         tensor.tofile(output)
-        input_paths.append(output)
+        input_paths.append(
+            Path(args.input_list_prefix) / output.name
+            if args.input_list_prefix
+            else output
+        )
 
     input_list = args.output_dir / "input-list.txt"
     input_list.write_text("".join(f"{path}\n" for path in input_paths), encoding="utf-8")

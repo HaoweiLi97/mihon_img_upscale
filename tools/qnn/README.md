@@ -13,32 +13,61 @@ fixed 256x256 RGB NCHW input tile and produce a 512x512 RGB NCHW output tile.
 
 Supported models:
 
-- Real-ESRGAN animevideov3 2x
-- Real-CUGAN SE 2x: no-denoise, denoise1x, denoise2x, denoise3x, conservative
+- Real-ESRGAN animevideov3 2x: FP16 and INT8
+- Real-CUGAN SE 2x: FP16 and INT8 for no-denoise, denoise1x, denoise2x,
+  denoise3x, and conservative
 
 Local prerequisites are configured through ignored `local.properties` values:
 
 ```properties
 qnn.sdk.dir=/absolute/path/to/qairt/version
 qnn.htp.archs=69,73,75,79,81
+qnn.context.dir=/absolute/path/to/generated/contexts
 ```
 
 Export the upstream PyTorch weights to ONNX with `export_models.py`. The resulting ONNX
 files are development inputs and should not be committed. QNN conversion and quantization
-scripts will consume these fixed-shape graphs and emit Android context binaries.
-
-Build the converter environment and run the QNN conversion inside its amd64 Linux container:
+scripts will consume these fixed-shape graphs and emit Android context binaries. Build the
+amd64 Linux converter environment before running either conversion path:
 
 ```sh
-docker build -t mihon-qnn-tools:2.49.0 tools/qnn
+docker build --platform linux/amd64 -t mihon-qnn-tools:2.49.0 tools/qnn
+```
+
+Convert the exported models to FP16:
+
+```sh
 docker run --rm --platform linux/amd64 \
   -v "$QNN_SDK_ROOT:/qnn:ro" \
   -v "$ONNX_DIR:/models:ro" \
-  -v "$OUTPUT_DIR:/output" \
+  -v "$CONVERTED_DIR:/output" \
   -e ONNX_DIR=/models \
   -e OUTPUT_DIR=/output \
   mihon-qnn-tools:2.49.0 \
   convert-qnn-models
+```
+
+Create calibration inputs and convert the supported x2 models to INT8. The calibration input
+list paths must match the path mounted inside the converter container.
+
+```sh
+python tools/qnn/prepare_calibration.py \
+  --image-dir "$CALIBRATION_IMAGE_DIR" \
+  --output-dir "$CALIBRATION_DIR" \
+  --tile-size 256 \
+  --samples 64 \
+  --input-list-prefix /calibration
+
+docker run --rm --platform linux/amd64 \
+  -v "$QNN_SDK_ROOT:/qnn:ro" \
+  -v "$ONNX_DIR:/models:ro" \
+  -v "$CALIBRATION_DIR:/calibration:ro" \
+  -v "$INT8_CONVERTED_DIR:/output" \
+  -e ONNX_DIR=/models \
+  -e CALIBRATION_INPUT_LIST=/calibration/input-list.txt \
+  -e OUTPUT_DIR=/output \
+  mihon-qnn-tools:2.49.0 \
+  convert-qnn-int8-models
 ```
 
 Compile the converter output into model libraries used for HTP context generation:
@@ -48,6 +77,15 @@ docker run --rm --platform linux/amd64 \
   -v "$QNN_SDK_ROOT:/qnn:ro" \
   -v "$CONVERTED_DIR:/converted:ro" \
   -v "$MODEL_LIB_DIR:/output" \
+  -e CONVERTED_DIR=/converted \
+  -e OUTPUT_DIR=/output \
+  mihon-qnn-tools:2.49.0 \
+  compile-qnn-model-libs
+
+docker run --rm --platform linux/amd64 \
+  -v "$QNN_SDK_ROOT:/qnn:ro" \
+  -v "$INT8_CONVERTED_DIR:/converted:ro" \
+  -v "$INT8_MODEL_LIB_DIR:/output" \
   -e CONVERTED_DIR=/converted \
   -e OUTPUT_DIR=/output \
   mihon-qnn-tools:2.49.0 \

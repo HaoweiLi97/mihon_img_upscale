@@ -20,14 +20,19 @@ models="\
     realcugan-se-x2-denoise1x \
     realcugan-se-x2-denoise2x \
     realcugan-se-x2-denoise3x \
-    realcugan-se-x2-conservative"
+    realcugan-se-x2-conservative \
+    realcugan-se-x2-no-denoise-int8 \
+    realcugan-se-x2-denoise1x-int8 \
+    realcugan-se-x2-denoise2x-int8 \
+    realcugan-se-x2-denoise3x-int8 \
+    realcugan-se-x2-conservative-int8"
 
 for soc in $(printf '%s' "$QNN_HTP_SOCS" | tr ',' ' '); do
     for model in $models; do
         model_dir=$MODEL_LIB_DIR
-        if [ "$model" = "realesrgan-animevideov3-x2-int8" ]; then
-            model_dir=$INT8_MODEL_LIB_DIR
-        fi
+        case "$model" in
+            *-int8) model_dir=$INT8_MODEL_LIB_DIR ;;
+        esac
         model_path="$model_dir/lib$model.so"
         if [ ! -f "$model_path" ]; then
             echo "Missing QNN model library: $model_path" >&2

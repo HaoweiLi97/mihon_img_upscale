@@ -14,10 +14,12 @@ RUN apt-get update -qq \
         tabulate==0.9.0
 
 COPY convert_models.sh /usr/local/bin/convert-qnn-models
+COPY convert_int8_models.sh /usr/local/bin/convert-qnn-int8-models
 COPY compile_model_libs.sh /usr/local/bin/compile-qnn-model-libs
 COPY generate_contexts.sh /usr/local/bin/generate-qnn-contexts
 RUN chmod 755 \
     /usr/local/bin/convert-qnn-models \
+    /usr/local/bin/convert-qnn-int8-models \
     /usr/local/bin/compile-qnn-model-libs \
     /usr/local/bin/generate-qnn-contexts
 

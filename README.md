@@ -2,7 +2,7 @@
 # Mihon_img_upscale
 
 ### Description
-A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Real-ESRGAN, Waifu2x) to enhance low-resolution manga in real-time.
+A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Real-ESRGAN, Waifu2x) with Vulkan and Qualcomm NPU processing to enhance low-resolution manga in real time.
 
 ---
 
@@ -11,6 +11,39 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
   <br>
 
 </p>
+
+---
+
+## Qualcomm NPU Acceleration
+
+Version 1.3.2 adds an optional Qualcomm QNN/HTP backend alongside the existing Vulkan
+backend. Vulkan and NPU are independent choices in the reader settings. Selecting NPU limits
+the model list to models with compatible offline contexts; unsupported devices keep the NPU
+option disabled and continue to use Vulkan.
+
+| Snapdragon platform | SoC | HTP architecture |
+| :--- | :---: | :---: |
+| Snapdragon 8+ Gen 1 | SM8475 | v69 |
+| Snapdragon 8 Gen 2 | SM8550 | v73 |
+| Snapdragon 8 Gen 3 | SM8650 | v75 |
+| Snapdragon 8 Elite | SM8750 | v79 |
+| Snapdragon 8 Elite Gen 5 | SM8850 | v81 |
+
+### NPU Model Support
+
+| Model | Scale | Precision | Variants |
+| :--- | :---: | :---: | :--- |
+| Real-ESRGAN animevideov3 | 2x | FP16 / INT8 | Standard |
+| Real-CUGAN SE | 2x | FP16 / INT8 | No denoise, denoise1x, denoise2x, denoise3x, conservative |
+
+Real-CUGAN SE INT8 has been validated on SM8475 with QNN HTP execution at approximately
+1.6-2.0 seconds per tested manga page. Actual speed depends on image dimensions, model variant,
+thermal state, and device firmware.
+
+NPU-enabled local builds require Qualcomm AI Runtime, the matching HTP Stub libraries, and
+the generated offline contexts. See the [QNN model pipeline](tools/qnn/README.md) for conversion
+and build configuration. When these dependencies are not configured, the project still builds
+as a Vulkan-only version and disables the NPU option.
 
 ---
 

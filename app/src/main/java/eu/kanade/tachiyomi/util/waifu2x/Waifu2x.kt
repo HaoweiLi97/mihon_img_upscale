@@ -19,7 +19,7 @@ object Waifu2x {
     const val PROCESSING_BACKEND_QUALCOMM_NPU = 1
 
     // Bump when bundled model assets change so existing installations refresh their cache.
-    private const val BUNDLED_MODEL_CACHE_VERSION = "7"
+    private const val BUNDLED_MODEL_CACHE_VERSION = "8"
 
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
@@ -145,9 +145,10 @@ object Waifu2x {
                         4 -> "conservative"
                         else -> "no-denoise"
                     }
+                    val precisionSuffix = if (currentConfig.precision == 2) "-int8" else ""
                     initializeQnnIfAvailable(
                         context,
-                        "realcugan-se-x2-$variant",
+                        "realcugan-se-x2-$variant$precisionSuffix",
                         padding = 18,
                     )
                 }
@@ -838,7 +839,7 @@ object Waifu2x {
         if (resolveProcessingBackend(processingBackend, model, scale) != PROCESSING_BACKEND_QUALCOMM_NPU) {
             return precision
         }
-        return if (model == 2 && precision == 2) 2 else 0
+        return if ((model == 0 || model == 2) && precision == 2) 2 else 0
     }
 
     private fun backendName(backend: Int): String {
