@@ -14,6 +14,22 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 
 ---
 
+## Upscaling Models
+
+| Model Name | Scale | Author | Project / Model |
+| :--- | :---: | :--- | :--- |
+| **Real-CUGAN SE** | 2x / 3x / 4x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
+| **Real-CUGAN Pro** | 2x / 3x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
+| **Real-CUGAN Nose** | 2x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
+| **Real-ESRGAN** | 2x / 3x / 4x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
+| **Waifu2x** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
+| **Waifu2x (Fast)** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
+| **W2xEX Universal Fast** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
+| **W2xEX Omni Mini V2** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
+| **W2xEX Photo Small** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
+| **AnimeJaNai v2 UltraCompact** | 2x | the-database | [OpenModelDB](https://openmodeldb.info/models/2x-AnimeJaNai-v2-UltraCompact) |
+| **sudo UltraCompact** | 2x | sudo rm -rf / --no-preserve-root#8353 | [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
+
 ## Qualcomm NPU Acceleration
 
 Version 1.3.2 adds an optional Qualcomm QNN/HTP backend alongside the existing Vulkan
@@ -46,22 +62,6 @@ and build configuration. When these dependencies are not configured, the project
 as a Vulkan-only version and disables the NPU option.
 
 ---
-
-## Upscaling Models
-
-| Model Name | Scale | Author | Project / Model |
-| :--- | :---: | :--- | :--- |
-| **Real-CUGAN SE** | 2x / 3x / 4x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-CUGAN Pro** | 2x / 3x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-CUGAN Nose** | 2x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-ESRGAN** | 2x / 3x / 4x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
-| **Waifu2x** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
-| **Waifu2x (Fast)** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
-| **W2xEX Universal Fast** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
-| **W2xEX Omni Mini V2** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
-| **W2xEX Photo Small** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
-| **AnimeJaNai v2 UltraCompact** | 2x | the-database | [OpenModelDB](https://openmodeldb.info/models/2x-AnimeJaNai-v2-UltraCompact) |
-| **sudo UltraCompact** | 2x | sudo rm -rf / --no-preserve-root#8353 | [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
 
 
 
