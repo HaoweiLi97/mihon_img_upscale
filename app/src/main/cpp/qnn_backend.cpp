@@ -169,6 +169,52 @@ public:
     return result;
   }
 
+  int architecture() {
+    void *handle = dlopen("libQnnHtp.so", RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+      LOGE("Unable to load libQnnHtp.so while detecting architecture: %s",
+           dlerror());
+      return 0;
+    }
+    const QnnInterface_t *provider = find_qnn_provider(handle);
+    if (!provider) {
+      dlclose(handle);
+      return 0;
+    }
+    const auto &qnn = provider->QNN_INTERFACE_VER_NAME;
+    if (!qnn.deviceGetPlatformInfo || !qnn.deviceFreePlatformInfo) {
+      dlclose(handle);
+      return 0;
+    }
+
+    const QnnDevice_PlatformInfo_t *platform_info = nullptr;
+    int result = 0;
+    if (qnn.deviceGetPlatformInfo(nullptr, &platform_info) == QNN_SUCCESS &&
+        platform_info &&
+        platform_info->version == QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
+      for (uint32_t index = 0; index < platform_info->v1.numHwDevices; ++index) {
+        const auto &device = platform_info->v1.hwDevices[index];
+        if (device.version != QNN_DEVICE_HARDWARE_DEVICE_INFO_VERSION_1 ||
+            !device.v1.deviceInfoExtension) {
+          continue;
+        }
+        const auto *extension =
+            reinterpret_cast<const QnnHtpDevice_DeviceInfoExtension_t *>(
+                device.v1.deviceInfoExtension);
+        if (extension->devType == QNN_HTP_DEVICE_TYPE_ON_CHIP) {
+          result = static_cast<int>(extension->onChipDevice.arch);
+          break;
+        }
+      }
+    }
+    if (platform_info) {
+      qnn.deviceFreePlatformInfo(nullptr, platform_info);
+    }
+    dlclose(handle);
+    LOGD("Detected HTP architecture v%d from QNN platform info", result);
+    return result;
+  }
+
   bool load(const std::string &context_path, int padding) {
     deactivate();
     if (!ensure_runtime()) {
@@ -764,6 +810,14 @@ bool is_runtime_loadable() {
   return runtime.probe();
 #else
   return false;
+#endif
+}
+
+int architecture() {
+#if MIHON_ENABLE_QNN
+  return runtime.architecture();
+#else
+  return 0;
 #endif
 }
 

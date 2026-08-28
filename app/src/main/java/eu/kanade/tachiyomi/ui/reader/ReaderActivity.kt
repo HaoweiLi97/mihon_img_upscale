@@ -14,26 +14,37 @@ import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.View.LAYER_TYPE_HARDWARE
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -77,7 +88,13 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.spatial.DepthSpatialModel
+import eu.kanade.tachiyomi.ui.reader.spatial.DepthSpatialPipeline
+import eu.kanade.tachiyomi.ui.reader.spatial.SpatialDepthSceneIO
+import eu.kanade.tachiyomi.ui.reader.spatial.SpatialSceneControlsView
+import eu.kanade.tachiyomi.ui.reader.spatial.SpatialSceneView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.util.system.openInBrowser
@@ -94,7 +111,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.stringResource
@@ -107,6 +127,7 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
+import java.util.Locale
 
 class ReaderActivity : BaseActivity() {
 
@@ -148,6 +169,25 @@ class ReaderActivity : BaseActivity() {
 
     private var uiBusyJob: kotlinx.coroutines.Job? = null
 
+    private val spatialPipeline by lazy { DepthSpatialPipeline(applicationContext) }
+    private val spatialModel by lazy { DepthSpatialModel(applicationContext) }
+    private var spatialSceneView: SpatialSceneView? = null
+    private var spatialSceneContainer: FrameLayout? = null
+    private var spatialSceneControls: SpatialSceneControlsView? = null
+    private var spatialSceneJob: Job? = null
+    private var spatialScenePageKey: Pair<Long?, Int>? = null
+    private var spatialMotionSensitivity = 1f
+    private var spatialDepthStrength = 1f
+    private var spatialRotationAngleX = 7.9f
+    private var spatialRotationAngleY = 6.2f
+    private var spatialRotationAngleZ = 4.5f
+    private var spatialSceneActive by mutableStateOf(false)
+    private var spatialSceneBusy by mutableStateOf(false)
+    private var showSpatialModelDownloadDialog by mutableStateOf(false)
+    private var spatialModelDownloadProgress by mutableStateOf<Int?>(null)
+    private var spatialModelCompiling by mutableStateOf(false)
+    private var spatialModelCompileHtpVersion by mutableStateOf<Int?>(null)
+
     /**
      * Called when the activity is created. Initializes the presenter and configuration.
      */
@@ -175,6 +215,16 @@ class ReaderActivity : BaseActivity() {
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
         binding.setComposeOverlay()
+
+        onBackPressedDispatcher.addCallback(this) {
+            if (spatialSceneActive || spatialSceneBusy) {
+                hideSpatialScene()
+            } else {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
+        }
 
         if (!viewModel.hasValidArgs) {
             finish()
@@ -360,12 +410,69 @@ class ReaderActivity : BaseActivity() {
             }
             null -> {}
         }
+
+        if (showSpatialModelDownloadDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    if (spatialModelDownloadProgress == null) showSpatialModelDownloadDialog = false
+                },
+                title = { Text(stringResource(MR.strings.reader_spatial_scene_download_title)) },
+                text = {
+                    val progress = spatialModelDownloadProgress
+                    if (progress == null) {
+                        Text(stringResource(MR.strings.reader_spatial_scene_download_message))
+                    } else {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CircularProgressIndicator()
+                            Text(stringResource(MR.strings.reader_spatial_scene_downloading, progress))
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (spatialModelDownloadProgress == null) {
+                        TextButton(onClick = ::downloadSpatialModel) {
+                            Text(stringResource(MR.strings.reader_spatial_scene_download))
+                        }
+                    }
+                },
+                dismissButton = {
+                    if (spatialModelDownloadProgress == null) {
+                        TextButton(onClick = { showSpatialModelDownloadDialog = false }) {
+                            Text(stringResource(MR.strings.action_cancel))
+                        }
+                    }
+                },
+            )
+        }
+
+        if (spatialModelCompiling) {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text(stringResource(MR.strings.reader_spatial_scene_compile_title)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text(
+                            stringResource(
+                                MR.strings.reader_spatial_scene_compiling,
+                                spatialModelCompileHtpVersion?.let { "v$it" } ?: "HTP",
+                            ),
+                        )
+                    }
+                },
+                confirmButton = {},
+            )
+        }
     }
 
     /**
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
+        hideSpatialScene()
         uiBusyJob?.cancel()
         Waifu2x.setUiBusy(false)
         viewModel.state.value.viewer?.destroy()
@@ -377,6 +484,7 @@ class ReaderActivity : BaseActivity() {
     }
 
     override fun onPause() {
+        spatialSceneView?.stopMotion()
         persistCurrentPagerPage()
         lifecycleScope.launchNonCancellable {
             viewModel.updateHistory()
@@ -395,6 +503,7 @@ class ReaderActivity : BaseActivity() {
      */
     override fun onResume() {
         super.onResume()
+        spatialSceneView?.startMotion()
         viewModel.restartReadTimer()
         setMenuVisibility(viewModel.state.value.menuVisible)
     }
@@ -567,6 +676,9 @@ class ReaderActivity : BaseActivity() {
                     ),
                 )
             },
+            spatialSceneActive = spatialSceneActive,
+            spatialSceneBusy = spatialSceneBusy,
+            onClickSpatialScene = ::toggleSpatialScene,
             onClickSettings = viewModel::openSettingsDialog,
         )
     }
@@ -749,7 +861,220 @@ class ReaderActivity : BaseActivity() {
         displayCurrentPage: Int = page.number,
         displayTotalPages: Int? = null,
     ) {
+        val selectedKey = page.chapter.chapter.id to page.index
+        if (spatialScenePageKey != null && spatialScenePageKey != selectedKey) {
+            hideSpatialScene()
+        }
         viewModel.onPageSelected(page, hasExtraPage, displayCurrentPage, displayTotalPages)
+    }
+
+    private fun toggleSpatialScene() {
+        if (spatialSceneActive || spatialSceneBusy) {
+            hideSpatialScene()
+            return
+        }
+        val state = viewModel.state.value
+        val pager = state.viewer as? PagerViewer
+        val page = pager?.getCurrentReaderPage()
+        if (page == null || state.hasExtraPage) {
+            menuToggleToast?.cancel()
+            menuToggleToast = toast(MR.strings.reader_spatial_scene_single_page_only)
+            return
+        }
+
+        spatialSceneBusy = true
+        spatialScenePageKey = page.chapter.chapter.id to page.index
+        menuToggleToast?.cancel()
+        menuToggleToast = toast(MR.strings.reader_spatial_scene_loading)
+        spatialSceneJob = lifecycleScope.launch {
+            try {
+                when (
+                    val result = spatialPipeline.create(page) { htpArchitecture ->
+                        spatialModelCompileHtpVersion = htpArchitecture
+                        spatialModelCompiling = true
+                    }
+                ) {
+                is DepthSpatialPipeline.Result.Ready -> {
+                    val scene = runCatching {
+                        withContext(Dispatchers.IO) { SpatialDepthSceneIO.read(result.file) }
+                    }.getOrElse { error ->
+                        spatialSceneBusy = false
+                        spatialScenePageKey = null
+                        menuToggleToast = toast(
+                            stringResource(MR.strings.reader_spatial_scene_failed, error.message.orEmpty()),
+                        )
+                        return@launch
+                    }
+                    if (spatialScenePageKey != (page.chapter.chapter.id to page.index)) return@launch
+                    val sceneView = SpatialSceneView(this@ReaderActivity).apply {
+                        showScene(scene)
+                        setMotionSensitivity(spatialMotionSensitivity)
+                        setDepthStrength(spatialDepthStrength)
+                        setRotationAngles(
+                            spatialRotationAngleX,
+                            spatialRotationAngleY,
+                            spatialRotationAngleZ,
+                        )
+                        setOnClickListener { toggleMenu() }
+                    }
+                    val sceneContainer = FrameLayout(this@ReaderActivity).apply {
+                        addView(sceneView, MATCH_PARENT, MATCH_PARENT)
+                    }
+                    val controls = SpatialSceneControlsView(this@ReaderActivity).apply {
+                        configure(
+                            sensitivity = spatialMotionSensitivity,
+                            depthStrength = spatialDepthStrength,
+                            rotationAngleX = spatialRotationAngleX,
+                            rotationAngleY = spatialRotationAngleY,
+                            rotationAngleZ = spatialRotationAngleZ,
+                            anchorText = stringResource(MR.strings.reader_spatial_rotation_anchor),
+                            anchorPickText = stringResource(MR.strings.reader_spatial_rotation_anchor_pick),
+                            sensitivityText = { value ->
+                                stringResource(
+                                    MR.strings.reader_spatial_gyro_sensitivity,
+                                    String.format(Locale.getDefault(), "%.1f", value),
+                                )
+                            },
+                            depthText = { value ->
+                                stringResource(
+                                    MR.strings.reader_spatial_depth_strength,
+                                    String.format(Locale.getDefault(), "%.1f", value),
+                                )
+                            },
+                            rotationText = { axis, value ->
+                                stringResource(
+                                    MR.strings.reader_spatial_rotation_angle,
+                                    axis,
+                                    String.format(Locale.getDefault(), "%.1f", value),
+                                )
+                            },
+                            rotationButtonText = stringResource(MR.strings.reader_spatial_rotation_angles),
+                            rotationResetText = stringResource(MR.strings.reader_spatial_rotation_reset),
+                            gyroResetText = stringResource(MR.strings.reader_spatial_gyro_reset),
+                            onAnchorRequested = {
+                                sceneView.beginRotationAnchorSelection {
+                                    completeAnchorSelection()
+                                    menuToggleToast?.cancel()
+                                    menuToggleToast = toast(MR.strings.reader_spatial_rotation_anchor_set)
+                                }
+                            },
+                            onGyroscopeReset = {
+                                sceneView.resetGyroscope()
+                                menuToggleToast?.cancel()
+                                menuToggleToast = toast(MR.strings.reader_spatial_gyro_reset_done)
+                            },
+                            onSensitivityChanged = { sensitivity ->
+                                spatialMotionSensitivity = sensitivity
+                                sceneView.setMotionSensitivity(sensitivity)
+                            },
+                            onDepthStrengthChanged = { strength ->
+                                spatialDepthStrength = strength
+                                sceneView.setDepthStrength(strength)
+                            },
+                            onRotationAnglesChanged = { xDegrees, yDegrees, zDegrees ->
+                                spatialRotationAngleX = xDegrees
+                                spatialRotationAngleY = yDegrees
+                                spatialRotationAngleZ = zDegrees
+                                sceneView.setRotationAngles(xDegrees, yDegrees, zDegrees)
+                            },
+                        )
+                    }
+                    val controlMargin = (16 * resources.displayMetrics.density + 0.5f).toInt()
+                    binding.root.addView(
+                        controls,
+                        FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.END or Gravity.BOTTOM).apply {
+                            marginEnd = controlMargin
+                            bottomMargin = controlMargin
+                        },
+                    )
+                    ViewCompat.setOnApplyWindowInsetsListener(controls) { view, insets ->
+                        val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                        (view.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+                            params.marginEnd = controlMargin + systemBars.right
+                            params.bottomMargin = controlMargin + systemBars.bottom
+                            view.layoutParams = params
+                        }
+                        insets
+                    }
+                    binding.viewerContainer.addView(sceneContainer, MATCH_PARENT, MATCH_PARENT)
+                    sceneView.startMotion()
+                    spatialSceneView = sceneView
+                    spatialSceneContainer = sceneContainer
+                    spatialSceneControls = controls
+                    spatialSceneActive = true
+                }
+                DepthSpatialPipeline.Result.ModelMissing -> {
+                    showSpatialModelDownloadDialog = true
+                    spatialScenePageKey = null
+                }
+                DepthSpatialPipeline.Result.RuntimeUnavailable -> {
+                    menuToggleToast = toast(MR.strings.reader_spatial_scene_runtime_unavailable)
+                    spatialScenePageKey = null
+                }
+                is DepthSpatialPipeline.Result.Failed -> {
+                    menuToggleToast = toast(
+                        stringResource(
+                            MR.strings.reader_spatial_scene_failed,
+                            result.cause.message.orEmpty(),
+                        ),
+                    )
+                    spatialScenePageKey = null
+                }
+                }
+            } finally {
+                spatialModelCompiling = false
+                spatialModelCompileHtpVersion = null
+                spatialSceneBusy = false
+                spatialSceneJob = null
+            }
+        }
+    }
+
+    private fun hideSpatialScene() {
+        spatialSceneJob?.cancel()
+        spatialSceneJob = null
+        spatialModelCompiling = false
+        spatialModelCompileHtpVersion = null
+        spatialSceneBusy = false
+        spatialScenePageKey = null
+        spatialSceneView?.let { view ->
+            view.release()
+        }
+        spatialSceneContainer?.let(binding.viewerContainer::removeView)
+        spatialSceneControls?.let(binding.root::removeView)
+        spatialSceneView = null
+        spatialSceneContainer = null
+        spatialSceneControls = null
+        spatialSceneActive = false
+    }
+
+    private fun downloadSpatialModel() {
+        if (spatialModelDownloadProgress != null) return
+        spatialModelDownloadProgress = 0
+        lifecycleScope.launch {
+            runCatching {
+                spatialModel.download { downloaded, total ->
+                    spatialModelDownloadProgress = if (total > 0L) {
+                        (downloaded * 100L / total).toInt().coerceIn(0, 100)
+                    } else {
+                        0
+                    }
+                }
+            }.onSuccess {
+                spatialModelDownloadProgress = null
+                showSpatialModelDownloadDialog = false
+                toggleSpatialScene()
+            }.onFailure { error ->
+                spatialModelDownloadProgress = null
+                showSpatialModelDownloadDialog = false
+                menuToggleToast = toast(
+                    stringResource(
+                        MR.strings.reader_spatial_scene_download_failed,
+                        error.message.orEmpty(),
+                    ),
+                )
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

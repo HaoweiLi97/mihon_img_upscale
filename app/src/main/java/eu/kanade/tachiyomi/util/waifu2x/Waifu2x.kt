@@ -2,7 +2,7 @@ package eu.kanade.tachiyomi.util.waifu2x
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.os.Build
+import eu.kanade.tachiyomi.util.qnn.QualcommHtp
 import java.io.BufferedInputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -895,26 +895,7 @@ object Waifu2x {
         false
     }
 
-    private data class QnnTarget(val socModel: String, val htpArch: Int)
-
-    private val qnnTarget: QnnTarget? by lazy {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@lazy null
-        val socModel = Build.SOC_MODEL.uppercase()
-        when {
-            socModel.startsWith("SM8475") -> QnnTarget("SM8475", 69)
-            socModel.startsWith("SM8550") -> QnnTarget("SM8550", 73)
-            socModel.startsWith("SM8650") -> QnnTarget("SM8650", 75)
-            socModel.startsWith("SM8750") -> QnnTarget("SM8750", 79)
-            socModel.startsWith("SM8850") -> QnnTarget("SM8850", 81)
-            else -> null
-        }
-    }
-
-    private val isQualcommNpuDeviceAvailable: Boolean by lazy {
-        qnnTarget != null && isQnnRuntimeAvailable()
-    }
-
-    fun isQualcommNpuAvailable(): Boolean = isQualcommNpuDeviceAvailable
+    fun isQualcommNpuAvailable(): Boolean = QualcommHtp.architecture() != null && isQnnRuntimeAvailable()
 
     fun isQualcommNpuModelSupported(model: Int, scale: Int): Boolean {
         if (model == 1) return scale == 2 || scale == 3
@@ -956,11 +937,11 @@ object Waifu2x {
     }
 
     private fun initializeQnnIfAvailable(context: Context, modelName: String, padding: Int) {
-        val target = qnnTarget ?: return
+        val htpArchitecture = QualcommHtp.architecture(context) ?: return
         if (!isQnnRuntimeAvailable()) return
         try {
-            val filename = "$modelName.${target.socModel}.bin"
-            val directory = File(context.cacheDir, "qnn-contexts-${target.socModel.lowercase()}").apply { mkdirs() }
+            val filename = "$modelName.v$htpArchitecture.bin"
+            val directory = File(context.cacheDir, "qnn-contexts-v$htpArchitecture").apply { mkdirs() }
             val output = File(directory, filename)
             val version = File(directory, ".$filename.version")
             if (!output.isFile || version.takeIf(File::isFile)?.readText() != QNN_CONTEXT_CACHE_VERSION) {
@@ -976,7 +957,7 @@ object Waifu2x {
             )
             android.util.Log.d(
                 "Waifu2x",
-                "Qualcomm NPU ${if (active) "enabled" else "unavailable"}: $filename (HTP v${target.htpArch})",
+                "Qualcomm NPU ${if (active) "enabled" else "unavailable"}: $filename (HTP v$htpArchitecture)",
             )
         } catch (e: Exception) {
             android.util.Log.w("Waifu2x", "Unable to initialize Qualcomm NPU; using Vulkan", e)

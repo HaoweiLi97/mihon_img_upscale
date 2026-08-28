@@ -55,7 +55,14 @@ val qnnContextDir = providers.gradleProperty("qnnContextDir").orNull
 val qnnSdkRoot = qnnSdkDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
 val qnnContextRoot = qnnContextDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
 val generatedQnnAssetsDir = layout.buildDirectory.dir("generated/qnnAssets")
-val qnnSocModels = listOf("SM8475", "SM8550", "SM8650", "SM8750", "SM8850")
+val generatedQnnJniLibsDir = layout.buildDirectory.dir("generated/qnnJniLibs")
+val qnnContextTargets = listOf(
+    69 to "SM8475",
+    73 to "SM8550",
+    75 to "SM8650",
+    79 to "SM8750",
+    81 to "SM8850",
+)
 val qnnModelNames = listOf(
     "realesrgan-animevideov3-x2",
     "realesrgan-animevideov3-x2-int8",
@@ -88,21 +95,38 @@ val qnnModelNames = listOf(
     "w2xex-photo-small-x2",
     "w2xex-photo-small-x2-int8",
 )
-val qnnContextFiles = qnnSocModels.flatMap { soc -> qnnModelNames.map { model -> "$model.$soc.bin" } }
+val qnnContextSourceFiles = qnnContextTargets.flatMap { (_, sourceSoc) ->
+    qnnModelNames.map { model -> "$model.$sourceSoc.bin" }
+}
 val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
     tasks.register<Sync>("stageQnnContexts") {
-        from(contextRoot) {
-            include(qnnContextFiles)
-            into("qnn-contexts")
+        qnnContextTargets.forEach { (htpArch, sourceSoc) ->
+            from(contextRoot) {
+                include(qnnModelNames.map { model -> "$model.$sourceSoc.bin" })
+                rename { filename -> filename.replace(".$sourceSoc.bin", ".v$htpArch.bin") }
+                into("qnn-contexts")
+            }
         }
         into(generatedQnnAssetsDir)
 
         doFirst {
-            val missingFiles = qnnContextFiles
+            val missingFiles = qnnContextSourceFiles
                 .map(contextRoot::resolve)
                 .filterNot(File::isFile)
             check(missingFiles.isEmpty()) {
-                "QNN multi-SoC context directory is incomplete: ${missingFiles.joinToString()}"
+                "QNN multi-HTP context directory is incomplete: ${missingFiles.joinToString()}"
+            }
+        }
+    }
+}
+val stageQnnDlcRuntime = qnnSdkRoot?.let { sdkRoot ->
+    val modelDlcLibrary = sdkRoot.resolve("lib/aarch64-android/libQnnModelDlc.so")
+    tasks.register<Sync>("stageQnnDlcRuntime") {
+        from(modelDlcLibrary)
+        into(generatedQnnJniLibsDir.map { it.dir("arm64-v8a") })
+        doFirst {
+            check(modelDlcLibrary.isFile) {
+                "QNN DLC runtime not found: ${modelDlcLibrary.absolutePath}"
             }
         }
     }
@@ -114,8 +138,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 32
-        versionName = "1.3.5"
+        versionCode = 33
+        versionName = "1.3.6"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
@@ -193,6 +217,9 @@ android {
         getByName("benchmark").res.srcDirs("src/debug/res")
         if (stageQnnContexts != null) {
             getByName("main").assets.srcDir(generatedQnnAssetsDir)
+        }
+        if (stageQnnDlcRuntime != null) {
+            getByName("main").jniLibs.srcDir(generatedQnnJniLibsDir)
         }
     }
 
@@ -280,6 +307,14 @@ if (stageQnnContexts != null) {
     }
 }
 
+if (stageQnnDlcRuntime != null) {
+    tasks.configureEach {
+        if (name.startsWith("merge") && name.endsWith("JniLibFolders")) {
+            dependsOn(stageQnnDlcRuntime)
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         freeCompilerArgs.addAll(
@@ -302,6 +337,8 @@ kotlin {
 dependencies {
     // Packages the matching HTP Stub/Skel libraries for every supported Snapdragon generation.
     implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
+    androidTestImplementation(androidx.test.ext)
+    androidTestImplementation("androidx.test:runner:1.7.0")
 
     implementation(projects.i18n)
     implementation(projects.core.archive)

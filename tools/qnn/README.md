@@ -1,7 +1,9 @@
 # Qualcomm QNN model pipeline
 
-Supported targets are Snapdragon 8+ Gen 1 through Snapdragon 8 Elite Gen 5. Models use a
-fixed 256x256 RGB NCHW input tile and produce a 512x512 or 768x768 RGB NCHW output tile.
+Supported targets are HTP v69, v73, v75, v79, and v81. Runtime selection and cache names use
+only the HTP architecture, so another Qualcomm chip with the same HTP version reuses the same
+context. Models use a fixed 256x256 RGB NCHW input tile and produce a 512x512 or 768x768 RGB
+NCHW output tile.
 
 | Product | SoC | HTP architecture |
 | --- | --- | --- |
@@ -125,11 +127,11 @@ prefix. QAIRT 2.49 still displays `--model_prefix` in the context generator help
 option is no longer applied to model libraries. Using a filename-derived prefix causes the
 generator to fail while looking up `QnnModel_composeGraphs`.
 
-Generate offline HTP contexts for all supported Snapdragon generations. QAIRT's model-library
+Generate offline contexts for all supported HTP versions. QAIRT's model-library
 workflow must pass each target through `--soc_model`; `--htp_socs` only selects targets for the
 DLC offline-cache workflow and otherwise leaves model-library contexts on the default HTP
-architecture. The generation script maps the supported SoC names to their QAIRT SoC model IDs
-and invokes the generator once per model and target.
+architecture. The generation script accepts HTP versions and internally maps them to the
+representative QAIRT generator ID required by that tool. Output files are named by HTP version.
 
 ```sh
 docker run --rm --platform linux/amd64 \
@@ -140,7 +142,7 @@ docker run --rm --platform linux/amd64 \
   -e MODEL_LIB_DIR=/models \
   -e INT8_MODEL_LIB_DIR=/models-int8 \
   -e OUTPUT_DIR=/output \
-  -e QNN_HTP_SOCS=sm8475,sm8550,sm8650,sm8750,sm8850 \
+  -e QNN_HTP_ARCHS=69,73,75,79,81 \
   mihon-qnn-tools:2.49.0 \
   generate-qnn-contexts
 ```

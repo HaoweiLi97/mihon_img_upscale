@@ -34,10 +34,14 @@ A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Rea
 
 ## Qualcomm NPU Acceleration
 
-Version 1.3.5 adds an optional Qualcomm QNN/HTP backend alongside the existing Vulkan
+Version 1.3.6 includes the optional Qualcomm QNN/HTP backend alongside the existing Vulkan
 backend. Vulkan and NPU are independent choices in the reader settings. Selecting NPU limits
 the model list to models with compatible offline contexts; unsupported devices keep the NPU
 option disabled and continue to use Vulkan.
+
+Version 1.3.6 also adds on-device spatial images powered by Depth Anything V3. The first run
+downloads the depth model and compiles a context for the detected HTP generation, with support
+for v69, v73, v75, v79, and v81 devices.
 
 | Snapdragon platform | SoC | HTP architecture |
 | :--- | :---: | :---: |

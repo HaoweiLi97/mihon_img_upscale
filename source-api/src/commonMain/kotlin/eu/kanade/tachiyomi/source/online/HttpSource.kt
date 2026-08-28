@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -37,6 +38,9 @@ abstract class HttpSource : CatalogueSource {
      * Base url of the website without the trailing slash, like: http://mysite.com
      */
     abstract val baseUrl: String
+
+    /** Website home URL exposed by the TachiyomiX 1.6 ABI. */
+    open fun getHomeUrl(): String = baseUrl
 
     /**
      * Version id used to generate the source id. If the site completely changes and urls are
@@ -216,7 +220,7 @@ abstract class HttpSource : CatalogueSource {
      */
     @Suppress("DEPRECATION")
     override suspend fun getMangaDetails(manga: SManga): SManga {
-        return fetchMangaDetails(manga).awaitSingle()
+        return getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getMangaDetails"))
@@ -254,7 +258,19 @@ abstract class HttpSource : CatalogueSource {
      */
     @Suppress("DEPRECATION")
     override suspend fun getChapterList(manga: SManga): List<SChapter> {
-        return fetchChapterList(manga).awaitSingle()
+        return getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+    }
+
+    @Suppress("DEPRECATION")
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        val updatedManga = if (fetchDetails) fetchMangaDetails(manga).awaitSingle() else manga
+        val updatedChapters = if (fetchChapters) fetchChapterList(manga).awaitSingle() else chapters
+        return SMangaUpdate(updatedManga, updatedChapters)
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getChapterList"))

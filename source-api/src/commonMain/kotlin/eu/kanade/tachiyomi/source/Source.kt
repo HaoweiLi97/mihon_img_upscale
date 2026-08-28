@@ -1,8 +1,11 @@
 package eu.kanade.tachiyomi.source
 
+import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.awaitSingle
 import rx.Observable
 
@@ -25,6 +28,41 @@ interface Source {
         get() = ""
 
     /**
+     * Whether the source has support for latest updates.
+     *
+     * Part of the TachiyomiX 1.6 source ABI. It remains optional here so older
+     * sources and non-catalogue sources keep working.
+     */
+    val supportsLatest: Boolean
+        get() = false
+
+    /** Part of the TachiyomiX 1.6 source ABI. */
+    fun getFilterList(): FilterList = FilterList()
+
+    /** Part of the TachiyomiX 1.6 source ABI. */
+    suspend fun getPopularManga(page: Int): MangasPage =
+        throw UnsupportedOperationException("Popular manga is not supported")
+
+    /** Part of the TachiyomiX 1.6 source ABI. */
+    suspend fun getLatestUpdates(page: Int): MangasPage =
+        throw UnsupportedOperationException("Latest updates are not supported")
+
+    /** Part of the TachiyomiX 1.6 source ABI. */
+    suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage =
+        throw UnsupportedOperationException("Search is not supported")
+
+    /**
+     * Combined manga/chapters update API introduced by TachiyomiX 1.6.
+     * CatalogueSource supplies the legacy bridge for older extensions.
+     */
+    suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = throw UnsupportedOperationException("Manga updates are not supported")
+
+    /**
      * Get the updated details for a manga.
      *
      * @since extensions-lib 1.5
@@ -33,7 +71,11 @@ interface Source {
      */
     @Suppress("DEPRECATION")
     suspend fun getMangaDetails(manga: SManga): SManga {
-        return fetchMangaDetails(manga).awaitSingle()
+        return try {
+            getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
+        } catch (_: UnsupportedOperationException) {
+            fetchMangaDetails(manga).awaitSingle()
+        }
     }
 
     /**
@@ -45,7 +87,11 @@ interface Source {
      */
     @Suppress("DEPRECATION")
     suspend fun getChapterList(manga: SManga): List<SChapter> {
-        return fetchChapterList(manga).awaitSingle()
+        return try {
+            getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+        } catch (_: UnsupportedOperationException) {
+            fetchChapterList(manga).awaitSingle()
+        }
     }
 
     /**

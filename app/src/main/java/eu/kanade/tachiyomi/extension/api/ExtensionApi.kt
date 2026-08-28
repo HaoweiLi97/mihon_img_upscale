@@ -178,7 +178,7 @@ internal class ExtensionApi {
         return this
             .filter {
                 val libVersion = it.extractLibVersion()
-                libVersion >= ExtensionLoader.LIB_VERSION_MIN && libVersion <= ExtensionLoader.LIB_VERSION_MAX
+                ExtensionLoader.isSupportedLibVersion(libVersion)
             }
             .map {
                 Extension.Available(
@@ -209,7 +209,7 @@ internal class ExtensionApi {
         return extensions
             .filter {
                 val version = it.extensionLib.toDoubleOrNull() ?: return@filter false
-                version in ExtensionLoader.LIB_VERSION_MIN..ExtensionLoader.LIB_VERSION_MAX
+                ExtensionLoader.isSupportedLibVersion(version)
             }
             .map { extension ->
                 val languages = extension.sources.map { it.language }.toSet()

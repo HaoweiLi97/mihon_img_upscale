@@ -70,6 +70,8 @@ set(WAIFU2X_SOURCES
     waifu2x.cpp
     anime4k.cpp
     qnn_backend.cpp
+    spatial_qnn_runtime.cpp
+    depth_qnn_bridge.cpp
     waifu2x_jni.cpp
 )
 

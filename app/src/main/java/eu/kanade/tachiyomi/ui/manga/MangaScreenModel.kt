@@ -17,6 +17,7 @@ import eu.kanade.core.util.insertSeparators
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.chapter.interactor.SetReadStatus
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
+import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.interactor.GetExcludedScanlators
 import eu.kanade.domain.manga.interactor.SetExcludedScanlators
 import eu.kanade.domain.manga.interactor.UpdateManga
@@ -46,8 +47,6 @@ import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -246,11 +245,11 @@ class MangaScreenModel(
 
             // Fetch info-chapters when needed
             if (screenModelScope.isActive) {
-                val fetchFromSourceTasks = listOf(
-                    async { if (needRefreshInfo) fetchMangaFromSource() },
-                    async { if (needRefreshChapter) fetchChaptersFromSource() },
+                fetchMangaUpdateFromSource(
+                    manualFetch = false,
+                    fetchDetails = needRefreshInfo,
+                    fetchChapters = needRefreshChapter,
                 )
-                fetchFromSourceTasks.awaitAll()
             }
 
             // Initial loading finished
@@ -261,12 +260,65 @@ class MangaScreenModel(
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
             updateSuccessState { it.copy(isRefreshingData = true) }
-            val fetchFromSourceTasks = listOf(
-                async { fetchMangaFromSource(manualFetch) },
-                async { fetchChaptersFromSource(manualFetch) },
+            fetchMangaUpdateFromSource(
+                manualFetch = manualFetch,
+                fetchDetails = true,
+                fetchChapters = true,
             )
-            fetchFromSourceTasks.awaitAll()
             updateSuccessState { it.copy(isRefreshingData = false) }
+        }
+    }
+
+    /**
+     * Uses the combined TachiyomiX 1.6 update API so modern sources receive one
+     * non-concurrent request for a manga. CatalogueSource bridges this call back
+     * to the legacy detail/chapter methods for 1.4 extensions.
+     */
+    private suspend fun fetchMangaUpdateFromSource(
+        manualFetch: Boolean,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ) {
+        if (!fetchDetails && !fetchChapters) return
+        val state = successState ?: return
+
+        try {
+            withIOContext {
+                val update = state.source.getMangaUpdate(
+                    manga = state.manga.toSManga(),
+                    chapters = state.chapters.map { it.chapter.toSChapter() },
+                    fetchDetails = fetchDetails,
+                    fetchChapters = fetchChapters,
+                )
+
+                if (fetchDetails) {
+                    updateManga.awaitUpdateFromSource(state.manga, update.manga, manualFetch)
+                }
+                if (fetchChapters) {
+                    val newChapters = syncChaptersWithSource.await(
+                        update.chapters,
+                        state.manga,
+                        state.source,
+                        manualFetch,
+                    )
+                    if (manualFetch) {
+                        downloadNewChapters(newChapters)
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            // Ignore early hints "errors" that aren't handled by OkHttp.
+            if (e is HttpException && e.code == 103) return
+
+            val message = if (e is NoChaptersException) {
+                context.stringResource(MR.strings.no_chapters_error)
+            } else {
+                logcat(LogPriority.ERROR, e)
+                with(context) { e.formattedMessage }
+            }
+            screenModelScope.launch {
+                snackbarHostState.showSnackbar(message = message)
+            }
         }
     }
 

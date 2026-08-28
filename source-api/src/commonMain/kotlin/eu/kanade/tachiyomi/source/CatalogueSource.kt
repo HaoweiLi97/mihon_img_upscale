@@ -2,6 +2,9 @@ package eu.kanade.tachiyomi.source
 
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
+import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import rx.Observable
 import tachiyomi.core.common.util.lang.awaitSingle
 
@@ -15,7 +18,7 @@ interface CatalogueSource : Source {
     /**
      * Whether the source has support for latest updates.
      */
-    val supportsLatest: Boolean
+    override val supportsLatest: Boolean
 
     /**
      * Get a page with a list of manga.
@@ -24,7 +27,7 @@ interface CatalogueSource : Source {
      * @param page the page number to retrieve.
      */
     @Suppress("DEPRECATION")
-    suspend fun getPopularManga(page: Int): MangasPage {
+    override suspend fun getPopularManga(page: Int): MangasPage {
         return fetchPopularManga(page).awaitSingle()
     }
 
@@ -37,7 +40,7 @@ interface CatalogueSource : Source {
      * @param filters the list of filters to apply.
      */
     @Suppress("DEPRECATION")
-    suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage {
+    override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage {
         return fetchSearchManga(page, query, filters).awaitSingle()
     }
 
@@ -48,14 +51,43 @@ interface CatalogueSource : Source {
      * @param page the page number to retrieve.
      */
     @Suppress("DEPRECATION")
-    suspend fun getLatestUpdates(page: Int): MangasPage {
+    override suspend fun getLatestUpdates(page: Int): MangasPage {
         return fetchLatestUpdates(page).awaitSingle()
     }
 
     /**
      * Returns the list of filters for the source.
      */
-    fun getFilterList(): FilterList
+    override fun getFilterList(): FilterList
+
+    /**
+     * Bridges the TachiyomiX 1.6 combined update API to legacy extension methods.
+     * New 1.6 extensions override this method directly.
+     */
+    @Suppress("DEPRECATION")
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        val updatedManga = if (fetchDetails) fetchMangaDetails(manga).awaitSingle() else manga
+        val updatedChapters = if (fetchChapters) fetchChapterList(manga).awaitSingle() else chapters
+        return SMangaUpdate(updatedManga, updatedChapters)
+    }
+
+    /** Optional Komikku-compatible related manga ABI used by some 1.6 extensions. */
+    val supportsRelatedMangas: Boolean
+        get() = false
+
+    val disableRelatedMangasBySearch: Boolean
+        get() = false
+
+    val disableRelatedMangas: Boolean
+        get() = false
+
+    suspend fun fetchRelatedMangaList(manga: SManga): List<SManga> =
+        throw UnsupportedOperationException("Related manga is not supported")
 
     @Deprecated(
         "Use the non-RxJava API instead",

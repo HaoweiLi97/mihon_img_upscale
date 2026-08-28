@@ -30,6 +30,21 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeIsQnnRuntimeAvailable(
   return qnn_backend::is_runtime_loadable() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_eu_kanade_tachiyomi_util_qnn_QualcommHtp_nativeArchitecture(
+    JNIEnv *env, jobject, jstring native_library_dir) {
+  const char *library_dir_chars =
+      env->GetStringUTFChars(native_library_dir, nullptr);
+  if (library_dir_chars[0] != '\0') {
+    const std::string dsp_paths =
+        std::string(library_dir_chars) +
+        ";/vendor/dsp/cdsp;/vendor/lib/rfsa/cdsp;/system/vendor/lib/rfsa/cdsp";
+    setenv("ADSP_LIBRARY_PATH", dsp_paths.c_str(), 1);
+  }
+  env->ReleaseStringUTFChars(native_library_dir, library_dir_chars);
+  return static_cast<jint>(qnn_backend::architecture());
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitQnn(
     JNIEnv *env, jobject, jstring context_path, jstring native_library_dir,
