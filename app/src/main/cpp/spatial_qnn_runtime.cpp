@@ -728,7 +728,10 @@ public:
 };
 
 Runtime::Runtime() : impl_(new Impl()) {}
-Runtime::~Runtime() { delete impl_; }
+Runtime::~Runtime() {
+  impl_->reset();
+  delete impl_;
+}
 bool Runtime::initialize() { return impl_->initialize(); }
 bool Runtime::compile_dlc(const std::string &dlc, const std::string &binary) {
   return impl_->compile_dlc(dlc, binary);

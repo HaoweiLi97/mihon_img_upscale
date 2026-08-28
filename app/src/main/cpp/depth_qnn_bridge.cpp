@@ -8,6 +8,7 @@
 #include <jni.h>
 #include <mutex>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 
 namespace {
@@ -51,15 +52,58 @@ bool has_dimensions(const spatial_qnn::TensorData &tensor,
   return tensor.dimensions == expected;
 }
 
+bool is_nonempty_file(const std::string &path) {
+  struct stat info {};
+  return stat(path.c_str(), &info) == 0 && info.st_size > 0;
+}
+
+bool is_invalid_context_error(const std::string &message) {
+  return message.find("Unable to open ") != std::string::npos ||
+         message.find("Unable to read ") != std::string::npos ||
+         message.find("Expected one graph in compiled depth context") !=
+             std::string::npos ||
+         message.find("Invalid graph metadata in compiled depth context") !=
+             std::string::npos ||
+         message.find("Unsupported depth input tensor metadata") !=
+             std::string::npos ||
+         message.find("Unsupported depth output tensor metadata") !=
+             std::string::npos;
+}
+
 bool prepare_runtime(spatial_qnn::Runtime &runtime, const std::string &model_path,
                      const std::string &context_path) {
-  if (runtime.compile_dlc(model_path, context_path) &&
-      runtime.load(context_path)) {
+  const bool had_context = is_nonempty_file(context_path);
+  if (!runtime.compile_dlc(model_path, context_path)) {
+    set_error(runtime.error());
+    return false;
+  }
+  if (runtime.load(context_path)) {
     return true;
   }
   const std::string first_error = runtime.error();
-  runtime.unload_graph();
-  std::remove(context_path.c_str());
+
+  // Loading can fail temporarily when the DSP is recovering or HTP resources
+  // are busy. Recreate the runtime once, but keep the persisted binary intact.
+  runtime.reset();
+  if (runtime.load(context_path)) {
+    return true;
+  }
+  const std::string retry_error = runtime.error();
+
+  // Replace an existing context only when both attempts prove that its on-disk
+  // structure is invalid. Transient HTP errors must never erase a valid 72 MB
+  // binary and force another several-minute device compilation.
+  if (!had_context || !is_invalid_context_error(first_error) ||
+      !is_invalid_context_error(retry_error)) {
+    set_error(retry_error.empty() ? first_error : retry_error);
+    return false;
+  }
+
+  runtime.reset();
+  if (std::remove(context_path.c_str()) != 0) {
+    set_error("Unable to replace invalid compiled depth context");
+    return false;
+  }
   if (!runtime.compile_dlc(model_path, context_path) ||
       !runtime.load(context_path)) {
     set_error(runtime.error().empty() ? first_error : runtime.error());
