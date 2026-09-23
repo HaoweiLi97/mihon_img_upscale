@@ -12,6 +12,10 @@
 -keep,allowoptimization class kotlin.time.** { public protected *; }
 -keep,allowoptimization class okhttp3.** { public protected *; }
 -keep,allowoptimization class okio.** { public protected *; }
+# okhttp-zstd loads its Kotlin/JNI bridge by the original JVM class names.
+# R8 otherwise removes the compressor half (only decompression is referenced
+# directly) and a zstd-compressed source response aborts the ART process.
+-keep class com.squareup.zstd.** { *; }
 -keep,allowoptimization class org.jsoup.** { public protected *; }
 -keep,allowoptimization class rx.** { public protected *; }
 -keep,allowoptimization class app.cash.quickjs.** { public protected *; }

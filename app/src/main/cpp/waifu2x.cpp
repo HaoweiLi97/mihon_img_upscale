@@ -1,4 +1,5 @@
 #include "waifu2x.h"
+#include "periodic_texture_guard.h"
 #include "shaders.h"
 #include "command.h"
 #include "cpu.h"
@@ -730,6 +731,7 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
   BoundedTaskPool postprocess(1, 2);
   int64_t postprocess_wait_us = 0;
   bool second_postprocess_worker = false;
+  int guarded_texture_tiles = 0;
 
   for (int yi = 0; yi < ytiles; yi++) {
     for (int xi = 0; xi < xtiles; xi++) {
@@ -765,6 +767,48 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
           ptr += padded_input.w;
           outptr += in_tile.w;
         }
+      }
+
+      int risky_cells = 0;
+      int total_cells = 0;
+      const bool guard_tile = enable_periodic_texture_guard &&
+          periodic_texture_guard::occupies_too_much(
+              w_tile, h_tile,
+              [&](int sample_x, int sample_y) {
+                const float value = in_tile.channel(0)
+                                        .row(prepadding + sample_y)
+                                        [prepadding + sample_x];
+                return static_cast<int>(value * 255.0f + 0.5f);
+              },
+              &risky_cells, &total_cells);
+      int guard_border_x = 0;
+      int guard_border_y = 0;
+      if (guard_tile) {
+        const int scaled_width =
+            in_tile_w * periodic_texture_guard::kShrinkNumerator /
+            periodic_texture_guard::kShrinkDenominator;
+        const int scaled_height =
+            in_tile_h * periodic_texture_guard::kShrinkNumerator /
+            periodic_texture_guard::kShrinkDenominator;
+        guard_border_x = (in_tile_w - scaled_width) / 2;
+        guard_border_y = (in_tile_h - scaled_height) / 2;
+        ncnn::Mat scaled_tile;
+        ncnn::resize_bilinear(in_tile, scaled_tile, scaled_width, scaled_height,
+                              net.opt);
+        ncnn::Mat guarded_input(in_tile_w, in_tile_h, 3);
+        guarded_input.fill(1.0f);
+        for (int c = 0; c < 3; ++c) {
+          const ncnn::Mat source = scaled_tile.channel(c);
+          ncnn::Mat destination = guarded_input.channel(c);
+          for (int row = 0; row < scaled_height; ++row) {
+            memcpy(destination.row(guard_border_y + row) + guard_border_x,
+                   source.row(row), scaled_width * sizeof(float));
+          }
+        }
+        in_tile = guarded_input;
+        ++guarded_texture_tiles;
+        LOGD("Guarding periodic texture tile %d,%d (%d/%d cells)", xi, yi,
+             risky_cells, total_cells);
       }
 
       // Run inference on tile (GPU WORK)
@@ -851,7 +895,7 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
 
           if (dst_y >= target_h)
             break;
-          if (src_y >= out_tile_captured.h)
+          if (!guard_tile && src_y >= out_tile_captured.h)
             break;
 
           unsigned char *dst_row =
@@ -872,14 +916,14 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
           int copy_w = out_w_tile;
           if (out_x + copy_w > target_w)
             copy_w = target_w - out_x;
-          if (src_offset_x + copy_w > out_tile_captured.w)
+          if (!guard_tile && src_offset_x + copy_w > out_tile_captured.w)
             copy_w = out_tile_captured.w - src_offset_x;
 
           int j = 0;
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
           const float32x4_t scale_255 = vdupq_n_f32(255.f);
           const float32x4_t gray_scale = vdupq_n_f32(1.f / 3.f);
-          for (; j + 8 <= copy_w; j += 8) {
+          for (; !guard_tile && j + 8 <= copy_w; j += 8) {
             float32x4_t r0 = vmulq_f32(vld1q_f32(ptr_r + j), scale_255);
             float32x4_t r1 = vmulq_f32(vld1q_f32(ptr_r + j + 4), scale_255);
             float32x4_t g0 = vmulq_f32(vld1q_f32(ptr_g + j), scale_255);
@@ -908,9 +952,41 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
           }
 #endif
           for (; j < copy_w; j++) {
-            float r = ptr_r[j] * 255.0f;
-            float g = ptr_g[j] * 255.0f;
-            float b = ptr_b[j] * 255.0f;
+            float r;
+            float g;
+            float b;
+            if (!guard_tile) {
+              r = ptr_r[j] * 255.0f;
+              g = ptr_g[j] * 255.0f;
+              b = ptr_b[j] * 255.0f;
+            } else {
+              const float sample_x =
+                  periodic_texture_guard::restored_output_coordinate(
+                      j, guard_border_x, prepadding, scale);
+              const float sample_y =
+                  periodic_texture_guard::restored_output_coordinate(
+                      i, guard_border_y, prepadding, scale);
+              const int x0 = std::clamp(static_cast<int>(std::floor(sample_x)),
+                                        0, out_tile_captured.w - 1);
+              const int y0 = std::clamp(static_cast<int>(std::floor(sample_y)),
+                                        0, out_tile_captured.h - 1);
+              const int x1 = std::min(out_tile_captured.w - 1, x0 + 1);
+              const int y1 = std::min(out_tile_captured.h - 1, y0 + 1);
+              const float fx = sample_x - std::floor(sample_x);
+              const float fy = sample_y - std::floor(sample_y);
+              const auto sample = [&](const float *channel) {
+                const float top = channel[y0 * out_tile_captured.w + x0] *
+                                      (1.0f - fx) +
+                                  channel[y0 * out_tile_captured.w + x1] * fx;
+                const float bottom = channel[y1 * out_tile_captured.w + x0] *
+                                         (1.0f - fx) +
+                                     channel[y1 * out_tile_captured.w + x1] * fx;
+                return (top * (1.0f - fy) + bottom * fy) * 255.0f;
+              };
+              b = sample(tile_b);
+              g = sample(tile_g);
+              r = sample(tile_r);
+            }
 
             if (is_grayscale) {
               float gray = (r + g + b) * 0.333333f;
@@ -965,6 +1041,11 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
   }
 
   postprocess.wait();
+
+  if (guarded_texture_tiles > 0) {
+    LOGD("Periodic texture occupancy guard applied to %d/%d tiles",
+         guarded_texture_tiles, xtiles * ytiles);
+  }
 
   if (progress_ptr) {
     progress_ptr->store(100);

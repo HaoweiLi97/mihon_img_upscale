@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.data.coil.chapterId
 import eu.kanade.tachiyomi.data.coil.pageIndex
 import eu.kanade.tachiyomi.data.coil.pageVariant
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,6 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ConcurrentHashMap
 import coil3.request.CachePolicy
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 object ImageEnhancer {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -39,6 +42,8 @@ object ImageEnhancer {
     private val queue = PriorityBlockingQueue<EnhanceRequest>()
     private val seqGenerator = AtomicInteger(0)
     private val generation = AtomicInteger(0)
+    private val runtimeInitialized = AtomicBoolean(false)
+    private val preferences: ReaderPreferences by lazy { Injekt.get() }
 
     @Volatile
     private var lastResetTime = 0L
@@ -188,6 +193,14 @@ object ImageEnhancer {
         pageVariant: String = "",
         dataProvider: () -> Any?,
     ) {
+        initializeRuntime(context.applicationContext)
+        val configHash = currentConfigHash()
+        if (
+            ImageEnhancementCache.isCached(mangaId, chapterId, pageIndex, configHash, pageVariant) ||
+            ImageEnhancementCache.isSkipped(mangaId, chapterId, pageIndex, configHash, pageVariant)
+        ) {
+            return
+        }
         if (ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant)) return
 
         val isInitialTargetRequest = !initialTargetEnqueued && pageIndex == targetPageIndex
@@ -198,6 +211,10 @@ object ImageEnhancer {
         val existingGeneration = pendingRequests[requestKey]
         if (existingGeneration != null) {
             if (effectiveHighPriority) {
+                 val existingRequest = queue.firstOrNull {
+                     it.key == requestKey && it.generation == existingGeneration
+                 }
+                 if (existingRequest?.priority == 1) return
                  // Upgrade priority: Remove existing (likely Low) and re-add as High
                  val removed = queue.removeIf { 
                      it.mangaId == mangaId &&
@@ -460,6 +477,53 @@ object ImageEnhancer {
             logcat(LogPriority.WARN, e) { "ImageEnhancer: Failed to read enhancement source" }
             null
         }
+    }
+
+    private fun initializeRuntime(context: Context) {
+        ImageEnhancementCache.init(context)
+        if (!runtimeInitialized.compareAndSet(false, true)) return
+
+        scope.launch {
+            ImageEnhancementCache.checkAndTrim(context)
+            updatePerformanceSettings()
+        }
+        scope.launch {
+            preferences.realCuganPerformanceMode().changes().collect {
+                updatePerformanceSettings()
+            }
+        }
+        scope.launch {
+            preferences.realCuganTileSize().changes().collect {
+                updatePerformanceSettings()
+            }
+        }
+    }
+
+    private fun updatePerformanceSettings() {
+        val sleepMs = when (preferences.realCuganPerformanceMode().get()) {
+            0 -> 0
+            1 -> 5
+            2 -> 15
+            else -> 0
+        }
+        Waifu2x.updatePerformance(sleepMs, preferences.realCuganTileSize().get().coerceAtLeast(32))
+    }
+
+    private fun currentConfigHash(): String {
+        return ImageEnhancementCache.getConfigHash(
+            noise = preferences.realCuganNoiseLevel().get(),
+            scale = preferences.realCuganScale().get(),
+            model = preferences.realCuganModel().get(),
+            realEsrganStyle = preferences.realEsrganStyle().get(),
+            maxWidth = preferences.realCuganMaxSizeWidth().get(),
+            maxHeight = preferences.realCuganMaxSizeHeight().get(),
+            skipMaxWidth = preferences.realCuganSkipMaxSizeWidth().get(),
+            skipMaxHeight = preferences.realCuganSkipMaxSizeHeight().get(),
+            tileSize = preferences.realCuganTileSize().get(),
+            precision = preferences.realCuganPrecision().get(),
+            fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
+            processingBackend = preferences.realCuganProcessingBackend().get(),
+        )
     }
 
     private fun preemptActiveRequestIfBehindTarget() {

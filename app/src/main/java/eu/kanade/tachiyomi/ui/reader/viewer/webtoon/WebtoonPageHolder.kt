@@ -19,6 +19,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.collectLatest
@@ -269,6 +270,15 @@ class WebtoonPageHolder(
             )
         }
 
+        // The loader cannot know that Webtoon will split this source, so it may already have
+        // queued a full-page request. Segment variants are the only results displayed here;
+        // cancel the redundant full-page work as soon as splitting is confirmed.
+        val mangaId = page.chapter.chapter.manga_id
+        val chapterId = page.chapter.chapter.id
+        if (mangaId != null && chapterId != null) {
+            ImageEnhancer.cancel(mangaId, chapterId, page.index, page.enhancementKeySuffix)
+        }
+
         return splitSegments.mapIndexed { index, bytes ->
             DisplaySegment(
                 bytes = bytes,
@@ -291,7 +301,10 @@ class WebtoonPageHolder(
             segmentFrame.mangaId = viewer.activity.viewModel.manga?.id ?: -1L
             segmentFrame.chapterId = page.chapter.chapter.id ?: -1L
             segmentFrame.readerPage = page
-            segmentFrame.controlsCurrentPageSelection = false
+            // The first segment represents the logical page for queue prioritization and
+            // pruning. Other segments share its page index but must not each claim to be the
+            // focused target, otherwise a single tall image floods the high-priority queue.
+            segmentFrame.controlsCurrentPageSelection = index == 0
             segmentFrame.enhancementVariantOverride = segment.enhancementVariant
             segmentFrame.enhancementStreamOverride = streamFactory
             segmentFrame.suppressDefaultStatus = false

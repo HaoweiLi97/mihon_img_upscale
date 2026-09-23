@@ -8,6 +8,7 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.NewUpdateScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.updater.AppUpdateDownloadJob
+import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
 import eu.kanade.tachiyomi.util.system.openInBrowser
 
 class NewUpdateScreen(
@@ -29,7 +30,10 @@ class NewUpdateScreen(
             versionName = versionName,
             changelogInfo = changelogInfoNoChecksum,
             onOpenInBrowser = { context.openInBrowser(releaseLink) },
-            onRejectUpdate = navigator::pop,
+            onRejectUpdate = {
+                AppUpdateChecker().dismissUpdate(context, versionName)
+                navigator.pop()
+            },
             onAcceptUpdate = {
                 AppUpdateDownloadJob.start(
                     context = context,

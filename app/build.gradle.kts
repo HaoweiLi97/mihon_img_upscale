@@ -63,6 +63,9 @@ val qnnContextTargets = listOf(
     79 to "SM8750",
     81 to "SM8850",
 )
+val selectedQnnContextTargets = qnnContextTargets.filter { (htpArch, _) ->
+    htpArch.toString() in qnnHtpArchs
+}
 val qnnModelNames = listOf(
     "realesrgan-animevideov3-x2",
     "realesrgan-animevideov3-x2-int8",
@@ -95,12 +98,12 @@ val qnnModelNames = listOf(
     "w2xex-photo-small-x2",
     "w2xex-photo-small-x2-int8",
 )
-val qnnContextSourceFiles = qnnContextTargets.flatMap { (_, sourceSoc) ->
+val qnnContextSourceFiles = selectedQnnContextTargets.flatMap { (_, sourceSoc) ->
     qnnModelNames.map { model -> "$model.$sourceSoc.bin" }
 }
 val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
     tasks.register<Sync>("stageQnnContexts") {
-        qnnContextTargets.forEach { (htpArch, sourceSoc) ->
+        selectedQnnContextTargets.forEach { (htpArch, sourceSoc) ->
             from(contextRoot) {
                 include(qnnModelNames.map { model -> "$model.$sourceSoc.bin" })
                 rename { filename -> filename.replace(".$sourceSoc.bin", ".v$htpArch.bin") }
@@ -138,8 +141,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 34
-        versionName = "1.3.7"
+        versionCode = 37
+        versionName = "1.3.10"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")

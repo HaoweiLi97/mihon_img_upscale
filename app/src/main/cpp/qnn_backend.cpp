@@ -1,4 +1,5 @@
 #include "qnn_backend.h"
+#include "periodic_texture_guard.h"
 
 #include <algorithm>
 #include <android/log.h>
@@ -353,15 +354,23 @@ public:
     std::chrono::nanoseconds prepare_time{0};
     std::chrono::nanoseconds execute_time{0};
     std::chrono::nanoseconds output_time{0};
+    int guarded_tiles = 0;
+    const bool guard_model =
+        graph_name_.find("realcugan") != std::string::npos &&
+        graph_name_.find("denoise3x") != std::string::npos;
 
     for (int tile_y = 0; tile_y < height; tile_y += core) {
       for (int tile_x = 0; tile_x < width; tile_x += core) {
         if (should_abort && should_abort->load()) {
           return -2;
         }
+        const bool guard_tile =
+            guard_model && should_guard_tile(input, width, height, input_stride,
+                                             tile_x, tile_y, core);
+        guarded_tiles += guard_tile;
         auto stage_start = std::chrono::steady_clock::now();
         fill_input_tile(input, width, height, input_stride, tile_x - padding_,
-                        tile_y - padding_);
+                        tile_y - padding_, guard_tile);
         prepare_time += std::chrono::steady_clock::now() - stage_start;
         const auto &qnn = provider_->QNN_INTERFACE_VER_NAME;
         stage_start = std::chrono::steady_clock::now();
@@ -378,8 +387,8 @@ public:
         stage_start = std::chrono::steady_clock::now();
         write_output_tile(output, output_stride, tile_x * scale_,
                           tile_y * scale_,
-                          copy_width, copy_height, input, width, height,
-                          input_stride);
+                          copy_width, copy_height, guard_tile, input, width,
+                          height, input_stride);
         output_time += std::chrono::steady_clock::now() - stage_start;
         ++completed;
         if (progress) {
@@ -390,9 +399,9 @@ public:
     if (progress) {
       progress->store(100);
     }
-    LOGD("QNN tile profile: count=%d tile=%d core=%d prepare=%lldms "
+    LOGD("QNN tile profile: count=%d guarded=%d tile=%d core=%d prepare=%lldms "
          "execute=%lldms output=%lldms",
-         total_tiles, tile_size_, core,
+         total_tiles, guarded_tiles, tile_size_, core,
          static_cast<long long>(
              std::chrono::duration_cast<std::chrono::milliseconds>(prepare_time)
                  .count()),
@@ -713,17 +722,84 @@ private:
     tensor.v2.clientBuf.dataSize = size;
   }
 
+  bool should_guard_tile(const uint8_t *input, int width, int height,
+                         int stride, int tile_x, int tile_y, int core) const {
+    const int core_width = std::min(core, width - tile_x);
+    const int core_height = std::min(core, height - tile_y);
+    int chroma_samples = 0;
+    int samples = 0;
+    for (int y = 0; y < core_height; y += 16) {
+      const uint8_t *row = input +
+          static_cast<size_t>(tile_y + y) * stride + tile_x * 4;
+      for (int x = 0; x < core_width; x += 16) {
+        const uint8_t *pixel = row + x * 4;
+        const int minimum = std::min({pixel[0], pixel[1], pixel[2]});
+        const int maximum = std::max({pixel[0], pixel[1], pixel[2]});
+        chroma_samples += maximum - minimum > 8;
+        ++samples;
+      }
+    }
+    if (chroma_samples * 100 > std::max(1, samples)) return false;
+
+    int risky_cells = 0;
+    int total_cells = 0;
+    const bool risky = periodic_texture_guard::occupies_too_much(
+        core_width, core_height,
+        [&](int x, int y) {
+          return input[static_cast<size_t>(tile_y + y) * stride +
+                       static_cast<size_t>(tile_x + x) * 4];
+        },
+        &risky_cells, &total_cells);
+    if (risky) {
+      LOGD("Guarding periodic texture tile at %d,%d (%d/%d cells)",
+           tile_x, tile_y, risky_cells, total_cells);
+    }
+    return risky;
+  }
+
   void fill_input_tile(const uint8_t *input, int width, int height, int stride,
-                       int origin_x, int origin_y) {
+                       int origin_x, int origin_y, bool guard_tile) {
+    const int scaled_size =
+        tile_size_ * periodic_texture_guard::kShrinkNumerator /
+        periodic_texture_guard::kShrinkDenominator;
+    const int border = (tile_size_ - scaled_size) / 2;
     size_t index = 0;
     for (int y = 0; y < tile_size_; ++y) {
-      const int source_y = reflect_coordinate(origin_y + y, height);
-      const uint8_t *row = input + static_cast<size_t>(source_y) * stride;
       for (int x = 0; x < tile_size_; ++x) {
-        const int source_x = reflect_coordinate(origin_x + x, width);
-        const uint8_t *pixel = row + static_cast<size_t>(source_x) * 4;
         for (int channel = 0; channel < 3; ++channel) {
-          const float value = pixel[channel] / 255.0f;
+          float value;
+          if (!guard_tile) {
+            const int source_y = reflect_coordinate(origin_y + y, height);
+            const int source_x = reflect_coordinate(origin_x + x, width);
+            value = input[static_cast<size_t>(source_y) * stride +
+                          static_cast<size_t>(source_x) * 4 + channel] /
+                    255.0f;
+          } else if (x < border || y < border ||
+                     x >= border + scaled_size || y >= border + scaled_size) {
+            value = 1.0f;
+          } else {
+            const float source_x = origin_x +
+                periodic_texture_guard::source_coordinate(x, border);
+            const float source_y = origin_y +
+                periodic_texture_guard::source_coordinate(y, border);
+            const int x0 = static_cast<int>(std::floor(source_x));
+            const int y0 = static_cast<int>(std::floor(source_y));
+            const float fx = source_x - x0;
+            const float fy = source_y - y0;
+            const int rx0 = reflect_coordinate(x0, width);
+            const int rx1 = reflect_coordinate(x0 + 1, width);
+            const int ry0 = reflect_coordinate(y0, height);
+            const int ry1 = reflect_coordinate(y0 + 1, height);
+            const auto pixel = [&](int sx, int sy) {
+              return input[static_cast<size_t>(sy) * stride +
+                           static_cast<size_t>(sx) * 4 + channel] / 255.0f;
+            };
+            const float top = pixel(rx0, ry0) * (1.0f - fx) +
+                              pixel(rx1, ry0) * fx;
+            const float bottom = pixel(rx0, ry1) * (1.0f - fx) +
+                                 pixel(rx1, ry1) * fx;
+            value = top * (1.0f - fy) + bottom * fy;
+          }
           if (is_fp16_tensor(input_)) {
             input_fp16_buffer_[index] = float_to_half(value);
           } else if (is_quant16_tensor(input_)) {
@@ -739,24 +815,43 @@ private:
 
   void write_output_tile(uint8_t *output, int output_stride, int target_x,
                          int target_y, int copy_width, int copy_height,
-                         const uint8_t *input, int width, int height,
+                         bool guard_tile, const uint8_t *input, int width, int height,
                          int input_stride) const {
     const int source_offset = padding_ * scale_;
+    const int scaled_size =
+        tile_size_ * periodic_texture_guard::kShrinkNumerator /
+        periodic_texture_guard::kShrinkDenominator;
+    const int border = (tile_size_ - scaled_size) / 2;
     for (int y = 0; y < copy_height; ++y) {
       uint8_t *row = output + static_cast<size_t>(target_y + y) * output_stride +
                      static_cast<size_t>(target_x) * 4;
       for (int x = 0; x < copy_width; ++x) {
-        const size_t source_index =
-            (static_cast<size_t>(source_offset + y) * output_tile_size_ +
-             source_offset + x) * 3;
         for (int channel = 0; channel < 3; ++channel) {
-          const size_t index = source_index + channel;
-          const float raw_value =
-              is_fp16_tensor(output_)
-                  ? half_to_float(output_fp16_buffer_[index])
-                  : (is_quant16_tensor(output_)
-                         ? dequantize_uint16(output_quant16_buffer_[index], output_)
-                         : dequantize_uint8(output_quant8_buffer_[index], output_));
+          float raw_value;
+          if (!guard_tile) {
+            raw_value = output_value(source_offset + x, source_offset + y,
+                                     channel);
+          } else {
+            const float source_x =
+                periodic_texture_guard::restored_output_coordinate(
+                    x, border, padding_, scale_);
+            const float source_y =
+                periodic_texture_guard::restored_output_coordinate(
+                    y, border, padding_, scale_);
+            const int x0 = std::clamp(static_cast<int>(std::floor(source_x)),
+                                      0, output_tile_size_ - 1);
+            const int y0 = std::clamp(static_cast<int>(std::floor(source_y)),
+                                      0, output_tile_size_ - 1);
+            const int x1 = std::min(output_tile_size_ - 1, x0 + 1);
+            const int y1 = std::min(output_tile_size_ - 1, y0 + 1);
+            const float fx = source_x - std::floor(source_x);
+            const float fy = source_y - std::floor(source_y);
+            const float top = output_value(x0, y0, channel) * (1.0f - fx) +
+                              output_value(x1, y0, channel) * fx;
+            const float bottom = output_value(x0, y1, channel) * (1.0f - fx) +
+                                 output_value(x1, y1, channel) * fx;
+            raw_value = top * (1.0f - fy) + bottom * fy;
+          }
           const float value = std::clamp(raw_value, 0.0f, 1.0f);
           row[x * 4 + channel] = static_cast<uint8_t>(value * 255.0f + 0.5f);
         }
@@ -766,6 +861,16 @@ private:
                                  static_cast<size_t>(alpha_x) * 4 + 3];
       }
     }
+  }
+
+  float output_value(int x, int y, int channel) const {
+    const size_t index =
+        (static_cast<size_t>(y) * output_tile_size_ + x) * 3 + channel;
+    return is_fp16_tensor(output_)
+               ? half_to_float(output_fp16_buffer_[index])
+               : (is_quant16_tensor(output_)
+                      ? dequantize_uint16(output_quant16_buffer_[index], output_)
+                      : dequantize_uint8(output_quant8_buffer_[index], output_));
   }
 
   void *backend_library_ = nullptr;

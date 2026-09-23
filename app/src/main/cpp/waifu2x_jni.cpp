@@ -1,4 +1,5 @@
 #include "anime4k.h"
+#include "periodic_texture_guard.h"
 #include "qnn_backend.h"
 #include "waifu2x.h"
 #include <android/bitmap.h>
@@ -11,6 +12,9 @@
 #include <jni.h>
 #include <mutex>
 #include <vector>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 #define TAG "Waifu2xJNI"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
@@ -23,6 +27,134 @@ static std::atomic<int> g_progress{0};
 static std::atomic<int> g_current_id{-1};
 static std::atomic<int> g_ui_busy{0};
 static std::atomic<bool> g_abort_processing{false};
+static bool g_realcugan_denoise3 = false;
+
+// NCNN's prebuilt Android archive statically links LLVM OpenMP. Use its public runtime
+// configuration entry point in addition to process environment variables: on some vendor
+// Android builds libomp has already read inherited defaults before JNI_OnLoad, so setenv alone
+// does not prevent its broken CPU-affinity discovery path from running on the first model load.
+extern "C" void kmp_set_defaults(char const *defaults);
+
+namespace {
+
+// A model may invent colour when given a lightly tinted monochrome scan. Detect
+// that case from a small, evenly spaced source sample and neutralize RGB before
+// inference. This avoids the former full-resolution output pass while leaving
+// colour pages untouched.
+constexpr int kMonochromeChromaThreshold = 24;
+constexpr int kMonochromeSampleAxis = 64;
+constexpr int kMaximumColoredSamplePercent = 1;
+
+bool page_has_excessive_periodic_texture(const unsigned char *rgba, int width,
+                                         int height, int tile_size) {
+  if (!rgba || width <= 0 || height <= 0 || tile_size <= 0) return false;
+  for (int tile_y = 0; tile_y < height; tile_y += tile_size) {
+    for (int tile_x = 0; tile_x < width; tile_x += tile_size) {
+      const int tile_width = std::min(tile_size, width - tile_x);
+      const int tile_height = std::min(tile_size, height - tile_y);
+      const bool risky = periodic_texture_guard::occupies_too_much(
+          tile_width, tile_height, [&](int x, int y) {
+            return rgba[(static_cast<size_t>(tile_y + y) * width +
+                         tile_x + x) * 4];
+          });
+      if (risky) return true;
+    }
+  }
+  return false;
+}
+
+bool normalize_monochrome_input(unsigned char *rgba, int width, int height) {
+  if (!rgba || width <= 0 || height <= 0) return false;
+
+  const int step_x = std::max(1, width / kMonochromeSampleAxis);
+  const int step_y = std::max(1, height / kMonochromeSampleAxis);
+  int samples = 0;
+  int colored_samples = 0;
+  for (int y = step_y / 2; y < height; y += step_y) {
+    for (int x = step_x / 2; x < width; x += step_x) {
+      const unsigned char *pixel = rgba + (static_cast<size_t>(y) * width + x) * 4;
+      const int min_channel = std::min({static_cast<int>(pixel[0]),
+                                        static_cast<int>(pixel[1]),
+                                        static_cast<int>(pixel[2])});
+      const int max_channel = std::max({static_cast<int>(pixel[0]),
+                                        static_cast<int>(pixel[1]),
+                                        static_cast<int>(pixel[2])});
+      ++samples;
+      if (max_channel - min_channel > kMonochromeChromaThreshold) {
+        ++colored_samples;
+      }
+    }
+  }
+  if (samples == 0 || colored_samples * 100 > samples * kMaximumColoredSamplePercent) {
+    return false;
+  }
+
+  const size_t pixel_count = static_cast<size_t>(width) * height;
+  for (size_t i = 0; i < pixel_count; ++i) {
+    unsigned char *pixel = rgba + i * 4;
+    // BT.601 integer luma; retain alpha exactly as supplied by the decoder.
+    const unsigned char luma = static_cast<unsigned char>(
+        (77 * pixel[0] + 150 * pixel[1] + 29 * pixel[2] + 128) >> 8);
+    pixel[0] = luma;
+    pixel[1] = luma;
+    pixel[2] = luma;
+  }
+  LOGD("Normalized monochrome input before inference (%d/%d colored samples)",
+       colored_samples, samples);
+  return true;
+}
+
+// Input normalization prevents tinted scans from amplifying their source tint, but an
+// unstable/quantized model can still invent chroma. Apply this at the shared output boundary so
+// QNN, fused Vulkan and the staged NCNN path have identical monochrome guarantees. This pass only
+// runs for sources classified as monochrome; colour pages never pay its full-image cost.
+void force_monochrome_output(unsigned char *rgba, int width, int height,
+                             int stride) {
+  if (!rgba || width <= 0 || height <= 0 || stride < width * 4) return;
+
+  for (int y = 0; y < height; ++y) {
+    unsigned char *row = rgba + static_cast<size_t>(y) * stride;
+    int x = 0;
+#if defined(__ARM_NEON)
+    for (; x + 8 <= width; x += 8) {
+      uint8x8x4_t pixels = vld4_u8(row + static_cast<size_t>(x) * 4);
+      uint16x8_t luma = vmull_u8(pixels.val[0], vdup_n_u8(77));
+      luma = vmlal_u8(luma, pixels.val[1], vdup_n_u8(150));
+      luma = vmlal_u8(luma, pixels.val[2], vdup_n_u8(29));
+      luma = vaddq_u16(luma, vdupq_n_u16(128));
+      const uint8x8_t gray = vshrn_n_u16(luma, 8);
+      pixels.val[0] = gray;
+      pixels.val[1] = gray;
+      pixels.val[2] = gray;
+      vst4_u8(row + static_cast<size_t>(x) * 4, pixels);
+    }
+#endif
+    for (; x < width; ++x) {
+      unsigned char *pixel = row + static_cast<size_t>(x) * 4;
+      const unsigned char luma = static_cast<unsigned char>(
+          (77 * pixel[0] + 150 * pixel[1] + 29 * pixel[2] + 128) >> 8);
+      pixel[0] = luma;
+      pixel[1] = luma;
+      pixel[2] = luma;
+    }
+  }
+}
+
+}  // namespace
+
+// The prebuilt NCNN package contains LLVM OpenMP. On some Android kernels its
+// affinity discovery trips an internal assertion on the first CPU resize and
+// terminates the entire process with SIGABRT. This must run before any NCNN
+// operation can initialise the OpenMP runtime. GPU and QNN execution do not
+// use this host-thread affinity policy.
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *, void *) {
+  setenv("KMP_AFFINITY", "disabled", 1);
+  setenv("OMP_PROC_BIND", "false", 1);
+  unsetenv("OMP_PLACES");
+  kmp_set_defaults("KMP_AFFINITY=disabled");
+  LOGD("LLVM OpenMP CPU affinity disabled");
+  return JNI_VERSION_1_6;
+}
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeIsQnnRuntimeAvailable(
@@ -82,6 +214,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+  g_realcugan_denoise3 = false;
 
   qnn_backend::shutdown();
 
@@ -136,6 +269,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+  g_realcugan_denoise3 = false;
 
   qnn_backend::shutdown();
 
@@ -228,6 +362,14 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
     }
     AndroidBitmap_unlockPixels(env, bitmap);
 
+    const bool is_monochrome_input = normalize_monochrome_input(
+        static_cast<unsigned char *>(packed_input.data), w, h);
+    const bool guard_periodic_texture =
+        is_monochrome_input && g_realcugan_denoise3 &&
+        page_has_excessive_periodic_texture(
+            static_cast<const unsigned char *>(packed_input.data), w, h,
+            g_waifu2x->tilesize);
+
     if (g_waifu2x) {
       int out_w = w * g_waifu2x->scale;
       int out_h = h * g_waifu2x->scale;
@@ -285,6 +427,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
           }
 
           if (ret != 0 && !g_abort_processing.load() &&
+              !guard_periodic_texture &&
               g_waifu2x->has_gpu_pipeline()) {
             const auto fused_start = std::chrono::steady_clock::now();
             ret = g_waifu2x->process_gpu(packed_input, outPixels,
@@ -312,6 +455,13 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
             LOGD("Staged processing %s in %lld ms",
                  ret == 0 ? "completed" : "failed",
                  static_cast<long long>(staged_ms));
+          }
+
+          if (ret == 0 && is_monochrome_input) {
+            force_monochrome_output(static_cast<unsigned char *>(outPixels),
+                                    outInfo.width, outInfo.height,
+                                    outInfo.stride);
+            LOGD("Forced monochrome output after inference");
           }
 
           g_waifu2x->progress_ptr = nullptr;
@@ -511,6 +661,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
   g_abort_processing = true; // Signal abort to any running process
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false; // Reset
+  g_realcugan_denoise3 = noise_level == 3;
 
   qnn_backend::shutdown();
 
@@ -562,6 +713,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
                           fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
+  g_waifu2x->enable_periodic_texture_guard = g_realcugan_denoise3;
   g_waifu2x->tile_sleep_ms = tile_sleep_ms; // Set configurable sleep
   g_waifu2x->progress_ptr = &g_progress;
   g_waifu2x->ui_busy_ptr = &g_ui_busy;
@@ -607,6 +759,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+  g_realcugan_denoise3 = false;
 
   qnn_backend::shutdown();
 
@@ -656,6 +809,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+  g_realcugan_denoise3 = false;
 
   qnn_backend::shutdown();
 
@@ -703,6 +857,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitNose(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
+  g_realcugan_denoise3 = false;
 
   ncnn::create_gpu_instance();
 

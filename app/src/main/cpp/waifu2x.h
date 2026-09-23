@@ -38,6 +38,7 @@ public:
   int scale;
   int tilesize;
   int prepadding;
+  bool enable_periodic_texture_guard = false;
   std::atomic<int> *progress_ptr = nullptr;
   std::atomic<int> *ui_busy_ptr = nullptr;
   std::atomic<bool> *should_abort_ptr = nullptr;
