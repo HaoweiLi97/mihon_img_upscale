@@ -32,6 +32,10 @@ val localProperties = Properties().apply {
 
 val bundledNcnnSdkDir = rootProject.file("third_party/ncnn-20260113-android-vulkan")
 
+// AGP cannot shrink resources for an App Bundle when ABI split APKs are enabled.
+// Bundles already contain ABI-specific native libraries, so disable APK splits only for bundle tasks.
+val isBundleBuild = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+
 val ncnnSdkDir = providers.gradleProperty("ncnnSdkDir").orNull
     ?: localProperties.getProperty("ncnn.sdk.dir")
     ?: System.getenv("NCNN_SDK_DIR")
@@ -228,8 +232,8 @@ android {
 
     splits {
         abi {
-            isEnable = true
-            isUniversalApk = true
+            isEnable = !isBundleBuild
+            isUniversalApk = !isBundleBuild
             reset()
             include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
