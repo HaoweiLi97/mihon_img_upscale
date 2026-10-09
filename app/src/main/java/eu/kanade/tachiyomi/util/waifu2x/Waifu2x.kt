@@ -24,8 +24,8 @@ object Waifu2x {
     const val REAL_ESRGAN_STYLE_PHOTO = 1
 
     // Bump when bundled model assets change so existing installations refresh their cache.
-    private const val BUNDLED_MODEL_CACHE_VERSION = "14"
-    private const val QNN_CONTEXT_CACHE_VERSION = "17"
+    private const val BUNDLED_MODEL_CACHE_VERSION = "15"
+    private const val QNN_CONTEXT_CACHE_VERSION = "18"
 
     @Volatile private var isInitialized = false
     @Volatile private var isRealCuganInitialized = false
@@ -163,6 +163,7 @@ object Waifu2x {
                 tileSleepMs,
                 currentConfig.precision,
                 currentConfig.fp16Arithmetic,
+                isPro,
             )
             if (isRealCuganInitialized) {
                 if (currentConfig.processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
@@ -1012,7 +1013,7 @@ object Waifu2x {
     private external fun nativeInitAnime4K(shaders: Array<String>, names: Array<String>): Boolean
     private external fun nativeProcessAnime4K(input: Bitmap): Bitmap?
 
-    private external fun nativeInitRealCugan(modelDir: String, noiseLevel: Int, scale: Int, tileSleepMs: Int, precision: Int, fp16Arithmetic: Boolean): Boolean
+    private external fun nativeInitRealCugan(modelDir: String, noiseLevel: Int, scale: Int, tileSleepMs: Int, precision: Int, fp16Arithmetic: Boolean, isPro: Boolean): Boolean
     private external fun nativeUpdatePerformanceConfig(tileSleepMs: Int, tileSize: Int)
 
     fun updatePerformance(tileSleepMs: Int, tileSize: Int) {

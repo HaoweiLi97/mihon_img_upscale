@@ -147,6 +147,11 @@ class RealCugan(nn.Module):
         self.scale = scale
         if weights is not None:
             checkpoint = torch.load(weights, map_location="cpu", weights_only=True)
+            # Accept BasicSR wrappers as well as bare state dictionaries.
+            if isinstance(checkpoint, dict) and "params_ema" in checkpoint:
+                checkpoint = checkpoint["params_ema"]
+            elif isinstance(checkpoint, dict) and "params" in checkpoint:
+                checkpoint = checkpoint["params"]
             self.model.load_state_dict(checkpoint, strict=True)
         elif ncnn_model is not None:
             load_ncnn_weights(self.model, ncnn_model)

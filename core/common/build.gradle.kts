@@ -43,6 +43,7 @@ dependencies {
     api(libs.preferencektx)
 
     implementation(libs.jsoup)
+    api(libs.jspecify)
 
     // Sort
     implementation(libs.natural.comparator)

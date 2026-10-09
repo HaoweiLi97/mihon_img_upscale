@@ -31,6 +31,10 @@ qnn.htp.archs=69,73,75,79,81
 qnn.context.dir=/absolute/path/to/generated/contexts
 ```
 
+Context sources may use either the generator's `model.v69.bin` naming or the
+SoC aliases consumed by older builds, such as `model.SM8475.bin`; Gradle stages
+both forms as the runtime `model.v69.bin` asset.
+
 Gradle downloads Qualcomm's official `com.qualcomm.qti:qnn-runtime:2.49.0` Android runtime.
 It packages the matching HTP Stub and Skel libraries for v69, v73, v75, v79, and v81, so
 these runtime files do not need to be copied from the local SDK. The SDK path is still needed

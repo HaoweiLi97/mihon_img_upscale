@@ -1,4 +1,5 @@
 #include "anime4k.h"
+#include "monochrome_guard.h"
 #include "periodic_texture_guard.h"
 #include "qnn_backend.h"
 #include "waifu2x.h"
@@ -27,7 +28,7 @@ static std::atomic<int> g_progress{0};
 static std::atomic<int> g_current_id{-1};
 static std::atomic<int> g_ui_busy{0};
 static std::atomic<bool> g_abort_processing{false};
-static bool g_realcugan_denoise3 = false;
+static bool g_realcugan_pro = false;
 
 // NCNN's prebuilt Android archive statically links LLVM OpenMP. Use its public runtime
 // configuration entry point in addition to process environment variables: on some vendor
@@ -37,77 +38,10 @@ extern "C" void kmp_set_defaults(char const *defaults);
 
 namespace {
 
-// A model may invent colour when given a lightly tinted monochrome scan. Detect
-// that case from a small, evenly spaced source sample and neutralize RGB before
-// inference. This avoids the former full-resolution output pass while leaving
-// colour pages untouched.
-constexpr int kMonochromeChromaThreshold = 24;
-constexpr int kMonochromeSampleAxis = 64;
-constexpr int kMaximumColoredSamplePercent = 1;
-
-bool page_has_excessive_periodic_texture(const unsigned char *rgba, int width,
-                                         int height, int tile_size) {
-  if (!rgba || width <= 0 || height <= 0 || tile_size <= 0) return false;
-  for (int tile_y = 0; tile_y < height; tile_y += tile_size) {
-    for (int tile_x = 0; tile_x < width; tile_x += tile_size) {
-      const int tile_width = std::min(tile_size, width - tile_x);
-      const int tile_height = std::min(tile_size, height - tile_y);
-      const bool risky = periodic_texture_guard::occupies_too_much(
-          tile_width, tile_height, [&](int x, int y) {
-            return rgba[(static_cast<size_t>(tile_y + y) * width +
-                         tile_x + x) * 4];
-          });
-      if (risky) return true;
-    }
-  }
-  return false;
-}
-
-bool normalize_monochrome_input(unsigned char *rgba, int width, int height) {
-  if (!rgba || width <= 0 || height <= 0) return false;
-
-  const int step_x = std::max(1, width / kMonochromeSampleAxis);
-  const int step_y = std::max(1, height / kMonochromeSampleAxis);
-  int samples = 0;
-  int colored_samples = 0;
-  for (int y = step_y / 2; y < height; y += step_y) {
-    for (int x = step_x / 2; x < width; x += step_x) {
-      const unsigned char *pixel = rgba + (static_cast<size_t>(y) * width + x) * 4;
-      const int min_channel = std::min({static_cast<int>(pixel[0]),
-                                        static_cast<int>(pixel[1]),
-                                        static_cast<int>(pixel[2])});
-      const int max_channel = std::max({static_cast<int>(pixel[0]),
-                                        static_cast<int>(pixel[1]),
-                                        static_cast<int>(pixel[2])});
-      ++samples;
-      if (max_channel - min_channel > kMonochromeChromaThreshold) {
-        ++colored_samples;
-      }
-    }
-  }
-  if (samples == 0 || colored_samples * 100 > samples * kMaximumColoredSamplePercent) {
-    return false;
-  }
-
-  const size_t pixel_count = static_cast<size_t>(width) * height;
-  for (size_t i = 0; i < pixel_count; ++i) {
-    unsigned char *pixel = rgba + i * 4;
-    // BT.601 integer luma; retain alpha exactly as supplied by the decoder.
-    const unsigned char luma = static_cast<unsigned char>(
-        (77 * pixel[0] + 150 * pixel[1] + 29 * pixel[2] + 128) >> 8);
-    pixel[0] = luma;
-    pixel[1] = luma;
-    pixel[2] = luma;
-  }
-  LOGD("Normalized monochrome input before inference (%d/%d colored samples)",
-       colored_samples, samples);
-  return true;
-}
-
-// Input normalization prevents tinted scans from amplifying their source tint, but an
-// unstable/quantized model can still invent chroma. Apply this at the shared output boundary so
-// QNN, fused Vulkan and the staged NCNN path have identical monochrome guarantees. This pass only
-// runs for sources classified as monochrome; colour pages never pay its full-image cost.
+// An unstable/quantized model can invent chroma even from a neutral source.
+// Apply this at the shared output boundary so QNN, fused Vulkan and the staged
+// NCNN path have identical monochrome guarantees. This pass only runs for
+// sources classified as monochrome; colour pages never pay its full-image cost.
 void force_monochrome_output(unsigned char *rgba, int width, int height,
                              int stride) {
   if (!rgba || width <= 0 || height <= 0 || stride < width * 4) return;
@@ -214,7 +148,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInit(JNIEnv *env,
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
-  g_realcugan_denoise3 = false;
+  g_realcugan_pro = false;
 
   qnn_backend::shutdown();
 
@@ -269,7 +203,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitWaifu2xUpconv7(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
-  g_realcugan_denoise3 = false;
+  g_realcugan_pro = false;
 
   qnn_backend::shutdown();
 
@@ -362,13 +296,17 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
     }
     AndroidBitmap_unlockPixels(env, bitmap);
 
-    const bool is_monochrome_input = normalize_monochrome_input(
-        static_cast<unsigned char *>(packed_input.data), w, h);
-    const bool guard_periodic_texture =
-        is_monochrome_input && g_realcugan_denoise3 &&
-        page_has_excessive_periodic_texture(
-            static_cast<const unsigned char *>(packed_input.data), w, h,
-            g_waifu2x->tilesize);
+    // Detection replaces the former full-image RGB-to-gray input conversion.
+    // Keep the source intact; the shared output pass already removes invented
+    // chroma for neutral pages. Most colour pages exit during the fast sample.
+    const bool is_monochrome_input = monochrome_guard::is_neutral_rgba(
+        static_cast<const unsigned char *>(packed_input.data), w, h);
+    // The 75% shrink-and-restore pass is a Real-CUGAN Pro workaround for
+    // chroma blocks on neutral manga scans. Keep it out of SE and other model
+    // families, and let both native backends consume the same tile plan.
+    periodic_texture_guard::Analysis texture_analysis(
+        static_cast<const unsigned char *>(packed_input.data), w, h, w * 4,
+        g_realcugan_pro && is_monochrome_input);
 
     if (g_waifu2x) {
       int out_w = w * g_waifu2x->scale;
@@ -416,7 +354,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
             const auto qnn_start = std::chrono::steady_clock::now();
             ret = qnn_backend::process_rgba(
                 static_cast<const uint8_t *>(packed_input.data), w, h, w * 4,
-                static_cast<uint8_t *>(outPixels), outInfo.stride, &g_progress,
+                static_cast<uint8_t *>(outPixels), outInfo.stride,
+                texture_analysis, &g_progress,
                 &g_abort_processing);
             const auto qnn_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - qnn_start)
@@ -426,8 +365,14 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
                  static_cast<long long>(qnn_ms));
           }
 
+          // QNN success needs no NCNN analysis. On fallback, share the same
+          // plan between fused-path selection and staged tile processing.
+          const periodic_texture_guard::TilePlan *ncnn_texture_plan = nullptr;
+          if (ret != 0 && !g_abort_processing.load()) {
+            ncnn_texture_plan = &texture_analysis.plan(g_waifu2x->tilesize);
+          }
           if (ret != 0 && !g_abort_processing.load() &&
-              !guard_periodic_texture &&
+              ncnn_texture_plan && !ncnn_texture_plan->any_risky &&
               g_waifu2x->has_gpu_pipeline()) {
             const auto fused_start = std::chrono::steady_clock::now();
             ret = g_waifu2x->process_gpu(packed_input, outPixels,
@@ -448,7 +393,8 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeProcess(JNIEnv *env,
                 (const unsigned char *)packed_input.data,
                 ncnn::Mat::PIXEL_RGBA, w, h);
             ret = g_waifu2x->process(in, outPixels, outInfo.stride,
-                                     input_has_alpha, lock, &g_progress);
+                                     input_has_alpha, lock,
+                                     *ncnn_texture_plan, &g_progress);
             const auto staged_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                        std::chrono::steady_clock::now() - staged_start)
                                        .count();
@@ -564,6 +510,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeDestroy(JNIEnv *env,
   }
   g_progress.store(0);
   g_current_id.store(-1);
+  g_realcugan_pro = false;
   g_abort_processing.store(false);
   // DO NOT call destroy_gpu_instance here. It should be global.
   // Repeatedly calling it on exit/init is slow and can cause hangs.
@@ -657,11 +604,11 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
     JNIEnv *env, jobject thiz, jstring model_dir, jint noise_level,
     jint scale_level, jint tile_sleep_ms, jint precision,
-    jboolean fp16_arithmetic) {
+    jboolean fp16_arithmetic, jboolean is_pro) {
   g_abort_processing = true; // Signal abort to any running process
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false; // Reset
-  g_realcugan_denoise3 = noise_level == 3;
+  g_realcugan_pro = is_pro == JNI_TRUE;
 
   qnn_backend::shutdown();
 
@@ -713,7 +660,6 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealCugan(
                           fp16_arithmetic == JNI_TRUE); // GPU 0
   g_waifu2x->noise = noise_level;
   g_waifu2x->scale = scale_level;
-  g_waifu2x->enable_periodic_texture_guard = g_realcugan_denoise3;
   g_waifu2x->tile_sleep_ms = tile_sleep_ms; // Set configurable sleep
   g_waifu2x->progress_ptr = &g_progress;
   g_waifu2x->ui_busy_ptr = &g_ui_busy;
@@ -759,7 +705,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitRealESRGAN(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
-  g_realcugan_denoise3 = false;
+  g_realcugan_pro = false;
 
   qnn_backend::shutdown();
 
@@ -809,7 +755,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitW2xEx(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
-  g_realcugan_denoise3 = false;
+  g_realcugan_pro = false;
 
   qnn_backend::shutdown();
 
@@ -857,7 +803,7 @@ Java_eu_kanade_tachiyomi_util_waifu2x_Waifu2x_nativeInitNose(
   g_abort_processing = true;
   std::lock_guard<std::mutex> lock(g_lock);
   g_abort_processing = false;
-  g_realcugan_denoise3 = false;
+  g_realcugan_pro = false;
 
   ncnn::create_gpu_instance();
 

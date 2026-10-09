@@ -1,6 +1,6 @@
 [versions]
-kotlin_version = "2.3.0"
-serialization_version = "1.9.0"
+kotlin_version = "2.4.10"
+serialization_version = "1.11.0"
 xml_serialization_version = "0.91.3"
 
 [libraries]
@@ -10,7 +10,8 @@ compose-compiler-gradle = { module = "org.jetbrains.kotlin:compose-compiler-grad
 
 immutables = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version = "0.4.0" }
 
-coroutines-bom = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-bom", version = "1.10.2" }
+# Extensions compiled with 1.11 use BuildersKt.runBlockingK and its default-argument bridge.
+coroutines-bom = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-bom", version = "1.11.0" }
 coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core" }
 coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android" }
 coroutines-guava = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-guava" }

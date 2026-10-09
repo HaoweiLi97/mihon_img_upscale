@@ -26,8 +26,10 @@ object ImageEnhancementCache {
     private const val CACHE_DIR_NAME = "realcugan_cache"
     private const val PHOTO_NPU_INT8_CACHE_REVISION = 4
     private const val REAL_CUGAN_NPU_INT8_CACHE_REVISION = 1
-    private const val REAL_CUGAN_TEXTURE_OCCUPANCY_REVISION = 1
-    private const val MONOCHROME_INPUT_NORMALIZATION_REVISION = 2
+    // Input decoding now preserves source resolution before enhancement.
+    private const val ENHANCEMENT_INPUT_DECODE_REVISION = 1
+    private const val REAL_CUGAN_TEXTURE_OCCUPANCY_REVISION = 3
+    private const val MONOCHROME_INPUT_NORMALIZATION_REVISION = 3
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
     // A model change clears this directory while completed pages can still be
@@ -439,11 +441,12 @@ object ImageEnhancementCache {
             ) {
                 append("_cv$REAL_CUGAN_NPU_INT8_CACHE_REVISION")
             }
-            if ((model == 0 || model == 1) && noise == 3) {
+            if (model == 1 || (model == 0 && noise == 3)) {
                 append("_tv$REAL_CUGAN_TEXTURE_OCCUPANCY_REVISION")
             }
         }
-        return "${noise}x${effectiveScale}_m${model}_rs${realEsrganStyle}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${resolvedPrecision}_fa${if (fp16Arithmetic) 1 else 0}_b${resolvedBackend}${modelRevision}_nv$MONOCHROME_INPUT_NORMALIZATION_REVISION"
+        return "${noise}x${effectiveScale}_m${model}_rs${realEsrganStyle}_w${maxWidth}_h${maxHeight}_sw${skipMaxWidth}_sh${skipMaxHeight}_t${tileSize}_p${resolvedPrecision}_fa${if (fp16Arithmetic) 1 else 0}_b${resolvedBackend}${modelRevision}_dv$ENHANCEMENT_INPUT_DECODE_REVISION" +
+            "_nv$MONOCHROME_INPUT_NORMALIZATION_REVISION"
     }
 
     fun getEffectiveScale(model: Int, scale: Int, realEsrganStyle: Int = Waifu2x.REAL_ESRGAN_STYLE_ANIME): Int {

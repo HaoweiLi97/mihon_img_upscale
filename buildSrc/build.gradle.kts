@@ -3,6 +3,8 @@ plugins {
 }
 
 dependencies {
+    // AGP is loaded by these convention plugins, so its R8 override must share this classloader.
+    implementation("com.android.tools:r8:9.1.56")
     implementation(androidx.gradle)
     implementation(kotlinx.gradle)
     implementation(kotlinx.compose.compiler.gradle)

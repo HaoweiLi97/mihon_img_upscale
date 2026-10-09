@@ -12,6 +12,19 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.11] - 2026-10-09
+### Fixed
+- Preserve source image resolution before enhancement instead of decoding at reader display size.
+- Preserve small coloured regions and tinted pages when detecting grayscale input; suppress invented colour on neutral manga pages.
+- Restrict periodic texture protection to neutral Real-CUGAN Pro pages and align tile transforms between Vulkan and Qualcomm NPU.
+- Isolate extension linkage errors during global search so other sources can still return results.
+- Preserve extension-facing APIs and Kotlin interface compatibility bridges in release builds.
+
+### Changed
+- Update shared Kotlin, coroutine, serialization and networking dependencies for extension compatibility, with a matching R8 override.
+- Refresh enhancement caches for the corrected decoding and texture processing.
+- Accept both HTP and SoC context filenames when staging Qualcomm NPU assets.
+
 ## [v1.1.5] - 2026-03-31
 ### Added
 - Automatically remove downloads on Suwayomi after reading, configurable via extension settings ([@cpiber](https://github.com/cpiber)) ([#2673](https://github.com/mihonapp/mihon/pull/2673))

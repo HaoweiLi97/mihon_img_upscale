@@ -637,6 +637,7 @@ int Waifu2x::process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
 
 int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
                      bool input_has_alpha, std::unique_lock<std::mutex> &lock,
+                     const periodic_texture_guard::TilePlan &texture_plan,
                      std::atomic<int> *progress_ptr) const {
   // Input: planar RGBA float Mat with values 0-255 from from_pixels
   // inimage has dims=3, w=width, h=height, c=4 (RGBA)
@@ -769,46 +770,26 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
         }
       }
 
-      int risky_cells = 0;
-      int total_cells = 0;
-      const bool guard_tile = enable_periodic_texture_guard &&
-          periodic_texture_guard::occupies_too_much(
-              w_tile, h_tile,
-              [&](int sample_x, int sample_y) {
-                const float value = in_tile.channel(0)
-                                        .row(prepadding + sample_y)
-                                        [prepadding + sample_x];
-                return static_cast<int>(value * 255.0f + 0.5f);
-              },
-              &risky_cells, &total_cells);
-      int guard_border_x = 0;
-      int guard_border_y = 0;
+      const bool guard_tile = texture_plan.guards(x, y);
+      const periodic_texture_guard::AxisTransform guard_x(in_tile_w);
+      const periodic_texture_guard::AxisTransform guard_y(in_tile_h);
       if (guard_tile) {
-        const int scaled_width =
-            in_tile_w * periodic_texture_guard::kShrinkNumerator /
-            periodic_texture_guard::kShrinkDenominator;
-        const int scaled_height =
-            in_tile_h * periodic_texture_guard::kShrinkNumerator /
-            periodic_texture_guard::kShrinkDenominator;
-        guard_border_x = (in_tile_w - scaled_width) / 2;
-        guard_border_y = (in_tile_h - scaled_height) / 2;
         ncnn::Mat scaled_tile;
-        ncnn::resize_bilinear(in_tile, scaled_tile, scaled_width, scaled_height,
-                              net.opt);
+        ncnn::resize_bilinear(in_tile, scaled_tile, guard_x.scaled_length,
+                              guard_y.scaled_length, net.opt);
         ncnn::Mat guarded_input(in_tile_w, in_tile_h, 3);
         guarded_input.fill(1.0f);
         for (int c = 0; c < 3; ++c) {
           const ncnn::Mat source = scaled_tile.channel(c);
           ncnn::Mat destination = guarded_input.channel(c);
-          for (int row = 0; row < scaled_height; ++row) {
-            memcpy(destination.row(guard_border_y + row) + guard_border_x,
-                   source.row(row), scaled_width * sizeof(float));
+          for (int row = 0; row < guard_y.scaled_length; ++row) {
+            memcpy(destination.row(guard_y.border + row) + guard_x.border,
+                   source.row(row), guard_x.scaled_length * sizeof(float));
           }
         }
         in_tile = guarded_input;
         ++guarded_texture_tiles;
-        LOGD("Guarding periodic texture tile %d,%d (%d/%d cells)", xi, yi,
-             risky_cells, total_cells);
+        LOGD("Guarding periodic texture tile %d,%d", xi, yi);
       }
 
       // Run inference on tile (GPU WORK)
@@ -961,11 +942,9 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
               b = ptr_b[j] * 255.0f;
             } else {
               const float sample_x =
-                  periodic_texture_guard::restored_output_coordinate(
-                      j, guard_border_x, prepadding, scale);
+                  guard_x.restored_output_coordinate(j, prepadding, scale);
               const float sample_y =
-                  periodic_texture_guard::restored_output_coordinate(
-                      i, guard_border_y, prepadding, scale);
+                  guard_y.restored_output_coordinate(i, prepadding, scale);
               const int x0 = std::clamp(static_cast<int>(std::floor(sample_x)),
                                         0, out_tile_captured.w - 1);
               const int y0 = std::clamp(static_cast<int>(std::floor(sample_y)),

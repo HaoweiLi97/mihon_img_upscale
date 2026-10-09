@@ -22,8 +22,6 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import mihon.domain.manga.model.toDomainManga
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.manga.interactor.GetManga
@@ -161,23 +159,9 @@ abstract class SearchScreenModel(
                         return@async
                     }
 
-                    try {
-                        val page = withContext(coroutineDispatcher) {
-                            source.getSearchManga(1, query, source.getFilterList())
-                        }
-
-                        val titles = page.mangas
-                            .map { it.toDomainManga(source.id) }
-                            .distinctBy { it.url }
-                            .let { networkToLocalManga(it) }
-
-                        if (isActive) {
-                            updateItem(source, SearchItemResult.Success(titles))
-                        }
-                    } catch (e: Exception) {
-                        if (isActive) {
-                            updateItem(source, SearchItemResult.Error(e))
-                        }
+                    val result = searchSource(source, query, coroutineDispatcher) { networkToLocalManga(it) }
+                    if (isActive) {
+                        updateItem(source, result)
                     }
                 }
             }

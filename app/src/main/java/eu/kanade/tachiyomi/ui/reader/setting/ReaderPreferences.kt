@@ -14,7 +14,11 @@ class ReaderPreferences(
     init {
         val model = preferenceStore.getInt("pref_realcugan_model", 0)
         val selectedModel = model.get()
-        if (selectedModel in REMOVED_ENHANCEMENT_MODELS || selectedModel >= FIRST_CUSTOM_MODEL_ID) {
+        if (selectedModel == 20) {
+            // Retired HFA2Real selection: use Real-ESRGAN, supported by both backends.
+            model.set(2)
+            preferenceStore.getInt("pref_realcugan_scale", 2).set(2)
+        } else if (selectedModel in REMOVED_ENHANCEMENT_MODELS || selectedModel >= FIRST_CUSTOM_MODEL_ID) {
             model.set(8)
         }
     }

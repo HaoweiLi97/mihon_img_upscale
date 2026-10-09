@@ -102,24 +102,31 @@ val qnnModelNames = listOf(
     "w2xex-photo-small-x2",
     "w2xex-photo-small-x2-int8",
 )
-val qnnContextSourceFiles = selectedQnnContextTargets.flatMap { (_, sourceSoc) ->
-    qnnModelNames.map { model -> "$model.$sourceSoc.bin" }
-}
 val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
     tasks.register<Sync>("stageQnnContexts") {
         selectedQnnContextTargets.forEach { (htpArch, sourceSoc) ->
-            from(contextRoot) {
-                include(qnnModelNames.map { model -> "$model.$sourceSoc.bin" })
-                rename { filename -> filename.replace(".$sourceSoc.bin", ".v$htpArch.bin") }
-                into("qnn-contexts")
+            qnnModelNames.forEach { model ->
+                val socFile = contextRoot.resolve("$model.$sourceSoc.bin")
+                val htpFile = contextRoot.resolve("$model.v$htpArch.bin")
+                val sourceFile = if (socFile.isFile) socFile else htpFile
+                from(sourceFile) {
+                    rename { "$model.v$htpArch.bin" }
+                    into("qnn-contexts")
+                }
             }
         }
         into(generatedQnnAssetsDir)
 
         doFirst {
-            val missingFiles = qnnContextSourceFiles
-                .map(contextRoot::resolve)
-                .filterNot(File::isFile)
+            val missingFiles = selectedQnnContextTargets.flatMap { (htpArch, sourceSoc) ->
+                qnnModelNames.mapNotNull { model ->
+                    val socFile = contextRoot.resolve("$model.$sourceSoc.bin")
+                    val htpFile = contextRoot.resolve("$model.v$htpArch.bin")
+                    if (socFile.isFile || htpFile.isFile) null else {
+                        "$model.$sourceSoc.bin (or $model.v$htpArch.bin)"
+                    }
+                }
+            }
             check(missingFiles.isEmpty()) {
                 "QNN multi-HTP context directory is incomplete: ${missingFiles.joinToString()}"
             }
@@ -145,8 +152,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 37
-        versionName = "1.3.10"
+        versionCode = 38
+        versionName = "1.3.11"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")

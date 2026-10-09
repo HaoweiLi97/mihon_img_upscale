@@ -11,6 +11,7 @@
 #include "gpu.h"
 #include "layer.h"
 #include "net.h"
+#include "periodic_texture_guard.h"
 
 class Waifu2x {
 public:
@@ -26,6 +27,7 @@ public:
   // lock: The JNI lock, passed in to allow early release of the GPU.
   int process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
               bool input_has_alpha, std::unique_lock<std::mutex> &lock,
+              const periodic_texture_guard::TilePlan &texture_plan,
               std::atomic<int> *progress_ptr = nullptr) const;
   int process_gpu(const ncnn::Mat &packed_input, void *out_pixels,
                   int out_stride, bool input_has_alpha,
@@ -38,7 +40,6 @@ public:
   int scale;
   int tilesize;
   int prepadding;
-  bool enable_periodic_texture_guard = false;
   std::atomic<int> *progress_ptr = nullptr;
   std::atomic<int> *ui_busy_ptr = nullptr;
   std::atomic<bool> *should_abort_ptr = nullptr;
