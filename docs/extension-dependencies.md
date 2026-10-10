@@ -39,6 +39,15 @@ Injekt remains the existing Mihon fork; switching forks is not a version bump.
 JSpecify is explicitly aligned to 1.0.1. Zstd 0.4.0 already matches through
 transitive dependencies; verify its resolved version alongside explicit dependencies.
 
+The combined manga update bridge must dispatch to the suspend detail/chapter APIs,
+including sources that implement only the 1.5 methods. Calling the legacy RxJava
+methods directly bypasses those overrides and can throw `IllegalStateException:
+Not used`. The default bridge uses a coroutine context marker to prevent recursive
+calls between individual and combined defaults while retaining 1.4 RxJava and 1.6
+combined-only sources. Do not catch a source's `UnsupportedOperationException` as
+an API-version signal: that replaces real source failures with misleading fallback
+errors. Missing extensions must retain `SourceNotInstalledException`.
+
 Release shrinking is another possible cause of missing methods: the shrinker
 cannot see calls made only by external APKs. Keep the public `Source` interface,
 its `$DefaultImpls` compatibility bridges, and the extension-facing JavaScript

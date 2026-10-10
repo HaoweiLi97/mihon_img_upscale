@@ -1,6 +1,7 @@
 #include "anime4k.h"
 #include "monochrome_guard.h"
 #include "periodic_texture_guard.h"
+#include "openmp_runtime.h"
 #include "qnn_backend.h"
 #include "waifu2x.h"
 #include <android/bitmap.h>
@@ -29,12 +30,6 @@ static std::atomic<int> g_current_id{-1};
 static std::atomic<int> g_ui_busy{0};
 static std::atomic<bool> g_abort_processing{false};
 static bool g_realcugan_pro = false;
-
-// NCNN's prebuilt Android archive statically links LLVM OpenMP. Use its public runtime
-// configuration entry point in addition to process environment variables: on some vendor
-// Android builds libomp has already read inherited defaults before JNI_OnLoad, so setenv alone
-// does not prevent its broken CPU-affinity discovery path from running on the first model load.
-extern "C" void kmp_set_defaults(char const *defaults);
 
 namespace {
 
@@ -82,11 +77,8 @@ void force_monochrome_output(unsigned char *rgba, int width, int height,
 // operation can initialise the OpenMP runtime. GPU and QNN execution do not
 // use this host-thread affinity policy.
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *, void *) {
-  setenv("KMP_AFFINITY", "disabled", 1);
-  setenv("OMP_PROC_BIND", "false", 1);
-  unsetenv("OMP_PLACES");
-  kmp_set_defaults("KMP_AFFINITY=disabled");
-  LOGD("LLVM OpenMP CPU affinity disabled");
+  configure_android_openmp();
+  LOGD("LLVM OpenMP CPU affinity disabled; flat topology enabled");
   return JNI_VERSION_1_6;
 }
 

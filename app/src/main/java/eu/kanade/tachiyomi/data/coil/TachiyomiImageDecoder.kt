@@ -61,7 +61,8 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                     // 1. Attempt decoding with native ImageDecoder (for AVIF/JXL/HEIF)
                     bitmap = decodeSemaphore.withPermit {
                         val nativeDecoder = try {
-                            ImageDecoder.newInstance(source.inputStream(), options.cropBorders, displayProfile)
+                            // Keep the original unread so a failed native decode can use BitmapFactory.
+                            ImageDecoder.newInstance(source.peek().inputStream(), options.cropBorders, displayProfile)
                         } catch (e: Exception) {
                             null
                         }
@@ -180,7 +181,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                 if (cachedFile != null) {
                                     logcat(LogPriority.DEBUG) { "TachiyomiImageDecoder: Page $pageIndex/$pageVariant found in cache: ${cachedFile.absolutePath}" }
                                     try {
-                                        val cachedBitmap = BitmapFactory.decodeFile(cachedFile.absolutePath)
+                                        val cachedBitmap = ImageEnhancementCache.decodeCachedImage(cachedFile)
                                         if (cachedBitmap != null && ImageEnhancementCache.isDisplayable(cachedBitmap)) {
                                             bitmap.recycle()
                                             bitmap = cachedBitmap
@@ -425,7 +426,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
             options.pageVariant,
         ) ?: return null
 
-        val cachedBitmap = BitmapFactory.decodeFile(cachedFile.absolutePath)
+        val cachedBitmap = ImageEnhancementCache.decodeCachedImage(cachedFile)
         if (cachedBitmap != null && ImageEnhancementCache.isDisplayable(cachedBitmap)) {
             logcat(LogPriority.DEBUG) {
                 "TachiyomiImageDecoder: Page $pageIndex/${options.pageVariant} served from enhanced cache before source decode"

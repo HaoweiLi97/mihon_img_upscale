@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.util.waifu2x
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import java.io.File
 import java.io.FileOutputStream
@@ -16,6 +17,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import okio.Buffer
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 
@@ -157,7 +159,75 @@ object ImageEnhancementCache {
      */
     fun getCachedImage(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = ""): File? {
         val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant))
-        return if (file.exists()) file else null
+        return if (file.isFile) file else null
+    }
+
+    /**
+     * Read a stable snapshot before clear()/model changes can delete the backing file.
+     * A small decode rejects corrupt old entries without allocating a full enhanced bitmap.
+     */
+    fun readCachedImage(file: File): Buffer? {
+        val source = cacheLock.read {
+            try {
+                if (!file.isFile) return@read null
+                file.inputStream().use { Buffer().readFrom(it) }
+            } catch (_: Exception) {
+                null
+            }
+        } ?: return null
+
+        val valid = try {
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = 32
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val preview = BitmapFactory.decodeStream(source.peek().inputStream(), null, options)
+            try {
+                preview != null && isDisplayable(preview)
+            } finally {
+                preview?.recycle()
+            }
+        } catch (_: Exception) {
+            false
+        }
+        if (valid) return source
+
+        source.close()
+        discardCachedImage(file, source)
+        return null
+    }
+
+    fun decodeCachedImage(file: File): Bitmap? {
+        val source = readCachedImage(file) ?: return null
+        val snapshot = source.clone()
+        val bitmap = try {
+            source.use { BitmapFactory.decodeStream(it.inputStream()) }
+        } catch (_: Exception) {
+            null
+        }
+        if (bitmap != null && isDisplayable(bitmap)) return bitmap
+        bitmap?.recycle()
+        discardCachedImage(file, snapshot)
+        return null
+    }
+
+    fun discardCachedImage(file: File, expectedSource: Buffer? = null) {
+        val removed = cacheLock.write {
+            if (!file.isFile) return@write false
+            if (expectedSource != null) {
+                val current = try {
+                    file.inputStream().use { Buffer().readFrom(it) }
+                } catch (_: Exception) {
+                    return@write false
+                }
+                if (current != expectedSource) return@write false
+            }
+            file.delete()
+        }
+        if (removed) {
+            _events.tryEmit(CacheEvent.Cleared)
+            android.util.Log.w("ImageEnhancementCache", "Discarded invalid enhanced image: ${file.name}")
+        }
     }
     
     /**
@@ -171,19 +241,21 @@ object ImageEnhancementCache {
      * Remove a cached enhanced image and its temporary file for the same page/config.
      */
     fun removeCachedImage(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = ""): Boolean {
-        return try {
-            val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant))
-            val tempFile = File(file.parent, "${file.name}.tmp")
-            val removedFile = !file.exists() || file.delete()
-            val removedTemp = !tempFile.exists() || tempFile.delete()
-            (removedFile && removedTemp).also { removed ->
-                if (removed) {
-                    _events.tryEmit(CacheEvent.Removed(cacheKey(mangaId, chapterId, pageIndex, configHash, pageVariant)))
+        return cacheLock.write {
+            try {
+                val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant))
+                val tempFile = File(file.parent, "${file.name}.tmp")
+                val removedFile = !file.exists() || file.delete()
+                val removedTemp = !tempFile.exists() || tempFile.delete()
+                (removedFile && removedTemp).also { removed ->
+                    if (removed) {
+                        _events.tryEmit(CacheEvent.Removed(cacheKey(mangaId, chapterId, pageIndex, configHash, pageVariant)))
+                    }
                 }
+            } catch (e: Exception) {
+                android.util.Log.e("ImageEnhancementCache", "Failed to remove cached image for page $pageIndex", e)
+                false
             }
-        } catch (e: Exception) {
-            android.util.Log.e("ImageEnhancementCache", "Failed to remove cached image for page $pageIndex", e)
-            false
         }
     }
 
@@ -259,17 +331,18 @@ object ImageEnhancementCache {
                 )
                 val tempFile = File(file.parent, "${file.name}.tmp")
 
-                FileOutputStream(tempFile).use { out ->
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val compressed = FileOutputStream(tempFile).use { out ->
+                    val success = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 90, out)
                     } else {
                         @Suppress("DEPRECATION")
                         bitmap.compress(Bitmap.CompressFormat.WEBP, 90, out)
                     }
                     out.flush()
+                    success
                 }
 
-                if (request.generation != cacheGeneration.get()) {
+                if (!compressed || tempFile.length() == 0L || request.generation != cacheGeneration.get()) {
                     tempFile.delete()
                     return@read null
                 }

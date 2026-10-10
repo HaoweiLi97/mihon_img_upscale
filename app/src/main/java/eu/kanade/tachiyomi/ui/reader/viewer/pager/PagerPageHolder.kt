@@ -124,6 +124,7 @@ class PagerPageHolder(
         val pageInset = viewer.config.verticalPaddingDp.dpToPx
         setPadding(pageInset, pageInset, pageInset, pageInset)
         suppressDefaultStatus = extraPage != null
+        originalImageSourceFactory = { buildOriginalDisplaySource() }
         if (usesEnhancedDisplayTransform()) {
             enhancedImageSourceFactory = { buildEnhancedDisplaySource(it) }
         }
@@ -499,12 +500,23 @@ class PagerPageHolder(
         val enhancedFile = preferredEnhancedFile ?: currentEnhancedFile(targetPage)
         return try {
             when {
-                enhancedFile != null -> enhancedFile.inputStream()
+                enhancedFile != null -> ImageEnhancementCache.readCachedImage(enhancedFile)?.inputStream()
+                    ?: originalDisplayStream(targetPage)
                 shouldUseSplitDisplaySource(targetPage) && enhancementStreamFor(targetPage) != null ->
                     enhancementStreamFor(targetPage)?.invoke()
                 else -> targetPage.stream?.invoke()
             }
-        } catch (_: Throwable) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            originalDisplayStream(targetPage)
+        }
+    }
+
+    private fun originalDisplayStream(targetPage: ReaderPage): java.io.InputStream? {
+        return if (shouldUseSplitDisplaySource(targetPage)) {
+            enhancementStreamFor(targetPage)?.invoke() ?: targetPage.stream?.invoke()
+        } else {
             targetPage.stream?.invoke()
         }
     }
@@ -578,7 +590,7 @@ class PagerPageHolder(
     }
 
     private fun buildEnhancedDisplaySource(primaryEnhancedFile: java.io.File): BufferedSource? {
-        val primaryStream = currentDisplayStream(page, primaryEnhancedFile) ?: return null
+        val primaryStream = ImageEnhancementCache.readCachedImage(primaryEnhancedFile)?.inputStream() ?: return null
         return primaryStream.use { s1 ->
             if (extraPage != null) {
                 val extraStream = currentDisplayStream(extraPage!!) ?: return null
@@ -590,6 +602,20 @@ class PagerPageHolder(
                 }
             } else {
                 process(item, Buffer().readFrom(s1))
+            }
+        }
+    }
+
+    private fun buildOriginalDisplaySource(): BufferedSource? {
+        val primaryStream = originalDisplayStream(page) ?: return null
+        return primaryStream.use { primary ->
+            val source = Buffer().readFrom(primary)
+            val secondaryPage = extraPage
+            if (secondaryPage != null) {
+                val secondaryStream = originalDisplayStream(secondaryPage) ?: return null
+                secondaryStream.use { secondary -> mergeOrSplitPages(source, Buffer().readFrom(secondary)) }
+            } else {
+                process(item, source)
             }
         }
     }
@@ -1073,6 +1099,7 @@ class PagerPageHolder(
      * Called when an image fails to decode.
      */
     override fun onImageLoadError(error: Throwable?) {
+        if (recoverEnhancedCacheLoad(error)) return
         super.onImageLoadError(error)
         setError(error)
     }

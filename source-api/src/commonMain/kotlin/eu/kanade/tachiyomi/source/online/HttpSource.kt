@@ -218,9 +218,8 @@ abstract class HttpSource : CatalogueSource {
      * @param manga the manga to update.
      * @return the updated manga.
      */
-    @Suppress("DEPRECATION")
     override suspend fun getMangaDetails(manga: SManga): SManga {
-        return getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
+        return super<CatalogueSource>.getMangaDetails(manga)
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getMangaDetails"))
@@ -256,21 +255,17 @@ abstract class HttpSource : CatalogueSource {
      * @param manga the manga to update.
      * @return the chapters for the manga.
      */
-    @Suppress("DEPRECATION")
     override suspend fun getChapterList(manga: SManga): List<SChapter> {
-        return getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+        return super<CatalogueSource>.getChapterList(manga)
     }
 
-    @Suppress("DEPRECATION")
     override suspend fun getMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val updatedManga = if (fetchDetails) fetchMangaDetails(manga).awaitSingle() else manga
-        val updatedChapters = if (fetchChapters) fetchChapterList(manga).awaitSingle() else chapters
-        return SMangaUpdate(updatedManga, updatedChapters)
+        return super<CatalogueSource>.getMangaUpdate(manga, chapters, fetchDetails, fetchChapters)
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getChapterList"))

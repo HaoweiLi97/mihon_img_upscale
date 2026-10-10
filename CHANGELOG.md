@@ -12,6 +12,15 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.12] - 2026-10-10
+### Fixed
+- Dispatch local manga updates through the coroutine source API instead of unused legacy methods.
+- Support manga updates across legacy, coroutine and combined-update extension APIs without masking source errors.
+- Keep stable image snapshots when switching enhancement models clears cached files.
+- Discard corrupt or empty enhanced images and restore the original reader page if enhanced decoding fails.
+- Preserve the original input stream for image decoder fallback and ignore results from a previous enhancement configuration.
+- Use a flat OpenMP CPU topology to avoid the native CPU-count assertion observed during Real-CUGAN initialization.
+
 ## [v1.3.11] - 2026-10-09
 ### Fixed
 - Preserve source image resolution before enhancement instead of decoding at reader display size.

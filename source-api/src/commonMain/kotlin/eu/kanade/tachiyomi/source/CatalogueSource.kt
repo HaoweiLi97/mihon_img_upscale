@@ -61,19 +61,16 @@ interface CatalogueSource : Source {
     override fun getFilterList(): FilterList
 
     /**
-     * Bridges the TachiyomiX 1.6 combined update API to legacy extension methods.
+     * Bridges the TachiyomiX 1.6 combined update API to 1.4/1.5 extension methods.
      * New 1.6 extensions override this method directly.
      */
-    @Suppress("DEPRECATION")
     override suspend fun getMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val updatedManga = if (fetchDetails) fetchMangaDetails(manga).awaitSingle() else manga
-        val updatedChapters = if (fetchChapters) fetchChapterList(manga).awaitSingle() else chapters
-        return SMangaUpdate(updatedManga, updatedChapters)
+        return super<Source>.getMangaUpdate(manga, chapters, fetchDetails, fetchChapters)
     }
 
     /** Optional Komikku-compatible related manga ABI used by some 1.6 extensions. */

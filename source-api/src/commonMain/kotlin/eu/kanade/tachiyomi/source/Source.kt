@@ -7,7 +7,11 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.awaitSingle
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import rx.Observable
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /**
  * A basic interface for creating a source. It could be an online source, a local source, etc.
@@ -53,14 +57,19 @@ interface Source {
 
     /**
      * Combined manga/chapters update API introduced by TachiyomiX 1.6.
-     * CatalogueSource supplies the legacy bridge for older extensions.
+     * Dispatch through suspend methods, falling back to RxJava only in their defaults.
+     * New 1.6 extensions override this method directly.
      */
     suspend fun getMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
-    ): SMangaUpdate = throw UnsupportedOperationException("Manga updates are not supported")
+    ): SMangaUpdate = withContext(LegacyMangaUpdateContext(this)) {
+        val updatedManga = if (fetchDetails) getMangaDetails(manga) else manga
+        val updatedChapters = if (fetchChapters) getChapterList(updatedManga) else chapters
+        SMangaUpdate(updatedManga, updatedChapters)
+    }
 
     /**
      * Get the updated details for a manga.
@@ -71,10 +80,10 @@ interface Source {
      */
     @Suppress("DEPRECATION")
     suspend fun getMangaDetails(manga: SManga): SManga {
-        return try {
-            getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
-        } catch (_: UnsupportedOperationException) {
+        return if (currentCoroutineContext()[LegacyMangaUpdateContext]?.source === this) {
             fetchMangaDetails(manga).awaitSingle()
+        } else {
+            getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
         }
     }
 
@@ -87,10 +96,10 @@ interface Source {
      */
     @Suppress("DEPRECATION")
     suspend fun getChapterList(manga: SManga): List<SChapter> {
-        return try {
-            getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
-        } catch (_: UnsupportedOperationException) {
+        return if (currentCoroutineContext()[LegacyMangaUpdateContext]?.source === this) {
             fetchChapterList(manga).awaitSingle()
+        } else {
+            getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
         }
     }
 
@@ -127,4 +136,12 @@ interface Source {
     )
     fun fetchPageList(chapter: SChapter): Observable<List<Page>> =
         throw IllegalStateException("Not used")
+}
+
+/**
+ * Prevents default individual/combined APIs from calling each other recursively.
+ * Coroutine scope keeps concurrent requests independent and restores dispatch after an update.
+ */
+private class LegacyMangaUpdateContext(val source: Source) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<LegacyMangaUpdateContext>
 }
