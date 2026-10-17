@@ -60,6 +60,7 @@ class CloudSyncBackupTest {
             0,
             0,
             0,
+            "{}",
         )
         val notSynced = mapper(
             43,
@@ -77,6 +78,7 @@ class CloudSyncBackupTest {
             0,
             0,
             0,
+            "{}",
         )
 
         assertTrue(synced.cloudSynced)

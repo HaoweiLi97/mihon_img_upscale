@@ -208,6 +208,7 @@ class MangaRestorer(
                     chapter.dateFetch,
                     chapter.dateUpload,
                     chapter.version,
+                    chapter.memo.toString(),
                 )
             }
         }
@@ -231,6 +232,7 @@ class MangaRestorer(
                     chapterId = chapter.id,
                     version = chapter.version,
                     isSyncing = 0,
+                    memo = null,
                 )
             }
         }

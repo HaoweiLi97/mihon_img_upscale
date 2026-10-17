@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.data.backup.models
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.protobuf.ProtoNumber
 import tachiyomi.domain.chapter.model.Chapter
 
@@ -23,6 +25,7 @@ data class BackupChapter(
     @ProtoNumber(11) var lastModifiedAt: Long = 0,
     @ProtoNumber(12) var version: Long = 0,
     @ProtoNumber(13) var cloudSynced: Boolean = false,
+    @ProtoNumber(14) var memo: String = "{}",
 ) {
     fun toChapterImpl(): Chapter {
         return Chapter.create().copy(
@@ -38,6 +41,7 @@ data class BackupChapter(
             sourceOrder = this@BackupChapter.sourceOrder,
             lastModifiedAt = this@BackupChapter.lastModifiedAt,
             version = this@BackupChapter.version,
+            memo = Json.parseToJsonElement(this@BackupChapter.memo).jsonObject,
         )
     }
 }
@@ -58,6 +62,7 @@ fun backupChapterMapper(cloudUploadedChapterIds: Set<String>) = {
         lastModifiedAt: Long,
         version: Long,
         _: Long,
+        memo: String,
     ->
     BackupChapter(
         url = url,
@@ -73,5 +78,6 @@ fun backupChapterMapper(cloudUploadedChapterIds: Set<String>) = {
         lastModifiedAt = lastModifiedAt,
         version = version,
         cloudSynced = id.toString() in cloudUploadedChapterIds,
+        memo = memo,
     )
 }
