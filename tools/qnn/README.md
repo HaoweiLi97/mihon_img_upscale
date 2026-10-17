@@ -3,7 +3,11 @@
 Supported targets are HTP v69, v73, v75, v79, and v81. Runtime selection and cache names use
 only the HTP architecture, so another Qualcomm chip with the same HTP version reuses the same
 context. Models use a fixed 256x256 RGB NCHW input tile and produce a 512x512 or 768x768 RGB
-NCHW output tile.
+NCHW output tile in ONNX. The QNN converter changes image tensors to NHWC; raw calibration
+inputs must therefore contain RGB float32 values in NHWC order, normalized to [0, 1]. The
+converter's `--input_layout input NCHW` describes the source ONNX layout, not the raw calibration
+file layout. Using NCHW calibration files against the converted graph can cause severe image
+distortion even when conversion and context generation succeed.
 
 | Product | SoC | HTP architecture |
 | --- | --- | --- |
@@ -36,6 +40,7 @@ SoC aliases consumed by older builds, such as `model.SM8475.bin`; Gradle stages
 both forms as the runtime `model.v69.bin` asset.
 
 Gradle downloads Qualcomm's official `com.qualcomm.qti:qnn-runtime:2.49.0` Android runtime.
+Use QAIRT SDK 2.49.0.260730 for conversion and context generation to match this runtime.
 It packages the matching HTP Stub and Skel libraries for v69, v73, v75, v79, and v81, so
 these runtime files do not need to be copied from the local SDK. The SDK path is still needed
 for QNN headers and the model conversion/context generation tools.
@@ -83,22 +88,35 @@ docker run --rm --platform linux/amd64 \
 
 Create calibration inputs and convert the supported models to W8A16. The calibration input
 list paths must match the path mounted inside the converter container.
+Keep calibration images and generated raw files outside the repository. Use diverse manga pages
+for manga models and natural photographs for Photo models, and reserve separate images for validation.
+Set `MANGA_CALIBRATION_INPUT_LIST` and `PHOTO_CALIBRATION_INPUT_LIST` to the corresponding lists
+inside the container. `CALIBRATION_INPUT_LIST` remains available as a shared-list fallback.
 
 ```sh
 python tools/qnn/prepare_calibration.py \
-  --image-dir "$CALIBRATION_IMAGE_DIR" \
-  --output-dir "$CALIBRATION_DIR" \
+  --image-dir "$MANGA_CALIBRATION_IMAGE_DIR" \
+  --output-dir "$MANGA_CALIBRATION_DIR" \
   --tile-size 256 \
-  --samples 64 \
-  --input-list-prefix /calibration
+  --samples 160 \
+  --input-list-prefix /calibration-manga
+
+python tools/qnn/prepare_calibration.py \
+  --image-dir "$PHOTO_CALIBRATION_IMAGE_DIR" \
+  --output-dir "$PHOTO_CALIBRATION_DIR" \
+  --tile-size 256 \
+  --samples 200 \
+  --input-list-prefix /calibration-photo
 
 docker run --rm --platform linux/amd64 \
   -v "$QNN_SDK_ROOT:/qnn:ro" \
   -v "$ONNX_DIR:/models:ro" \
-  -v "$CALIBRATION_DIR:/calibration:ro" \
+  -v "$MANGA_CALIBRATION_DIR:/calibration-manga:ro" \
+  -v "$PHOTO_CALIBRATION_DIR:/calibration-photo:ro" \
   -v "$INT8_CONVERTED_DIR:/output" \
   -e ONNX_DIR=/models \
-  -e CALIBRATION_INPUT_LIST=/calibration/input-list.txt \
+  -e MANGA_CALIBRATION_INPUT_LIST=/calibration-manga/input-list.txt \
+  -e PHOTO_CALIBRATION_INPUT_LIST=/calibration-photo/input-list.txt \
   -e OUTPUT_DIR=/output \
   mihon-qnn-tools:2.49.0 \
   convert-qnn-int8-models

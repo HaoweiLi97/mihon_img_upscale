@@ -12,7 +12,16 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.14] - 2026-10-16
+
+### Changed
+- Rebuild 110 Qualcomm NPU contexts with QAIRT 2.49.0 for HTP v69, v73, v75, v79 and v81, using separate manga and photo calibration inputs for quantized models.
+- Keep the existing Real-CUGAN Pro no-denoise and conservative contexts at both 2x and 3x scales.
+- Keep calibration datasets outside the repository and ignore local calibration inputs in the QNN tools directory.
+
 ### Fixed
+- Write QNN calibration inputs in RGB/NHWC layout to prevent severe color distortion in quantized output.
+- Refresh extracted NPU contexts and enhanced image caches when bundled contexts change.
 - Turn only the actual comic pictures, excluding spread layout padding, while keeping the reader background stationary.
 
 ## [v1.3.13] - 2026-10-16

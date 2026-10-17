@@ -559,6 +559,9 @@ object ImageEnhancementCache {
         val resolvedBackend = Waifu2x.resolveProcessingBackend(processingBackend, model, effectiveScale)
         val resolvedPrecision = Waifu2x.resolvePrecision(precision, resolvedBackend, model, effectiveScale)
         val modelRevision = buildString {
+            if (resolvedBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU) {
+                append("_qv${Waifu2x.QNN_CONTEXT_CACHE_VERSION}")
+            }
             if (
                 model == Waifu2x.MODEL_REAL_ESRGAN_ANIME &&
                 realEsrganStyle == Waifu2x.REAL_ESRGAN_STYLE_PHOTO &&

@@ -9,7 +9,7 @@ from PIL import Image
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create QNN RGB/NCHW float32 calibration inputs")
+    parser = argparse.ArgumentParser(description="Create QNN RGB/NHWC float32 calibration inputs")
     parser.add_argument("--image-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--tile-size", type=int, default=256)
@@ -43,7 +43,9 @@ def main() -> None:
             top = randomizer.randrange(image.height - args.tile_size + 1)
             crop = image.crop((left, top, left + args.tile_size, top + args.tile_size))
 
-        tensor = np.asarray(crop, dtype=np.float32).transpose(2, 0, 1) / 255.0
+        # QNN calibrates the converted NHWC graph. --input_layout NCHW in
+        # the converter describes the source ONNX graph, not these raw files.
+        tensor = np.asarray(crop, dtype=np.float32) / 255.0
         output = (args.output_dir / f"input-{index:03d}.raw").resolve()
         tensor.tofile(output)
         input_paths.append(
@@ -54,7 +56,10 @@ def main() -> None:
 
     input_list = args.output_dir / "input-list.txt"
     input_list.write_text("".join(f"{path}\n" for path in input_paths), encoding="utf-8")
-    print(f"Created {len(input_paths)} calibration inputs in {args.output_dir}")
+    print(
+        f"Created {len(input_paths)} RGB/NHWC calibration inputs "
+        f"from {min(args.samples, len(images))} source files in {args.output_dir}",
+    )
 
 
 if __name__ == "__main__":

@@ -3,8 +3,10 @@
 set -eu
 
 : "${ONNX_DIR:?Set ONNX_DIR to the directory containing exported ONNX models}"
-: "${CALIBRATION_INPUT_LIST:?Set CALIBRATION_INPUT_LIST to the QNN calibration input list}"
 : "${OUTPUT_DIR:?Set OUTPUT_DIR to the QNN converter output directory}"
+
+MANGA_CALIBRATION_INPUT_LIST=${MANGA_CALIBRATION_INPUT_LIST:-${CALIBRATION_INPUT_LIST:-}}
+PHOTO_CALIBRATION_INPUT_LIST=${PHOTO_CALIBRATION_INPUT_LIST:-${CALIBRATION_INPUT_LIST:-}}
 
 QNN_SDK_ROOT=${QNN_SDK_ROOT:-/qnn}
 CONVERTER="$QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter"
@@ -35,6 +37,16 @@ for name in $models; do
         exit 1
     fi
     act_bitwidth=8
+    input_list=$MANGA_CALIBRATION_INPUT_LIST
+    case "$name" in
+        realesrgan-general-x4v3-x2|span-nomosuni-x2|w2xex-photo-small-x2)
+            input_list=$PHOTO_CALIBRATION_INPUT_LIST
+            ;;
+    esac
+    if [ -z "$input_list" ] || [ ! -f "$input_list" ]; then
+        echo "Missing calibration list for $name; set MANGA_CALIBRATION_INPUT_LIST or PHOTO_CALIBRATION_INPUT_LIST (or CALIBRATION_INPUT_LIST for a shared dataset)" >&2
+        exit 1
+    fi
     case "$name" in
         realesrgan-general-x4v3-x2|realcugan-se-*|realcugan-pro-*|span-nomosuni-x2|w2xex-photo-small-x2)
             # Photo-oriented models accumulate visible artifacts with 8-bit activations.
@@ -48,7 +60,7 @@ for name in $models; do
         --input_encoding input rgb rgb \
         --float_bitwidth 16 \
         --exclude_named_tensors \
-        --input_list "$CALIBRATION_INPUT_LIST" \
+        --input_list "$input_list" \
         --act_bitwidth "$act_bitwidth" \
         --weights_bitwidth 8 \
         --bias_bitwidth 32 \
