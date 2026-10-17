@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 
 // Geometry and timing follow ScrapeFun's comic-reader/bookPageTurn.ts.
 internal const val BOOK_PAGE_TURN_MILLIS = 440
@@ -62,7 +64,7 @@ internal fun bookPageTurn(
     vertical: Boolean,
 ): BookPageTurn? {
     val offset = pageIndex - startIndex - position
-    if (!offset.isFinite() || abs(offset) < 0.0001f || abs(offset) > 1.0001f) return null
+    if (!offset.isFinite() || abs(offset) < 0.0001f || abs(offset) > 1.001f) return null
     val step = if (offset > 0f) 1 else -1
     if (pageIndex != startIndex && pageIndex != startIndex + step) return null
     return BookPageTurn(
@@ -79,4 +81,28 @@ internal fun bookPageTurn(
 internal data class BookPageBounds(val left: Float, val top: Float, val right: Float, val bottom: Float) {
     val width get() = right - left
     val height get() = bottom - top
+}
+
+/** Keeps the turn anchored to the visible pair when pages are restored, regrouped or skipped quickly. */
+internal class BookPageTurnState {
+    var startIndex: Int = 0
+        private set
+    private var scrollPosition = 0f
+
+    fun restore(index: Int) {
+        startIndex = index
+        scrollPosition = index.toFloat()
+    }
+
+    fun onScroll(position: Int, offset: Float) {
+        val next = position + offset
+        if (!next.isFinite()) return
+        if (abs(next - startIndex) > 1.001f) {
+            startIndex = if (next > startIndex) floor(next).toInt() else ceil(next).toInt()
+        }
+        scrollPosition = next
+    }
+
+    fun frame(pageIndex: Int, rtl: Boolean, spread: Boolean, vertical: Boolean): BookPageTurn? =
+        bookPageTurn(pageIndex, startIndex, pageIndex - scrollPosition, rtl, spread, vertical)
 }

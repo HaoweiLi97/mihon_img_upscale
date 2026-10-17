@@ -20,6 +20,10 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Book page turns ported from ScrapeFun: 440 ms perspective turns, spine shadows, readable reverse faces, RTL and single/spread alignment. Toggle in reader settings; applies to the standard paged reader.
 
 ### Fixed
+- Render book turns on backgroundless page views and enable page transitions when selecting the book animation.
+- Keep turn origins synchronized after chapter restoration, page regrouping and rapid direction changes; animate chapter transition cards too.
+- Keep enhancement status indicators fixed above turning single and double pages.
+- Decode AVIF page transformations with the upstream native decoder and preserve original streams when double-page decoding fails.
 - Preserve source chapter metadata through refresh, storage, reader conversion and backup so extensions requiring `mangaPath` can open chapters after refreshing.
 - Keep legacy fork cloud-upload fields compatible with upstream backup metadata.
 

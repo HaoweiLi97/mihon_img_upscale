@@ -181,9 +181,13 @@ private fun ColumnScope.PagerViewerSettings(viewModel: ReaderSettingsViewModel) 
         pref = viewModel.preferences.navigateToPan,
     )
 
+    val pageTransitions by viewModel.preferences.pageTransitions.collectAsState()
+    val bookTransitions by viewModel.preferences.bookPageTransitions.collectAsState()
+    val bookTransitionsEnabled = pageTransitions && bookTransitions
     CheckboxItem(
         label = stringResource(MR.strings.pref_book_page_turn),
-        pref = viewModel.preferences.bookPageTransitions,
+        checked = bookTransitionsEnabled,
+        onClick = { viewModel.preferences.setBookPageTransitions(!bookTransitionsEnabled) },
     )
 
     SettingsChipRow(MR.strings.pref_page_layout) {

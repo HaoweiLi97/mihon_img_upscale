@@ -7,6 +7,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -59,11 +60,18 @@ object SettingsReaderScreen : SearchableSettings {
                 preference = readerPref.pageTransitions,
                 title = stringResource(MR.strings.pref_page_transitions),
             ),
-            Preference.PreferenceItem.SwitchPreference(
-                preference = readerPref.bookPageTransitions,
+            Preference.PreferenceItem.CustomPreference(
                 title = stringResource(MR.strings.pref_book_page_turn),
-                subtitle = stringResource(MR.strings.pref_book_page_turn_summary),
-            ),
+            ) {
+                val pageTransitions by readerPref.pageTransitions.collectAsState()
+                val bookTransitions by readerPref.bookPageTransitions.collectAsState()
+                SwitchPreferenceWidget(
+                    title = stringResource(MR.strings.pref_book_page_turn),
+                    subtitle = stringResource(MR.strings.pref_book_page_turn_summary),
+                    checked = pageTransitions && bookTransitions,
+                    onCheckedChanged = readerPref::setBookPageTransitions,
+                )
+            },
             Preference.PreferenceItem.SwitchPreference(
                 preference = readerPref.loadAheadOnlyOverWifi,
                 title = stringResource(MR.strings.pref_load_ahead_only_over_wifi),

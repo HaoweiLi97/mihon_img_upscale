@@ -38,6 +38,11 @@ class ReaderPreferences(
 
     val pageTransitions: Preference<Boolean> = preferenceStore.getBoolean("pref_enable_transitions_key", true)
 
+    fun setBookPageTransitions(enabled: Boolean) {
+        bookPageTransitions.set(enabled)
+        if (enabled) pageTransitions.set(true)
+    }
+
     val loadAheadOnlyOverWifi: Preference<Boolean> = preferenceStore.getBoolean(
         "pref_reader_load_ahead_only_over_wifi",
         true,

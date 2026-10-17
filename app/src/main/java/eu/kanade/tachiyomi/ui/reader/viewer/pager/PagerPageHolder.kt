@@ -5,7 +5,6 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
@@ -165,7 +164,7 @@ class PagerPageHolder(
             setBackgroundColor(Color.TRANSPARENT)
             setPadding(0, 0, 0, 0)
             isVisible = false
-            this@PagerPageHolder.addView(this)
+            this@PagerPageHolder.addEnhancementStatusView(this)
         }
     }
 
@@ -840,8 +839,8 @@ class PagerPageHolder(
             }
         }
 
-        val bitmap1 = BitmapFactory.decodeStream(imageSource.inputStream())
-        val bitmap2 = BitmapFactory.decodeStream(imageSource2.inputStream())
+        val bitmap1 = ImageUtil.decodeBitmap(imageSource)
+        val bitmap2 = ImageUtil.decodeBitmap(imageSource2)
 
         if (bitmap1 == null || bitmap2 == null) {
             bitmap1?.recycle()

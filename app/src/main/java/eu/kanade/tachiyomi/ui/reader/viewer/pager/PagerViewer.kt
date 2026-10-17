@@ -73,7 +73,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Whether the view pager is currently in idle mode. It sets the awaiting chapters if setting
      * this field to true.
      */
-    private var bookTurnStartIndex = 0
+    private val bookTurnState = BookPageTurnState()
 
     private var isIdle = true
         set(value) {
@@ -90,8 +90,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
 
     private val pagerListener = object : ViewPager.SimpleOnPageChangeListener() {
+        override fun onPageScrolled(position: Int, positionOffset: Float, positionOffsetPixels: Int) {
+            bookTurnState.onScroll(position, positionOffset)
+        }
+
         override fun onPageSelected(position: Int) {
-            if (isIdle) bookTurnStartIndex = position
             if (!activity.isScrollingThroughPages) {
                 activity.hideMenu()
             }
@@ -101,7 +104,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         override fun onPageScrollStateChanged(state: Int) {
             isIdle = state == ViewPager.SCROLL_STATE_IDLE
             if (isIdle) {
-                bookTurnStartIndex = pager.currentItem
+                bookTurnState.restore(pager.currentItem)
                 resetBookPageTransforms()
             }
         }
@@ -114,6 +117,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
         pager.offscreenPageLimit =
             if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
+        pager.bookStatusPage = {
+            pager.children.filterIsInstance<PagerPageHolder>().firstOrNull { it.bookPageTurn?.current == true }
+        }
         pager.id = R.id.reader_pager
         pager.adapter = adapter
         pager.addOnPageChangeListener(pagerListener)
@@ -124,6 +130,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             enabled && book
         }
             .onEach { enabled ->
+                if (isIdle) bookTurnState.restore(pager.currentItem)
                 resetBookPageTransforms()
                 pager.setBookTurnTiming(enabled)
                 pager.setPageTransformer(false, if (enabled) ViewPager.PageTransformer(::transformBookPage) else null)
@@ -179,6 +186,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun resetBookPageTransforms() {
         pager.children.forEach { child ->
             (child as? PagerPageHolder)?.bookPageTurn = null
+            (child as? PagerTransitionHolder)?.bookPageTurn = null
             child.translationX = 0f
             child.translationY = 0f
             child.translationZ = 0f
@@ -187,20 +195,24 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     private fun transformBookPage(view: View, position: Float) {
-        val holder = view as? PagerPageHolder ?: return
-        val index = adapter.joinedItems.indexOfFirst { it.first === holder.page || it.second === holder.page }
-        val turn = bookPageTurn(
+        val index = when (view) {
+            is PagerPageHolder -> adapter.joinedItems.indexOfFirst {
+                isSameDisplayedPage(it.first as? ReaderPage, view.page) ||
+                    isSameDisplayedPage(it.second as? ReaderPage, view.page)
+            }
+            is PagerTransitionHolder -> adapter.joinedItems.indexOfFirst { it.first == view.transition }
+            else -> return
+        }
+        val turn = bookTurnState.frame(
             pageIndex = index,
-            startIndex = bookTurnStartIndex,
-            position = position,
             rtl = this is R2LPagerViewer,
             spread = config.doublePages,
             vertical = this is VerticalPagerViewer,
         )
-        val destination = turn?.let { bookTurnStartIndex + it.step }
-        val ready = destination != null && adapter.joinedItems.getOrNull(destination)?.first is ReaderPage
-        holder.bookPageTurn = turn.takeIf { ready }?.let { frame ->
-            val from = adapter.joinedItems.getOrNull(bookTurnStartIndex) ?: return@let frame
+        val destination = turn?.let { bookTurnState.startIndex + it.step }
+        val ready = destination != null && destination in adapter.joinedItems.indices
+        val frameToDraw = turn.takeIf { ready }?.let { frame ->
+            val from = adapter.joinedItems.getOrNull(bookTurnState.startIndex) ?: return@let frame
             val to = adapter.joinedItems.getOrNull(destination!!) ?: return@let frame
             val currentSpread = config.doublePages && from.second != null
             val targetSpread = config.doublePages && to.second != null
@@ -238,9 +250,13 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 },
             )
         }
-        holder.translationX = if (ready && this !is VerticalPagerViewer) -position * holder.width else 0f
-        holder.translationY = if (ready && this is VerticalPagerViewer) -position * holder.height else 0f
-        holder.translationZ = if (ready) turn!!.elevation else 0f
+        when (view) {
+            is PagerPageHolder -> view.bookPageTurn = frameToDraw
+            is PagerTransitionHolder -> view.bookPageTurn = frameToDraw
+        }
+        view.translationX = if (ready && this !is VerticalPagerViewer) -position * view.width else 0f
+        view.translationY = if (ready && this is VerticalPagerViewer) -position * view.height else 0f
+        view.translationZ = frameToDraw?.elevation ?: 0f
     }
 
     override fun destroy() {
@@ -277,6 +293,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private fun onPageChange(position: Int) {
         val page = adapter.joinedItems.getOrNull(position) ?: return
+        if (isIdle) {
+            bookTurnState.restore(position)
+            resetBookPageTransforms()
+        }
         val preferredReaderPage = pendingSelectedPage?.takeIf { selected ->
             isSameDisplayedPage(page.first as? ReaderPage, selected) ||
                 isSameDisplayedPage(page.second as? ReaderPage, selected)

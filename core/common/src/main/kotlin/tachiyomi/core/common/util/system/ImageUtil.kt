@@ -35,6 +35,29 @@ import kotlin.math.min
 
 object ImageUtil {
 
+    /** Decode transformations with the same codec support as the reader, without consuming the source. */
+    fun decodeBitmap(source: BufferedSource): Bitmap? = try {
+        source.peek().inputStream().use { stream ->
+            ImageDecoder.open(stream).use { decoder ->
+                decoder.decodeNext().use { frame ->
+                    val config = if (decoder.isHdr) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
+                    createBitmap(frame.width, frame.height, config).also { bitmap ->
+                        try {
+                            frame.image.rewind()
+                            bitmap.copyPixelsFromBuffer(frame.image)
+                        } catch (error: Throwable) {
+                            bitmap.recycle()
+                            throw error
+                        }
+                    }
+                }
+            }
+        }
+    } catch (error: Exception) {
+        logcat(LogPriority.WARN, error) { "Unable to decode page for transformation" }
+        null
+    }
+
     fun canUseHardwareBitmap(bitmap: Bitmap): Boolean {
         return canUseHardwareBitmap(bitmap.width, bitmap.height)
     }
@@ -132,7 +155,7 @@ object ImageUtil {
      * Extract the 'side' part from [BufferedSource] and return it as [BufferedSource].
      */
     fun splitInHalf(imageSource: BufferedSource, side: Side): BufferedSource {
-        val imageBitmap = BitmapFactory.decodeStream(imageSource.inputStream())
+        val imageBitmap = decodeBitmap(imageSource) ?: return imageSource
         val height = imageBitmap.height
         val width = imageBitmap.width
 
@@ -153,7 +176,7 @@ object ImageUtil {
     }
 
     fun rotateImage(imageSource: BufferedSource, degrees: Float): BufferedSource {
-        val imageBitmap = BitmapFactory.decodeStream(imageSource.inputStream())
+        val imageBitmap = decodeBitmap(imageSource) ?: return imageSource
         val rotated = rotateBitMap(imageBitmap, degrees)
 
         val output = Buffer()
@@ -171,7 +194,7 @@ object ImageUtil {
      * Split the image into left and right parts, then merge them into a new image.
      */
     fun splitAndMerge(imageSource: BufferedSource, upperSide: Side): BufferedSource {
-        val imageBitmap = BitmapFactory.decodeStream(imageSource.inputStream())
+        val imageBitmap = decodeBitmap(imageSource) ?: return imageSource
         val height = imageBitmap.height
         val width = imageBitmap.width
 
@@ -611,7 +634,19 @@ object ImageUtil {
      */
     private fun extractImageOptions(imageSource: BufferedSource): BitmapFactory.Options {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeStream(imageSource.peek().inputStream(), null, options)
+        imageSource.peek().inputStream().use { BitmapFactory.decodeStream(it, null, options) }
+        if (options.outWidth <= 0 || options.outHeight <= 0) {
+            try {
+                imageSource.peek().inputStream().use { stream ->
+                    ImageDecoder.open(stream).use { decoder ->
+                        options.outWidth = decoder.width
+                        options.outHeight = decoder.height
+                    }
+                }
+            } catch (error: Exception) {
+                logcat(LogPriority.WARN, error) { "Unable to read page dimensions" }
+            }
+        }
         return options
     }
 

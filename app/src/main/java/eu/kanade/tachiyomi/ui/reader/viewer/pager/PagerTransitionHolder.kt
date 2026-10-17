@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Canvas
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -33,6 +34,22 @@ class PagerTransitionHolder(
     val transition: ChapterTransition,
 ) : LinearLayout(readerThemedContext), ViewPagerAdapter.PositionableView {
 
+    internal var bookPageTurn: BookPageTurn? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+    private val bookPageTurnDrawing = BookPageTurnDrawing()
+
+    override fun draw(canvas: Canvas) {
+        val turn = bookPageTurn
+        if (turn == null) {
+            super.draw(canvas)
+        } else {
+            bookPageTurnDrawing.draw(canvas, width, height, turn) { super.draw(it) }
+        }
+    }
+
     private val scope = MainScope()
     private var stateJob: Job? = null
 
@@ -53,6 +70,7 @@ class PagerTransitionHolder(
     }
 
     init {
+        setWillNotDraw(false)
         orientation = VERTICAL
         gravity = Gravity.CENTER
         val sidePadding = 64.dpToPx

@@ -109,12 +109,39 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @StyleRes defStyleRes: Int = 0,
     private val isWebtoon: Boolean = false,
 ) : FrameLayout(context, attrs, defStyleAttrs, defStyleRes) {
+    init {
+        // Android skips draw() on backgroundless FrameLayouts unless drawing is explicitly enabled.
+        setWillNotDraw(false)
+    }
+
     internal var bookPageTurn: BookPageTurn? = null
         set(value) {
             field = value
             invalidate()
         }
     private val bookPageTurnDrawing = BookPageTurnDrawing()
+    private val enhancementStatusViews = mutableListOf<View>()
+
+    protected fun addEnhancementStatusView(view: View) {
+        enhancementStatusViews += view
+        addView(view)
+    }
+
+    internal fun isEnhancementStatusView(view: View): Boolean = view in enhancementStatusViews
+
+    internal fun drawEnhancementStatus(canvas: Canvas) {
+        enhancementStatusViews.filter { it.isVisible }.forEach { view ->
+            val save = canvas.save()
+            canvas.translate(view.left.toFloat(), view.top.toFloat())
+            view.draw(canvas)
+            canvas.restoreToCount(save)
+        }
+    }
+
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+        if (bookPageTurn != null && isEnhancementStatusView(child)) return true
+        return super.drawChild(canvas, child, drawingTime)
+    }
 
     override fun draw(canvas: Canvas) {
         val turn = bookPageTurn
@@ -226,7 +253,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setBackgroundColor(Color.TRANSPARENT)
             setPadding(0, 0, 0, 0)
             isVisible = false
-            this@ReaderPageImageView.addView(this)
+            this@ReaderPageImageView.addEnhancementStatusView(this)
         }
     }
 

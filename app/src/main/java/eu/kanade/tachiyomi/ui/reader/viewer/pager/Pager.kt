@@ -1,14 +1,17 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.content.Context
+import android.graphics.Canvas
 import android.os.Parcelable
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.Scroller
 import androidx.viewpager.widget.DirectionalViewPager
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 
 /**
  * Pager implementation that listens for tap and long tap and allows temporarily disabling touch
@@ -25,6 +28,24 @@ open class Pager(
         // restore its raw currentItem causes rotation to reapply stale spread positions.
         isSaveEnabled = false
         isSaveFromParentEnabled = false
+    }
+
+    internal var bookStatusPage: (() -> ReaderPageImageView?)? = null
+
+    override fun dispatchDraw(canvas: Canvas) {
+        super.dispatchDraw(canvas)
+        val page = bookStatusPage?.invoke()?.takeIf { it.bookPageTurn != null } ?: return
+        val save = canvas.save()
+        // Android offsets this canvas by the pager's scroll, so restore viewport coordinates.
+        canvas.translate(scrollX.toFloat(), scrollY.toFloat())
+        page.drawEnhancementStatus(canvas)
+        canvas.restoreToCount(save)
+    }
+
+    override fun onDescendantInvalidated(child: View, target: View) {
+        super.onDescendantInvalidated(child, target)
+        val page = target.parent as? ReaderPageImageView
+        if (bookStatusPage != null && page?.isEnhancementStatusView(target) == true) invalidate()
     }
 
     private var originalScroller: Scroller? = null
