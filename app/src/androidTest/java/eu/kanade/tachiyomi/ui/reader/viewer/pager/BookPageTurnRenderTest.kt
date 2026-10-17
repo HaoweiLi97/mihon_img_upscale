@@ -80,7 +80,7 @@ class BookPageTurnRenderTest {
             page.measure(width, height)
             page.layout(0, 0, 360, 220)
             page.getChildAt(0).layout(0, 0, 360, 220)
-            pager.bookStatusPage = { page }
+            pager.bookTurnPage = { page }
             for (scroll in listOf(0, 360)) {
                 pager.scrollTo(scroll, 0)
                 page.layout(scroll, 0, scroll + 360, 220)

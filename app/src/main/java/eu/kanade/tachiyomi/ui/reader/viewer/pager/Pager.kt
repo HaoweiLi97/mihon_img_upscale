@@ -30,11 +30,18 @@ open class Pager(
         isSaveFromParentEnabled = false
     }
 
-    internal var bookStatusPage: (() -> ReaderPageImageView?)? = null
+    internal var bookTurnPage: (() -> ReaderPageImageView?)? = null
 
     override fun dispatchDraw(canvas: Canvas) {
+        val page = bookTurnPage?.invoke()?.takeIf { it.bookPageTurn != null }
+        if (page != null) {
+            val save = canvas.save()
+            canvas.translate(scrollX.toFloat(), scrollY.toFloat())
+            page.drawBookBackground(canvas)
+            canvas.restoreToCount(save)
+        }
         super.dispatchDraw(canvas)
-        val page = bookStatusPage?.invoke()?.takeIf { it.bookPageTurn != null } ?: return
+        if (page == null) return
         val save = canvas.save()
         // Android offsets this canvas by the pager's scroll, so restore viewport coordinates.
         canvas.translate(scrollX.toFloat(), scrollY.toFloat())
@@ -45,7 +52,7 @@ open class Pager(
     override fun onDescendantInvalidated(child: View, target: View) {
         super.onDescendantInvalidated(child, target)
         val page = target.parent as? ReaderPageImageView
-        if (bookStatusPage != null && page?.isEnhancementStatusView(target) == true) invalidate()
+        if (bookTurnPage != null && page?.isEnhancementStatusView(target) == true) invalidate()
     }
 
     private var originalScroller: Scroller? = null

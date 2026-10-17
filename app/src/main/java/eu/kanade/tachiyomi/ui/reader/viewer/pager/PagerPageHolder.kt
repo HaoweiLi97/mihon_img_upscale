@@ -891,6 +891,7 @@ class PagerPageHolder(
         val adjustedHingeGap = viewer.config.hingeGapSize.coerceAtLeast(0)
         val cellWidth = ((viewportWidth - adjustedHingeGap).coerceAtLeast(2)) / 2
         val result = createBitmap((cellWidth * 2) + adjustedHingeGap, viewportHeight)
+        val imageBounds = mutableListOf<BookPageBounds>()
         val bitmapPaint =
             Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG).apply {
                 isFilterBitmap = true
@@ -919,6 +920,12 @@ class PagerPageHolder(
                     val top = (viewportHeight - destHeight) / 2
                     val dest = Rect(left, top, left + destWidth, top + destHeight)
                     drawBitmap(bitmap, sourceRect, dest, bitmapPaint)
+                    imageBounds += BookPageBounds(
+                        dest.left.toFloat(),
+                        dest.top.toFloat(),
+                        dest.right.toFloat(),
+                        dest.bottom.toFloat(),
+                    )
                 }
 
                 val leftCellStart = 0
@@ -934,7 +941,7 @@ class PagerPageHolder(
 
             val output = Buffer()
             result.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
-            return output
+            return BookPageImageSource(output, imageBounds.toList())
         } finally {
             if (fittedFirstBitmap !== firstBitmap) {
                 fittedFirstBitmap.recycle()

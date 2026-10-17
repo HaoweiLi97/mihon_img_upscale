@@ -117,7 +117,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
         pager.offscreenPageLimit =
             if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
-        pager.bookStatusPage = {
+        pager.bookTurnPage = {
             pager.children.filterIsInstance<PagerPageHolder>().firstOrNull { it.bookPageTurn?.current == true }
         }
         pager.id = R.id.reader_pager

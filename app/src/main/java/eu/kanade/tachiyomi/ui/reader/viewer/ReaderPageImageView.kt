@@ -53,6 +53,8 @@ import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.webtoonStrips
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageBounds
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageImageSource
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageTurn
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageTurnDrawing
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonStripImageView
@@ -92,6 +94,7 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
+import java.util.WeakHashMap
 import kotlin.math.roundToInt
 
 /**
@@ -121,6 +124,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     private val bookPageTurnDrawing = BookPageTurnDrawing()
     private val enhancementStatusViews = mutableListOf<View>()
+    private val sourcePictureBounds = WeakHashMap<View, List<BookPageBounds>>()
 
     protected fun addEnhancementStatusView(view: View) {
         enhancementStatusViews += view
@@ -148,20 +152,51 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (turn == null) {
             super.draw(canvas)
         } else {
-            bookPageTurnDrawing.draw(canvas, width, height, turn) { super.draw(it) }
+            val pictures = bookPageImageBounds()
+            val pictureTurn = turn.copy(
+                bounds = turn.bounds ?: bookPageBounds(),
+                imageBounds = pictures.takeIf { it.isNotEmpty() && (!turn.spread || it.size == 2) },
+            )
+            // The pager paints one stationary background below both turning pages.
+            bookPageTurnDrawing.draw(canvas, width, height, pictureTurn) { super.dispatchDraw(it) }
         }
     }
 
-    internal fun bookPageBounds(): eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageBounds? {
-        val image = pageView as? SubsamplingScaleImageView ?: return null
-        if (!image.isReady) return null
-        val start = image.sourceToViewCoord(0f, 0f) ?: return null
-        val end = image.sourceToViewCoord(image.sWidth.toFloat(), image.sHeight.toFloat()) ?: return null
-        return eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageBounds(
-            start.x + image.left,
-            start.y + image.top,
-            end.x + image.left,
-            end.y + image.top,
+    internal fun drawBookBackground(canvas: Canvas) {
+        background?.let {
+            it.setBounds(0, 0, width, height)
+            it.draw(canvas)
+        }
+    }
+
+    internal open fun bookPageImageBounds(): List<BookPageBounds> {
+        val image = pageView as? SubsamplingScaleImageView ?: return listOfNotNull(bookPageBounds())
+        val pictures = sourcePictureBounds[image] ?: return listOfNotNull(bookPageBounds())
+        if (!image.isReady) return emptyList()
+        return pictures.mapNotNull { picture ->
+            val start = image.sourceToViewCoord(picture.left, picture.top) ?: return@mapNotNull null
+            val end = image.sourceToViewCoord(picture.right, picture.bottom) ?: return@mapNotNull null
+            BookPageBounds(start.x + image.left, start.y + image.top, end.x + image.left, end.y + image.top)
+        }
+    }
+
+    internal fun bookPageBounds(): BookPageBounds? {
+        val image = pageView ?: return null
+        val rect = when (image) {
+            is SubsamplingScaleImageView -> {
+                if (!image.isReady) return null
+                val start = image.sourceToViewCoord(0f, 0f) ?: return null
+                val end = image.sourceToViewCoord(image.sWidth.toFloat(), image.sHeight.toFloat()) ?: return null
+                RectF(start.x, start.y, end.x, end.y)
+            }
+            is ImageView -> displayedImageRect(image) ?: return null
+            else -> return null
+        }
+        return BookPageBounds(
+            rect.left + image.left,
+            rect.top + image.top,
+            rect.right + image.left,
+            rect.bottom + image.top,
         ).takeIf { it.width > 0f && it.height > 0f }
     }
 
@@ -415,8 +450,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * called. Reapply it at every source swap so the temporary original image and the enhanced
      * replacement cannot be decoded with different crop settings.
      */
-    private fun SubsamplingScaleImageView.setImageWithCurrentCrop(source: ImageSource) {
-        setCropBorders(config?.cropBorders == true)
+    private fun SubsamplingScaleImageView.setImageWithCurrentCrop(
+        source: ImageSource,
+        pictures: List<BookPageBounds>? = null,
+    ) {
+        if (pictures == null) sourcePictureBounds.remove(this) else sourcePictureBounds[this] = pictures
+        // Each composed picture was already cropped before fitting it into its half.
+        setCropBorders(config?.cropBorders == true && pictures == null)
         setImage(source)
     }
 
@@ -613,7 +653,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val activeView = pageView as? SubsamplingScaleImageView
         if (activeView != null) {
             animateProcessedSwap(activeView, config) {
-                setImageWithCurrentCrop(ImageSource.inputStream(transformedSource.inputStream()))
+                setImageWithCurrentCrop(
+                    ImageSource.inputStream(transformedSource.inputStream()),
+                    BookPageImageSource.pictureBounds(transformedSource),
+                )
             }
         } else {
             val previewBitmap = try {
@@ -1126,7 +1169,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
             is BufferedSource -> {
                 // Determine hardware config and load stream for SSIV display
                 setHardwareConfig(ImageUtil.canUseHardwareBitmap(data))
-                setImageWithCurrentCrop(ImageSource.inputStream(data.inputStream()))
+                setImageWithCurrentCrop(
+                    ImageSource.inputStream(data.inputStream()),
+                    BookPageImageSource.pictureBounds(data),
+                )
                 isVisible = true
 
                 // Enhancement Logic for Stream Sources

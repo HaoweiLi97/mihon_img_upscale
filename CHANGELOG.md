@@ -12,6 +12,9 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+### Fixed
+- Turn only the actual comic pictures, excluding spread layout padding, while keeping the reader background stationary.
+
 ## [v1.3.13] - 2026-10-16
 
 ### Changed

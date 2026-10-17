@@ -17,6 +17,7 @@ internal data class BookPageTurn(
     val vertical: Boolean,
     val layoutTransition: Boolean = false,
     val bounds: BookPageBounds? = null,
+    val imageBounds: List<BookPageBounds>? = null,
     val hingeShift: Float = 0f,
     val crossShift: Float = 0f,
     val targetScale: Float = 1f,

@@ -18,7 +18,6 @@ internal class BookPageTurnDrawing {
     private val bounds = RectF()
 
     fun draw(canvas: Canvas, width: Int, height: Int, turn: BookPageTurn, content: (Canvas) -> Unit) {
-        val extent = if (turn.vertical) height.toFloat() else width.toFloat()
         val count = if (turn.spread) 2 else 1
         // Draw the fixed leaf first. The other spread supplies the turning leaf's reverse face.
         val leaves = (0 until count).sortedBy { turn.leaf(it).turning }
@@ -27,12 +26,16 @@ internal class BookPageTurnDrawing {
             if (!leaf.visible) continue
             bounds.set(0f, 0f, width.toFloat(), height.toFloat())
             turn.bounds?.let { bounds.set(it.left, it.top, it.right, it.bottom) }
-            if (turn.spread) {
+            val imageBounds = turn.imageBounds?.getOrNull(index)
+            if (imageBounds != null) {
+                bounds.set(imageBounds.left, imageBounds.top, imageBounds.right, imageBounds.bottom)
+            } else if (turn.spread) {
                 val left = bounds.left
                 val half = bounds.width() / 2f
                 bounds.left = left + half * index
                 bounds.right = left + half * (index + 1)
             }
+            val extent = if (turn.vertical) bounds.height() else bounds.width()
             val hinge = if (leaf.hingeAtStart) {
                 if (turn.vertical) bounds.top else bounds.left
             } else {
@@ -52,8 +55,8 @@ internal class BookPageTurnDrawing {
                 if (turn.vertical) camera.rotateX(-leaf.degrees) else camera.rotateY(leaf.degrees)
                 camera.getMatrix(matrix)
                 camera.restore()
-                val pivotX = if (turn.vertical) width / 2f else hinge
-                val pivotY = if (turn.vertical) hinge else height / 2f
+                val pivotX = if (turn.vertical) bounds.centerX() else hinge
+                val pivotY = if (turn.vertical) hinge else bounds.centerY()
                 matrix.preTranslate(-pivotX, -pivotY)
                 matrix.postTranslate(pivotX, pivotY)
                 canvas.concat(matrix)
