@@ -1,19 +1,18 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
-import android.app.Application
+import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import mihon.core.archive.archiveReader
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.injectLazy
-import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 
 /**
  * Loader used to load a chapter from the downloaded chapters.
@@ -26,7 +25,7 @@ internal class DownloadPageLoader(
     private val downloadProvider: DownloadProvider,
 ) : PageLoader() {
 
-    private val context: Application by injectLazy()
+    private val context: Context by injectLazy()
 
     private var archivePageLoader: ArchivePageLoader? = null
 
@@ -58,8 +57,8 @@ internal class DownloadPageLoader(
         return loader.getPages()
     }
 
-    private fun getPagesFromDirectory(): List<ReaderPage> {
-        val pages = downloadManager.buildPageList(source, manga, chapter.chapter.toDomainChapter()!!)
+    private suspend fun getPagesFromDirectory(): List<ReaderPage> {
+        val pages = downloadManager.buildPageList(source, manga, chapter.chapter)
         return pages.map { page ->
             ReaderPage(page.index, page.url, page.imageUrl) {
                 context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)!!
@@ -73,7 +72,7 @@ internal class DownloadPageLoader(
 
     override suspend fun loadPage(page: ReaderPage) {
         archivePageLoader?.loadPage(page)
-        
+
         if (preferences.realCuganEnabled().get()) {
             ImageEnhancer.enhance(context, page)
         }

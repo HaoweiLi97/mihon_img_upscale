@@ -182,7 +182,7 @@ internal object PageSpreadScorer {
         val verticalProfileMatches =
             averageVerticalTexture >= MIN_BLOCK_VERTICAL_TEXTURE &&
                 averageVerticalProfileDifference <=
-                    averageVerticalTexture / 2f * MAX_VERTICAL_PROFILE_DIFFERENCE_RATIO + VERTICAL_PROFILE_SLACK
+                averageVerticalTexture / 2f * MAX_VERTICAL_PROFILE_DIFFERENCE_RATIO + VERTICAL_PROFILE_SLACK
         val hasHorizontalStructure = averageHorizontalTexture >= MIN_BLOCK_TEXTURE
         // Photographic spreads often place a soft subject or background exactly at the seam,
         // so adjacent pixels can be continuous without producing a strong horizontal gradient.
@@ -193,7 +193,7 @@ internal object PageSpreadScorer {
                 shuffled - seam >= MIN_NEGATIVE_CONTROL_MARGIN &&
                 averageVerticalTexture >= MIN_CONTINUITY_VERTICAL_TEXTURE &&
                 averageVerticalProfileDifference <=
-                    averageVerticalTexture * MAX_CONTINUITY_PROFILE_RATIO + CONTINUITY_PROFILE_SLACK
+                averageVerticalTexture * MAX_CONTINUITY_PROFILE_RATIO + CONTINUITY_PROFILE_SLACK
         val informative = hasHorizontalStructure || verticalProfileMatches || strongSeamContinuity
         val matches = informative &&
             ratio <= MAX_SEAM_RATIO &&
@@ -280,6 +280,7 @@ internal object PageSpreadScorer {
     private const val BLOCK_HEIGHT = 12
     private const val NEGATIVE_ROW_SHIFT = 61
     private const val VERTICAL_BANDS = 4
+
     // This is measured after resizing to the scoring resolution. JPEG decoding and downsampling
     // flatten a real image's single-pixel gradients substantially, so use the negative control
     // and multi-band coverage for false-positive protection instead of a high texture cutoff.
@@ -297,12 +298,14 @@ internal object PageSpreadScorer {
     private const val MAX_NEGATIVE_CONTROL_RATIO = 1.05f
     private const val MIN_INFORMATION_COVERAGE = 0.45f
     private const val MIN_TOTAL_BLOCKS = 12
+
     // A photographic spread can provide detailed seam evidence only across its subject, while
     // large areas of a shared backdrop remain intentionally uninformative. The other checks still
     // require matches to span three bands and significantly outperform a row-shifted control.
     private const val MIN_INFORMATIVE_BLOCKS_PERCENT = 20
     private const val MIN_MATCHING_BLOCKS_PERCENT = 50
     private const val MIN_MATCHING_BANDS = 3
+
     // Vertical changes alone (wall panels, door frames, skies) are common in independent photos.
     // Require structure that also continues across the seam before joining automatically.
     private const val MIN_SPATIAL_MATCHING_BLOCKS = 2

@@ -1,16 +1,16 @@
 package eu.kanade.presentation.library.components
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Folder
 import tachiyomi.presentation.core.components.Badge
 
 @Composable
-internal fun DownloadsBadge(count: Long) {
+internal fun DownloadsBadge(count: Int) {
     if (count > 0) {
         Badge(
             text = "$count",
@@ -34,7 +34,7 @@ internal fun LanguageBadge(
 ) {
     if (isLocal) {
         Badge(
-            imageVector = Icons.Outlined.Folder,
+            imageVector = MaterialSymbols.Rounded.Folder,
             color = MaterialTheme.colorScheme.tertiary,
             iconColor = MaterialTheme.colorScheme.onTertiary,
         )

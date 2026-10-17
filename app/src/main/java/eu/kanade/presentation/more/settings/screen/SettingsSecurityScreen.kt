@@ -12,15 +12,12 @@ import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.authenticate
 import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.isAuthenticationSupported
 import eu.kanade.tachiyomi.util.system.telemetryIncluded
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.toImmutableMap
+import mihon.app.di.appGraph
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 object SettingsSecurityScreen : SearchableSettings {
 
@@ -30,8 +27,9 @@ object SettingsSecurityScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
-        val securityPreferences = remember { Injekt.get<SecurityPreferences>() }
-        val privacyPreferences = remember { Injekt.get<PrivacyPreferences>() }
+        val context = LocalContext.current
+        val securityPreferences = remember { context.appGraph.securityPreferences }
+        val privacyPreferences = remember { context.appGraph.privacyPreferences }
         return buildList(2) {
             add(getSecurityGroup(securityPreferences))
             if (!telemetryIncluded) return@buildList
@@ -45,16 +43,16 @@ object SettingsSecurityScreen : SearchableSettings {
     ): Preference.PreferenceGroup {
         val context = LocalContext.current
         val authSupported = remember { context.isAuthenticationSupported() }
-        val useAuthPref = securityPreferences.useAuthenticator()
+        val useAuthPref = securityPreferences.useAuthenticator
         val useAuth by useAuthPref.collectAsState()
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_security),
-            preferenceItems = persistentListOf(
+            preferenceItems = listOf(
                 Preference.PreferenceItem.SwitchPreference(
                     preference = useAuthPref,
                     title = stringResource(MR.strings.lock_with_biometrics),
-                    enabled = authSupported,
+                    visible = authSupported,
                     onValueChanged = {
                         (context as FragmentActivity).authenticate(
                             title = context.stringResource(MR.strings.lock_with_biometrics),
@@ -62,7 +60,7 @@ object SettingsSecurityScreen : SearchableSettings {
                     },
                 ),
                 Preference.PreferenceItem.ListPreference(
-                    preference = securityPreferences.lockAppAfter(),
+                    preference = securityPreferences.lockAppAfter,
                     entries = LockAfterValues
                         .associateWith {
                             when (it) {
@@ -70,10 +68,9 @@ object SettingsSecurityScreen : SearchableSettings {
                                 0 -> stringResource(MR.strings.lock_always)
                                 else -> pluralStringResource(MR.plurals.lock_after_mins, count = it, it)
                             }
-                        }
-                        .toImmutableMap(),
+                        },
                     title = stringResource(MR.strings.lock_when_idle),
-                    enabled = authSupported && useAuth,
+                    visible = authSupported && useAuth,
                     onValueChanged = {
                         (context as FragmentActivity).authenticate(
                             title = context.stringResource(MR.strings.lock_when_idle),
@@ -82,14 +79,13 @@ object SettingsSecurityScreen : SearchableSettings {
                 ),
 
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = securityPreferences.hideNotificationContent(),
+                    preference = securityPreferences.hideNotificationContent,
                     title = stringResource(MR.strings.hide_notification_content),
                 ),
                 Preference.PreferenceItem.ListPreference(
-                    preference = securityPreferences.secureScreen(),
+                    preference = securityPreferences.secureScreen,
                     entries = SecurityPreferences.SecureScreenMode.entries
-                        .associateWith { stringResource(it.titleRes) }
-                        .toImmutableMap(),
+                        .associateWith { stringResource(it.titleRes) },
                     title = stringResource(MR.strings.secure_screen),
                 ),
                 Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.secure_screen_summary)),
@@ -103,14 +99,14 @@ object SettingsSecurityScreen : SearchableSettings {
     ): Preference.PreferenceGroup {
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_firebase),
-            preferenceItems = persistentListOf(
+            preferenceItems = listOf(
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = privacyPreferences.crashlytics(),
+                    preference = privacyPreferences.crashlytics,
                     title = stringResource(MR.strings.onboarding_permission_crashlytics),
                     subtitle = stringResource(MR.strings.onboarding_permission_crashlytics_description),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = privacyPreferences.analytics(),
+                    preference = privacyPreferences.analytics,
                     title = stringResource(MR.strings.onboarding_permission_analytics),
                     subtitle = stringResource(MR.strings.onboarding_permission_analytics_description),
                 ),
@@ -120,7 +116,7 @@ object SettingsSecurityScreen : SearchableSettings {
     }
 }
 
-private val LockAfterValues = persistentListOf(
+private val LockAfterValues = listOf(
     0, // Always
     1,
     2,

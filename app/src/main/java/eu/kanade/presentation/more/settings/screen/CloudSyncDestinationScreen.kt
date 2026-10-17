@@ -1,3 +1,5 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
 package eu.kanade.presentation.more.settings.screen
 
 import androidx.compose.foundation.clickable
@@ -9,11 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +38,11 @@ import eu.kanade.tachiyomi.data.download.CloudSyncService
 import eu.kanade.tachiyomi.data.download.normalizePath
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.launch
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Check
+import mihon.icons.materialsymbols.rounded.Folder
+import mihon.icons.materialsymbols.rounded.KeyboardArrowDown
+import mihon.icons.materialsymbols.rounded.KeyboardArrowRight
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -193,12 +195,12 @@ private fun CloudSyncDirectoryListRow(
         } else {
             IconButton(onClick = onToggle) {
                 Icon(
-                    imageVector = if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
+                    imageVector = if (expanded) MaterialSymbols.Rounded.KeyboardArrowDown else MaterialSymbols.Rounded.KeyboardArrowRight,
                     contentDescription = null,
                 )
             }
         }
-        Icon(imageVector = Icons.Outlined.Folder, contentDescription = null)
+        Icon(imageVector = MaterialSymbols.Rounded.Folder, contentDescription = null)
         Spacer(modifier = Modifier.width(16.dp))
         Text(
             text = row.directory.name,
@@ -207,7 +209,7 @@ private fun CloudSyncDirectoryListRow(
             modifier = Modifier.weight(1f),
         )
         if (selected) {
-            Icon(imageVector = Icons.Filled.Check, contentDescription = null)
+            Icon(imageVector = MaterialSymbols.Rounded.Check, contentDescription = null)
         }
     }
 }

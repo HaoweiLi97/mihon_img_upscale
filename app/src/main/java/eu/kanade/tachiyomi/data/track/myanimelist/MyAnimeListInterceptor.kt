@@ -72,13 +72,11 @@ class MyAnimeListInterceptor(private val myanimelist: MyAnimeList) : Interceptor
             }
         }
             .getOrNull()
-            ?.also {
-                this.oauth = it
-                myanimelist.saveOAuth(it)
-            }
+            ?.also { setAuth(it) }
             ?: throw MALTokenRefreshFailed()
     }
 }
 
+class MALTitleNotApproved : IOException("MAL: This title can't be added because it is waiting for approval.")
 class MALTokenRefreshFailed : IOException("MAL: Failed to refresh account token")
 class MALTokenExpired : IOException("MAL: Login has expired")

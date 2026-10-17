@@ -1,5 +1,6 @@
 package eu.kanade.presentation.track
 
+import android.content.ClipData
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -29,11 +30,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -47,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,14 +52,14 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.ClipboardManager
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.Clipboard
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.platform.toClipEntry
 import androidx.compose.ui.text.capitalize
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.toLowerCase
 import androidx.compose.ui.tooling.preview.PreviewLightDark
@@ -73,6 +70,12 @@ import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.util.system.openInBrowser
+import kotlinx.coroutines.launch
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.automirroredrounded.ArrowBack
+import mihon.icons.materialsymbols.rounded.Close
+import mihon.icons.materialsymbols.roundedfilled.CheckCircle
+import mihon.icons.materialsymbols.roundedfilled.VisibilityOff
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -109,7 +112,7 @@ fun TrackerSearch(
                     navigationIcon = {
                         IconButton(onClick = onDismissRequest) {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                imageVector = MaterialSymbols.AutoMirroredRounded.ArrowBack,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -149,7 +152,7 @@ fun TrackerSearch(
                                 },
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Close,
+                                    imageVector = MaterialSymbols.Rounded.Close,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -186,7 +189,7 @@ fun TrackerSearch(
                             elevation = ButtonDefaults.elevatedButtonElevation(),
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.VisibilityOff,
+                                imageVector = MaterialSymbols.RoundedFilled.VisibilityOff,
                                 contentDescription = stringResource(MR.strings.action_toggle_private_on),
                             )
                         }
@@ -240,14 +243,16 @@ private fun SearchResultItem(
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current
-    val clipboardManager: ClipboardManager = LocalClipboardManager.current
+    val clipboard: Clipboard = LocalClipboard.current
     val focusManager = LocalFocusManager.current
-    val type = trackSearch.publishing_type.toLowerCase(Locale.current).capitalize(Locale.current)
-    val status = trackSearch.publishing_status.toLowerCase(Locale.current).capitalize(Locale.current)
+    val locale = LocalLocale.current
+    val type = trackSearch.publishing_type.toLowerCase(locale).capitalize(locale)
+    val status = trackSearch.publishing_status.toLowerCase(locale).capitalize(locale)
     val description = trackSearch.summary.trim()
     val shape = RoundedCornerShape(16.dp)
     val borderColor = if (selected) MaterialTheme.colorScheme.outline else Color.Transparent
     var dropDownMenuExpanded by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -270,7 +275,7 @@ private fun SearchResultItem(
     ) {
         if (selected) {
             Icon(
-                imageVector = Icons.Filled.CheckCircle,
+                imageVector = MaterialSymbols.RoundedFilled.CheckCircle,
                 contentDescription = null,
                 modifier = Modifier.align(Alignment.TopEnd),
                 tint = MaterialTheme.colorScheme.primary,
@@ -295,7 +300,13 @@ private fun SearchResultItem(
                         expanded = dropDownMenuExpanded,
                         onCollapseMenu = { dropDownMenuExpanded = false },
                         onCopyName = {
-                            clipboardManager.setText(AnnotatedString(trackSearch.title))
+                            scope.launch {
+                                val clipEntry = ClipData.newPlainText(
+                                    trackSearch.title,
+                                    trackSearch.title,
+                                ).toClipEntry()
+                                clipboard.setClipEntry(clipEntry)
+                            }
                         },
                         onOpenInBrowser = {
                             val url = trackSearch.tracking_url

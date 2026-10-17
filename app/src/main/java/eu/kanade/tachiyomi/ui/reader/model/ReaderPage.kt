@@ -26,4 +26,8 @@ open class ReaderPage(
     fun isFromSamePage(other: ReaderPage): Boolean {
         return index == other.index && chapter.chapter.id == other.chapter.chapter.id
     }
+
+    /** Set by a viewer before the download; filled during [Page.State.DownloadImage]. */
+    @Volatile
+    var downloadStream: DownloadStream? = null
 }

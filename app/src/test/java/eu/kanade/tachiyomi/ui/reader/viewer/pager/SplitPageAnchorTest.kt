@@ -1,14 +1,14 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
-import eu.kanade.tachiyomi.data.database.models.ChapterImpl
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.chapter.model.Chapter
 
 class SplitPageAnchorTest {
 
@@ -42,11 +42,7 @@ class SplitPageAnchorTest {
     }
 
     private fun readerPage(index: Int, chapterId: Long): ReaderPage {
-        val chapter = ChapterImpl().apply {
-            id = chapterId
-            url = "chapter-$chapterId"
-            name = "Chapter $chapterId"
-        }
+        val chapter = Chapter.create().copy(id = chapterId, url = "chapter-$chapterId", name = "Chapter $chapterId")
         return ReaderPage(index).apply {
             this.chapter = ReaderChapter(chapter)
         }

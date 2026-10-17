@@ -12,6 +12,7 @@ app/release/
 /captures
 
 # Configuration files
+keystore.properties
 local.properties
 
 # Android specific ignores

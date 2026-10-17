@@ -11,7 +11,6 @@ import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.viewpager.widget.ViewPager
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
@@ -21,8 +20,11 @@ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import mihon.app.di.appGraph
 import tachiyomi.core.common.util.system.logcat
-import uy.kohesive.injekt.injectLazy
 import kotlin.math.min
 
 /**
@@ -31,7 +33,9 @@ import kotlin.math.min
 @Suppress("LeakingThis")
 abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
-    val downloadManager: DownloadManager by injectLazy()
+    val graph by lazy { activity.appGraph }
+    val downloadManager by lazy { graph.downloadManager }
+    val readerPreferences by lazy { graph.readerPreferences }
 
     private val scope = MainScope()
 
@@ -44,7 +48,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     /**
      * Configuration used by the pager, like allow taps, scale mode on images, page transitions...
      */
-    val config = PagerConfig(this, scope)
+    val config = PagerConfig(this, scope, readerPreferences)
 
     /**
      * Adapter of the pager.
@@ -69,6 +73,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Whether the view pager is currently in idle mode. It sets the awaiting chapters if setting
      * this field to true.
      */
+    private var bookTurnStartIndex = 0
+
     private var isIdle = true
         set(value) {
             field = value
@@ -85,6 +91,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     private val pagerListener = object : ViewPager.SimpleOnPageChangeListener() {
         override fun onPageSelected(position: Int) {
+            if (isIdle) bookTurnStartIndex = position
             if (!activity.isScrollingThroughPages) {
                 activity.hideMenu()
             }
@@ -93,6 +100,10 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
         override fun onPageScrollStateChanged(state: Int) {
             isIdle = state == ViewPager.SCROLL_STATE_IDLE
+            if (isIdle) {
+                bookTurnStartIndex = pager.currentItem
+                resetBookPageTransforms()
+            }
         }
     }
 
@@ -101,10 +112,24 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         pager.isFocusable = false
         val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
-        pager.offscreenPageLimit = if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
+        pager.offscreenPageLimit =
+            if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
         pager.id = R.id.reader_pager
         pager.adapter = adapter
         pager.addOnPageChangeListener(pagerListener)
+        combine(readerPreferences.pageTransitions.changes(), readerPreferences.bookPageTransitions.changes()) {
+                enabled,
+                book,
+            ->
+            enabled && book
+        }
+            .onEach { enabled ->
+                resetBookPageTransforms()
+                pager.setBookTurnTiming(enabled)
+                pager.setPageTransformer(false, if (enabled) ViewPager.PageTransformer(::transformBookPage) else null)
+            }
+            .launchIn(scope)
+
         pager.tapListener = { event ->
             val viewPosition = IntArray(2)
             pager.getLocationOnScreen(viewPosition)
@@ -151,6 +176,73 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
     }
 
+    private fun resetBookPageTransforms() {
+        pager.children.forEach { child ->
+            (child as? PagerPageHolder)?.bookPageTurn = null
+            child.translationX = 0f
+            child.translationY = 0f
+            child.translationZ = 0f
+            child.alpha = 1f
+        }
+    }
+
+    private fun transformBookPage(view: View, position: Float) {
+        val holder = view as? PagerPageHolder ?: return
+        val index = adapter.joinedItems.indexOfFirst { it.first === holder.page || it.second === holder.page }
+        val turn = bookPageTurn(
+            pageIndex = index,
+            startIndex = bookTurnStartIndex,
+            position = position,
+            rtl = this is R2LPagerViewer,
+            spread = config.doublePages,
+            vertical = this is VerticalPagerViewer,
+        )
+        val destination = turn?.let { bookTurnStartIndex + it.step }
+        val ready = destination != null && adapter.joinedItems.getOrNull(destination)?.first is ReaderPage
+        holder.bookPageTurn = turn.takeIf { ready }?.let { frame ->
+            val from = adapter.joinedItems.getOrNull(bookTurnStartIndex) ?: return@let frame
+            val to = adapter.joinedItems.getOrNull(destination!!) ?: return@let frame
+            val currentSpread = config.doublePages && from.second != null
+            val targetSpread = config.doublePages && to.second != null
+            if (currentSpread == targetSpread || frame.vertical) {
+                return@let frame.copy(spread = currentSpread && !frame.vertical)
+            }
+            val currentHolder = pager.children.filterIsInstance<PagerPageHolder>()
+                .firstOrNull { it.item == from }
+            val targetHolder = pager.children.filterIsInstance<PagerPageHolder>()
+                .firstOrNull { it.item == to }
+            val currentBounds = currentHolder?.bookPageBounds()
+            val targetBounds = targetHolder?.bookPageBounds()
+            if (currentBounds == null || targetBounds == null) return@let frame.copy(spread = false)
+            val outgoingAtStart = frame.step > 0
+            fun hinge(bounds: BookPageBounds, spread: Boolean, atStart: Boolean): Float =
+                if (spread) {
+                    (bounds.left + bounds.right) / 2
+                } else if (atStart) {
+                    bounds.left
+                } else {
+                    bounds.right
+                }
+            val fromHinge = hinge(currentBounds, currentSpread, outgoingAtStart)
+            val toHinge = hinge(targetBounds, targetSpread, !outgoingAtStart)
+            frame.copy(
+                spread = if (frame.current) currentSpread else targetSpread,
+                layoutTransition = true,
+                bounds = if (frame.current) currentBounds else targetBounds,
+                hingeShift = toHinge - fromHinge,
+                crossShift = (targetBounds.top + targetBounds.bottom - currentBounds.top - currentBounds.bottom) / 2,
+                targetScale = if (frame.current) {
+                    targetBounds.height / currentBounds.height
+                } else {
+                    currentBounds.height / targetBounds.height
+                },
+            )
+        }
+        holder.translationX = if (ready && this !is VerticalPagerViewer) -position * holder.width else 0f
+        holder.translationY = if (ready && this is VerticalPagerViewer) -position * holder.height else 0f
+        holder.translationZ = if (ready) turn!!.elevation else 0f
+    }
+
     override fun destroy() {
         super.destroy()
         eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("pager viewer destroyed")
@@ -193,7 +285,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             isSameDisplayedPage(page.first as? ReaderPage, selected) ||
                 isSameDisplayedPage(page.second as? ReaderPage, selected)
         }
-        val activeItem = preferredReaderPage ?: retainedReaderPage ?: adapter.getActiveReaderPage(position) ?: page.first
+        val activeItem =
+            preferredReaderPage ?: retainedReaderPage ?: adapter.getActiveReaderPage(position) ?: page.first
         logcat {
             "PagerViewer.onPageChange: position=$position, " +
                 "pairFirst=${(page.first as? ReaderPage)?.number}/${(page.first as? ReaderPage)?.index}, " +
@@ -257,7 +350,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         val currentPageNumber = page.number
         val totalPageCount = pages.size
         currentReaderPage = page
-        logcat { "onReaderPageSelected: ${currentPageNumber}/${totalPageCount}" }
+        logcat { "onReaderPageSelected: $currentPageNumber/$totalPageCount" }
         activity.onPageSelected(page, hasExtraPage, currentPageNumber, totalPageCount)
 
         // Notify holder of page change
@@ -451,7 +544,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     private fun refreshAdapter() {
         val currentItem = pager.currentItem
         val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
-        pager.offscreenPageLimit = if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
+        pager.offscreenPageLimit =
+            if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
         adapter.refresh()
         pager.adapter = adapter
         pager.setCurrentItem(currentItem, false)

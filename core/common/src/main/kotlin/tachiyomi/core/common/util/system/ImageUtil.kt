@@ -9,7 +9,6 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Rect
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -18,16 +17,16 @@ import androidx.core.graphics.alpha
 import androidx.core.graphics.applyCanvas
 import androidx.core.graphics.blue
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.drawable.toDrawable
 import androidx.core.graphics.get
 import androidx.core.graphics.green
 import androidx.core.graphics.red
+import ca.mpreg.imagedecoder.ImageDecoder
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.util.system.GLUtil
 import logcat.LogPriority
 import okio.Buffer
 import okio.BufferedSource
-import tachiyomi.decoder.Format
-import tachiyomi.decoder.ImageDecoder
 import java.io.InputStream
 import java.util.Locale
 import kotlin.math.abs
@@ -35,6 +34,23 @@ import kotlin.math.max
 import kotlin.math.min
 
 object ImageUtil {
+
+    fun canUseHardwareBitmap(bitmap: Bitmap): Boolean {
+        return canUseHardwareBitmap(bitmap.width, bitmap.height)
+    }
+
+    fun canUseHardwareBitmap(imageSource: BufferedSource): Boolean {
+        return with(extractImageOptions(imageSource)) {
+            canUseHardwareBitmap(outWidth, outHeight)
+        }
+    }
+
+    var hardwareBitmapThreshold: Int = GLUtil.SAFE_TEXTURE_LIMIT
+
+    private fun canUseHardwareBitmap(width: Int, height: Int): Boolean {
+        if (HARDWARE_BITMAP_UNSUPPORTED) return false
+        return maxOf(width, height) <= hardwareBitmapThreshold
+    }
 
     fun isImage(name: String?, openStream: (() -> InputStream)? = null): Boolean {
         if (name == null) return false
@@ -49,17 +65,20 @@ object ImageUtil {
 
     fun findImageType(stream: InputStream): ImageType? {
         return try {
-            when (getImageType(stream)?.format) {
-                Format.Avif -> ImageType.AVIF
-                Format.Gif -> ImageType.GIF
-                Format.Heif -> ImageType.HEIF
-                Format.Jpeg -> ImageType.JPEG
-                Format.Jxl -> ImageType.JXL
-                Format.Png -> ImageType.PNG
-                Format.Webp -> ImageType.WEBP
+            val format = ImageDecoder.open(stream).use { dec -> dec.format }
+            when (format) {
+                ImageDecoder.Format.JPEG -> ImageType.JPEG
+                ImageDecoder.Format.PNG -> ImageType.PNG
+                ImageDecoder.Format.WEBP -> ImageType.WEBP
+                ImageDecoder.Format.GIF -> ImageType.GIF
+                ImageDecoder.Format.AVIF -> ImageType.AVIF
+                ImageDecoder.Format.HEIF -> ImageType.HEIF
+                ImageDecoder.Format.JXL -> ImageType.JXL
+                ImageDecoder.Format.JP2 -> ImageType.JP2
                 else -> null
             }
         } catch (e: Exception) {
+            logcat(LogPriority.ERROR) { "findImageType: ${e.message}" }
             null
         }
     }
@@ -71,36 +90,20 @@ object ImageUtil {
 
     fun isAnimatedAndSupported(source: BufferedSource): Boolean {
         return try {
-            val type = getImageType(source.peek().inputStream()) ?: return false
-            // https://coil-kt.github.io/coil/getting_started/#supported-image-formats
-            when (type.format) {
-                Format.Gif -> true
-                // Animated WebP on Android 9+
-                Format.Webp -> type.isAnimated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-                // Animated Heif on Android 11+
-                Format.Heif -> type.isAnimated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+            val type = findImageType(source.peek().inputStream()) ?: return false
+            when (type) {
+                ImageType.GIF -> true
+                ImageType.WEBP, ImageType.HEIF -> {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+                    ImageDecoder.open(source.peek().inputStream()).use { dec -> dec.pages > 1 }
+                }
+
                 else -> false
             }
         } catch (e: Exception) {
+            logcat(LogPriority.ERROR) { "isAnimatedAndSupported: ${e.message}" }
             false
         }
-    }
-
-    private fun getImageType(stream: InputStream): tachiyomi.decoder.ImageType? {
-        val bytes = ByteArray(32)
-
-        val length = if (stream.markSupported()) {
-            stream.mark(bytes.size)
-            stream.read(bytes, 0, bytes.size).also { stream.reset() }
-        } else {
-            stream.read(bytes, 0, bytes.size)
-        }
-
-        if (length == -1) {
-            return null
-        }
-
-        return ImageDecoder.findType(bytes)
     }
 
     enum class ImageType(val mime: String, val extension: String) {
@@ -111,6 +114,8 @@ object ImageUtil {
         JXL("image/jxl", "jxl"),
         PNG("image/png", "png"),
         WEBP("image/webp", "webp"),
+        JP2("image/jp2", "jp2"),
+        JPX("image/jpx", "jpx"),
     }
 
     /**
@@ -205,7 +210,11 @@ object ImageUtil {
      */
     private fun isTallImage(imageSource: BufferedSource): Boolean {
         val options = extractImageOptions(imageSource)
-        return (options.outHeight / options.outWidth) > 3
+        return TallImageSplitCalculator.shouldSplit(
+            imageWidth = options.outWidth,
+            imageHeight = options.outHeight,
+            optimalImageHeight = optimalImageHeight,
+        )
     }
 
     /**
@@ -312,35 +321,34 @@ object ImageUtil {
     )}.jpg"
 
     private fun BitmapFactory.Options.splitData(maxSplitHeight: Int = optimalImageHeight): List<SplitData> {
-            val imageHeight = outHeight
-            val imageWidth = outWidth
+        val imageHeight = outHeight
+        val imageWidth = outWidth
 
-            // -1 so it doesn't try to split when imageHeight = maxSplitHeight
-            val partCount = (imageHeight - 1) / maxSplitHeight + 1
-            val optimalSplitHeight = imageHeight / partCount
+        val partCount = TallImageSplitCalculator.calculatePartCount(imageHeight, maxSplitHeight)
+        val optimalSplitHeight = imageHeight / partCount
 
-            logcat {
-                "Generating SplitData for image (height: $imageHeight): " +
-                    "$partCount parts @ ${optimalSplitHeight}px height per part"
-            }
+        logcat {
+            "Generating SplitData for image (height: $imageHeight): " +
+                "$partCount parts @ ${optimalSplitHeight}px height per part"
+        }
 
-            return buildList {
-                val range = 0..<partCount
-                for (index in range) {
-                    // Only continue if the list is empty or there is image remaining
-                    if (isNotEmpty() && imageHeight <= last().bottomOffset) break
+        return buildList {
+            val range = 0..<partCount
+            for (index in range) {
+                // Only continue if the list is empty or there is image remaining
+                if (isNotEmpty() && imageHeight <= last().bottomOffset) break
 
-                    val topOffset = index * optimalSplitHeight
-                    var splitHeight = min(optimalSplitHeight, imageHeight - topOffset)
+                val topOffset = index * optimalSplitHeight
+                var splitHeight = min(optimalSplitHeight, imageHeight - topOffset)
 
-                    if (index == range.last) {
-                        val remainingHeight = imageHeight - (topOffset + splitHeight)
-                        splitHeight += remainingHeight
-                    }
-
-                    add(SplitData(index, topOffset, splitHeight, imageWidth))
+                if (index == range.last) {
+                    val remainingHeight = imageHeight - (topOffset + splitHeight)
+                    splitHeight += remainingHeight
                 }
+
+                add(SplitData(index, topOffset, splitHeight, imageWidth))
             }
+        }
     }
 
     data class SplitData(
@@ -352,35 +360,37 @@ object ImageUtil {
         val bottomOffset = topOffset + splitHeight
     }
 
-    fun canUseHardwareBitmap(bitmap: Bitmap): Boolean {
-        return canUseHardwareBitmap(bitmap.width, bitmap.height)
-    }
-
-    fun canUseHardwareBitmap(imageSource: BufferedSource): Boolean {
-        return with(extractImageOptions(imageSource)) {
-            canUseHardwareBitmap(outWidth, outHeight)
-        }
-    }
-
-    var hardwareBitmapThreshold: Int = GLUtil.SAFE_TEXTURE_LIMIT
-
-    private fun canUseHardwareBitmap(width: Int, height: Int): Boolean {
-        if (HARDWARE_BITMAP_UNSUPPORTED) return false
-        return maxOf(width, height) <= hardwareBitmapThreshold
-    }
-
     /**
      * Algorithm for determining what background to accompany a comic/manga page
      */
     fun chooseBackground(context: Context, imageStream: InputStream): Drawable {
-        val decoder = ImageDecoder.newInstance(imageStream)
-        val image = decoder?.decode()
-        decoder?.recycle()
+        val image = try {
+            ImageDecoder.open(imageStream).use { it.decodeNext() to it.isHdr }.let { (res, hdr) ->
+                res.use {
+                    val config = if (hdr) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
+                    createBitmap(res.width, res.height, config).also { bitmap ->
+                        res.image.rewind()
+                        bitmap.copyPixelsFromBuffer(res.image)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR) { "chooseBackground: ${e.message}" }
+            null
+        }
 
+        if (image == null) return Color.WHITE.toDrawable()
+        return try {
+            chooseBackground(context, image)
+        } finally {
+            image.recycle()
+        }
+    }
+
+    private fun chooseBackground(context: Context, image: Bitmap): Drawable {
         val whiteColor = Color.WHITE
-        if (image == null) return ColorDrawable(whiteColor)
         if (image.width < 50 || image.height < 50) {
-            return ColorDrawable(whiteColor)
+            return whiteColor.toDrawable()
         }
 
         val top = 5
@@ -421,7 +431,7 @@ object ImageUtil {
             !color.isWhite() && color.isCloseTo(other)
         }
         if (isNotWhiteAndCloseTo.all { it }) {
-            return ColorDrawable(topLeftPixel)
+            return topLeftPixel.toDrawable()
         }
 
         val cornerPixels = listOf(topLeftPixel, topRightPixel, botLeftPixel, botRightPixel)
@@ -536,8 +546,8 @@ object ImageUtil {
         val isLandscape = context.resources.configuration?.orientation == Configuration.ORIENTATION_LANDSCAPE
         if (isLandscape) {
             return when {
-                darkBG -> ColorDrawable(blackColor)
-                else -> ColorDrawable(whiteColor)
+                darkBG -> blackColor.toDrawable()
+                else -> whiteColor.toDrawable()
             }
         }
 
@@ -558,7 +568,7 @@ object ImageUtil {
                 intArrayOf(whiteColor, whiteColor, blackColor, blackColor)
             }
             darkBG -> {
-                return ColorDrawable(blackColor)
+                return blackColor.toDrawable()
             }
             topIsBlackStreak ||
                 (
@@ -577,7 +587,7 @@ object ImageUtil {
                 intArrayOf(whiteColor, whiteColor, blackColor, blackColor)
             }
             else -> {
-                return ColorDrawable(whiteColor)
+                return whiteColor.toDrawable()
             }
         }
 
@@ -759,7 +769,13 @@ object ImageUtil {
             val widthAndHinge = maxWidth + adjustedHingeGap
             if (imageBitmap.height != maxHeight && imageBitmap.width != maxWidth) {
                 val minRatio = min(maxHeight / height.toFloat(), maxWidth / width.toFloat())
-                imageBitmap = Bitmap.createScaledBitmap(imageBitmap, (width * minRatio).toInt(), (height * minRatio).toInt(), true)
+                imageBitmap =
+                    Bitmap.createScaledBitmap(
+                        imageBitmap,
+                        (width * minRatio).toInt(),
+                        (height * minRatio).toInt(),
+                        true,
+                    )
             }
             height = imageBitmap.height
             width = imageBitmap.width
@@ -773,7 +789,13 @@ object ImageUtil {
 
             if (imageBitmap2.height != maxHeight && imageBitmap2.width != maxWidth) {
                 val minRatio = min(maxHeight / height2.toFloat(), maxWidth / width2.toFloat())
-                imageBitmap2 = Bitmap.createScaledBitmap(imageBitmap2, (width2 * minRatio).toInt(), (height2 * minRatio).toInt(), true)
+                imageBitmap2 =
+                    Bitmap.createScaledBitmap(
+                        imageBitmap2,
+                        (width2 * minRatio).toInt(),
+                        (height2 * minRatio).toInt(),
+                        true,
+                    )
             }
             height2 = imageBitmap2.height
             width2 = imageBitmap2.width
@@ -828,7 +850,13 @@ object ImageUtil {
             bitmap[unPaddedSide, (bitmap.height * (it / 50f)).toInt()].isWhiteOrDark(checkWhite)
         }
         return if (isNotFullyUnPadded) {
-            if (paddedCount == 49) 2 else if (paddedCount >= (if (halfCheck) 25 else 47)) 1 else 0
+            if (paddedCount == 49) {
+                2
+            } else if (paddedCount >= (if (halfCheck) 25 else 47)) {
+                1
+            } else {
+                0
+            }
         } else {
             0
         }

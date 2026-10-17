@@ -2,12 +2,22 @@ package tachiyomi.domain.updates.repository
 
 import kotlinx.coroutines.flow.Flow
 import tachiyomi.domain.updates.model.UpdatesWithRelations
+import kotlin.time.Instant
 
 interface UpdatesRepository {
 
-    suspend fun awaitWithRead(read: Boolean, after: Long, limit: Long): List<UpdatesWithRelations>
+    suspend fun awaitWithRead(read: Boolean, after: Instant, limit: Long): List<UpdatesWithRelations>
 
-    fun subscribeAll(after: Long, limit: Long): Flow<List<UpdatesWithRelations>>
+    fun subscribeAll(
+        after: Instant,
+        limit: Long,
+        unread: Boolean?,
+        started: Boolean?,
+        bookmarked: Boolean?,
+        hideExcludedScanlators: Boolean,
+        includedCategories: List<Long>,
+        excludedCategories: List<Long>,
+    ): Flow<List<UpdatesWithRelations>>
 
-    fun subscribeWithRead(read: Boolean, after: Long, limit: Long): Flow<List<UpdatesWithRelations>>
+    fun subscribeWithRead(read: Boolean, after: Instant, limit: Long): Flow<List<UpdatesWithRelations>>
 }

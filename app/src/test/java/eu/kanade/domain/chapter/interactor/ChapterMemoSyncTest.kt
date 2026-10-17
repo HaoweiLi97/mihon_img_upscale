@@ -14,14 +14,13 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.ShouldUpdateDbChapter
-import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.chapter.model.ChapterUpdate
+import tachiyomi.domain.chapter.model.ChapterRemoteUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 class ChapterMemoSyncTest {
 
@@ -35,7 +34,7 @@ class ChapterMemoSyncTest {
             url = "chapter-1",
             name = "Chapter 1",
             chapterNumber = 1.0,
-            dateUpload = 100,
+            dateUpload = Instant.fromEpochMilliseconds(100),
             read = true,
             bookmark = true,
             lastPageRead = 12,
@@ -44,11 +43,11 @@ class ChapterMemoSyncTest {
         val source = mockk<HttpSource>(relaxed = true)
         val libraryPreferences = mockk<LibraryPreferences>()
         val excluded = mockk<GetExcludedScanlators>()
-        val updates = slot<List<ChapterUpdate>>()
+        val updates = slot<List<ChapterRemoteUpdate>>()
         coEvery { repository.getChapterByMangaId(manga.id, false) } returns listOf(existing)
-        coEvery { repository.updateAll(capture(updates)) } returns Unit
+        coEvery { repository.updateFromRemote(emptyList(), emptyList(), capture(updates)) } returns emptyList()
         coEvery { excluded.await(manga.id) } returns emptySet()
-        every { libraryPreferences.markDuplicateReadChapterAsRead().get() } returns emptySet()
+        every { libraryPreferences.markDuplicateReadChapterAsRead.get() } returns emptySet()
         every { source.prepareNewChapter(any(), any()) } answers {
             assertEquals(memo, firstArg<eu.kanade.tachiyomi.source.model.SChapter>().memo)
         }
@@ -58,8 +57,6 @@ class ChapterMemoSyncTest {
             chapterRepository = repository,
             shouldUpdateDbChapter = ShouldUpdateDbChapter(),
             updateManga = mockk<UpdateManga>(relaxed = true),
-            updateChapter = UpdateChapter(repository),
-            getChaptersByMangaId = GetChaptersByMangaId(repository),
             getExcludedScanlators = excluded,
             libraryPreferences = libraryPreferences,
         )
@@ -69,10 +66,8 @@ class ChapterMemoSyncTest {
         val updated = updates.captured.single()
         assertEquals(existing.id, updated.id)
         assertEquals(memo, updated.memo)
-        assertEquals(existing.read, updated.read)
-        assertEquals(existing.bookmark, updated.bookmark)
-        assertEquals(existing.lastPageRead, updated.lastPageRead)
-        coVerify(exactly = 0) { repository.addAll(any()) }
-        coVerify(exactly = 0) { repository.removeChaptersWithIds(any()) }
+        // Source updates carry metadata only; reading state cannot be overwritten by this operation.
+        coVerify(exactly = 1) { repository.updateFromRemote(emptyList(), emptyList(), any()) }
+        coVerify(exactly = 0) { repository.updateAll(any()) }
     }
 }

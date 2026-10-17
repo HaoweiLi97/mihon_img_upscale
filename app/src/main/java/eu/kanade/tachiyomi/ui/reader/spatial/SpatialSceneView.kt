@@ -209,8 +209,10 @@ class SpatialSceneView @JvmOverloads constructor(
         }
 
         val elapsedSeconds = if (lastSensorTimestampNs > 0L) {
-            ((event.timestamp - lastSensorTimestampNs).coerceIn(MIN_SENSOR_INTERVAL_NS, MAX_SENSOR_INTERVAL_NS) /
-                NANOS_PER_SECOND).toFloat()
+            (
+                (event.timestamp - lastSensorTimestampNs).coerceIn(MIN_SENSOR_INTERVAL_NS, MAX_SENSOR_INTERVAL_NS) /
+                    NANOS_PER_SECOND
+                ).toFloat()
         } else {
             DEFAULT_SENSOR_INTERVAL_SECONDS
         }

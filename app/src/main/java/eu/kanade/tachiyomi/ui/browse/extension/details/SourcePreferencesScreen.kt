@@ -11,12 +11,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.os.bundleOf
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentContainerView
 import androidx.fragment.app.FragmentManager
@@ -27,40 +27,45 @@ import androidx.preference.DialogPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceScreen
+import androidx.preference.R
 import androidx.preference.forEach
 import androidx.preference.getOnBindEditTextListener
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
-import eu.kanade.core.util.ifSourcesLoaded
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.preference.SharedPreferencesDataStore
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.widget.TachiyomiTextInputEditText.Companion.setIncognito
-import tachiyomi.domain.source.service.SourceManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import mihon.app.di.appGraph
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.screens.LoadingScreen
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 class SourcePreferencesScreen(val sourceId: Long) : Screen() {
 
     @Composable
     override fun Content() {
-        if (!ifSourcesLoaded()) {
+        val context = LocalContext.current
+        val navigator = LocalNavigator.currentOrThrow
+
+        val source by produceState<Source?>(initialValue = null) {
+            value = context.appGraph.sourceManager.getOrStub(sourceId)
+        }
+
+        if (source == null) {
             LoadingScreen()
             return
         }
 
-        val context = LocalContext.current
-        val navigator = LocalNavigator.currentOrThrow
-
         Scaffold(
             topBar = {
                 AppBar(
-                    title = Injekt.get<SourceManager>().getOrStub(sourceId).toString(),
+                    title = source.toString(),
                     navigateUp = navigator::pop,
                     scrollBehavior = it,
                 )
@@ -128,16 +133,22 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
-        preferenceScreen = populateScreen()
+        preferenceScreen = preferenceManager.createPreferenceScreen(requireContext())
+        lifecycleScope.launch {
+            preferenceScreen = populateScreen()
+        }
     }
 
-    private fun populateScreen(): PreferenceScreen {
+    private suspend fun populateScreen(): PreferenceScreen {
         val sourceId = requireArguments().getLong(SOURCE_ID)
-        val source = Injekt.get<SourceManager>().getOrStub(sourceId)
+        val appGraph = requireContext().appGraph
+        val source = appGraph.sourceManager.getOrStub(sourceId)
+        val basePreferences = appGraph.basePreferences
         val sourceScreen = preferenceManager.createPreferenceScreen(requireContext())
 
         if (source is ConfigurableSource) {
-            val dataStore = SharedPreferencesDataStore(source.sourcePreferences())
+            val sourcePreferences = withContext(Dispatchers.IO) { source.sourcePreferences().also { it.all } }
+            val dataStore = SharedPreferencesDataStore(sourcePreferences)
             preferenceManager.preferenceDataStore = dataStore
 
             source.setupPreferenceScreen(sourceScreen)
@@ -153,7 +164,7 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
                     val setListener = pref.getOnBindEditTextListener()
                     pref.setOnBindEditTextListener {
                         setListener?.onBindEditText(it)
-                        it.setIncognito(lifecycleScope)
+                        it.setIncognito(basePreferences, lifecycleScope)
                     }
                 }
             }
@@ -167,7 +178,9 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
 
         fun getInstance(sourceId: Long): SourcePreferencesFragment {
             return SourcePreferencesFragment().apply {
-                arguments = bundleOf(SOURCE_ID to sourceId)
+                arguments = Bundle().apply {
+                    putLong(SOURCE_ID, sourceId)
+                }
             }
         }
     }

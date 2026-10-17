@@ -9,12 +9,10 @@ import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.sourcePreferences
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.runBlocking
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import tachiyomi.domain.track.model.Track as DomainTrack
 
@@ -29,9 +27,9 @@ class Kavita(id: Long) : BaseTracker(id, "Kavita"), EnhancedTracker {
     var authentications: OAuth? = null
 
     private val interceptor by lazy { KavitaInterceptor(this) }
-    val api by lazy { KavitaApi(client, interceptor) }
+    val api by lazy { KavitaApi(id, client, interceptor) }
 
-    private val sourceManager: SourceManager by injectLazy()
+    private val sourceManager: SourceManager by lazy { appGraph.sourceManager }
 
     override fun getLogo(): Int = R.drawable.brand_kavita
 
@@ -50,7 +48,7 @@ class Kavita(id: Long) : BaseTracker(id, "Kavita"), EnhancedTracker {
 
     override fun getCompletionStatus(): Long = COMPLETED
 
-    override fun getScoreList(): ImmutableList<String> = persistentListOf()
+    override fun getScoreList(): List<String> = listOf()
 
     override fun displayScore(track: DomainTrack): String = ""
 
@@ -97,7 +95,7 @@ class Kavita(id: Long) : BaseTracker(id, "Kavita"), EnhancedTracker {
     override suspend fun match(manga: Manga): TrackSearch? =
         try {
             api.getTrackSearch(manga.url)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
 
@@ -121,7 +119,8 @@ class Kavita(id: Long) : BaseTracker(id, "Kavita"), EnhancedTracker {
                 (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }
                     .reduce(Long::or) and Long.MAX_VALUE
             }
-            val preferences = (sourceManager.get(sourceId) as ConfigurableSource).sourcePreferences()
+            val preferences = runBlocking { sourceManager.get(sourceId) as ConfigurableSource }
+                .sourcePreferences()
 
             val prefApiUrl = preferences.getString("APIURL", "")
             val prefApiKey = preferences.getString("APIKEY", "")
@@ -137,8 +136,10 @@ class Kavita(id: Long) : BaseTracker(id, "Kavita"), EnhancedTracker {
             }
 
             authentication.apiUrl = prefApiUrl
-            authentication.jwtToken = token.toString()
+            authentication.jwtToken = token
         }
         authentications = oauth
     }
+
+    override suspend fun updateUserConfig() = Unit
 }

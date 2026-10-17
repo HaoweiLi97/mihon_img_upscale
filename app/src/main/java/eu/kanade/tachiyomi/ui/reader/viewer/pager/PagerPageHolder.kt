@@ -1,16 +1,19 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.graphics.Paint
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
-import android.view.LayoutInflater
-import android.view.Gravity
-import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.util.TypedValue
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.TextView
 import androidx.core.graphics.applyCanvas
 import androidx.core.graphics.createBitmap
@@ -21,28 +24,31 @@ import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
-import eu.kanade.tachiyomi.util.system.dpToPx
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import okio.Buffer
 import okio.BufferedSource
-import android.graphics.BitmapFactory
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
@@ -52,11 +58,9 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.coroutines.resume
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.coroutines.resume
-import kotlinx.coroutines.suspendCancellableCoroutine
-import eu.kanade.tachiyomi.util.system.isNightMode
 
 /**
  * View of the ViewPager that contains a page of a chapter.
@@ -183,7 +187,7 @@ class PagerPageHolder(
         val loader = page.chapter.pageLoader ?: return
 
         supervisorScope {
-            launchIO {
+            launch(Dispatchers.IO) {
                 loader.loadPage(page)
             }
             extraPage?.let { extraPage ->
@@ -288,7 +292,7 @@ class PagerPageHolder(
                 }
                 RenderedPage(source, isAnimated, background, splitPages)
             }
-            withUIContext {
+            withContext(Dispatchers.Main) {
                 setImage(
                     renderedPage.source,
                     renderedPage.isAnimated,
@@ -315,7 +319,7 @@ class PagerPageHolder(
             return
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
-            withUIContext {
+            withContext(Dispatchers.Main) {
                 setError(e)
             }
         }
@@ -466,7 +470,7 @@ class PagerPageHolder(
         return if (baseVariant.isBlank()) {
             halfVariant
         } else {
-            "${baseVariant}__${halfVariant}"
+            "${baseVariant}__$halfVariant"
         }
     }
 
@@ -583,8 +587,20 @@ class PagerPageHolder(
         val key = enhancementCacheKey(targetPage) ?: return "missing-key"
         ImageEnhancementCache.init(context)
         return when {
-            ImageEnhancementCache.isSkipped(key.mangaId, key.chapterId, key.pageIndex, key.configHash, key.pageVariant) -> "skipped"
-            ImageEnhancementCache.isCached(key.mangaId, key.chapterId, key.pageIndex, key.configHash, key.pageVariant) -> "cached"
+            ImageEnhancementCache.isSkipped(
+                key.mangaId,
+                key.chapterId,
+                key.pageIndex,
+                key.configHash,
+                key.pageVariant,
+            ) -> "skipped"
+            ImageEnhancementCache.isCached(
+                key.mangaId,
+                key.chapterId,
+                key.pageIndex,
+                key.configHash,
+                key.pageVariant,
+            ) -> "cached"
             else -> "raw"
         }
     }
@@ -720,10 +736,26 @@ class PagerPageHolder(
 
             launch {
                 ImageEnhancementCache.events.collect { event ->
-                    if (leftKey != null && event.affects(leftKey.mangaId, leftKey.chapterId, leftKey.pageIndex, leftKey.configHash, leftKey.pageVariant)) {
+                    if (leftKey != null &&
+                        event.affects(
+                            leftKey.mangaId,
+                            leftKey.chapterId,
+                            leftKey.pageIndex,
+                            leftKey.configHash,
+                            leftKey.pageVariant,
+                        )
+                    ) {
                         leftState = cacheStateAfterEvent(event)
                     }
-                    if (rightKey != null && event.affects(rightKey.mangaId, rightKey.chapterId, rightKey.pageIndex, rightKey.configHash, rightKey.pageVariant)) {
+                    if (rightKey != null &&
+                        event.affects(
+                            rightKey.mangaId,
+                            rightKey.chapterId,
+                            rightKey.pageIndex,
+                            rightKey.configHash,
+                            rightKey.pageVariant,
+                        )
+                    ) {
                         rightState = cacheStateAfterEvent(event)
                     }
                 }

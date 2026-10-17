@@ -2,30 +2,37 @@ package eu.kanade.tachiyomi.data.download.model
 
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import kotlin.time.Duration.Companion.milliseconds
 
 data class Download(
     val source: HttpSource,
     val manga: Manga,
     val chapter: Chapter,
 ) {
-    var pages: List<Page>? = null
+    @Transient
+    private val _pagesFlow = MutableStateFlow<List<Page>?>(null)
+
+    @Transient
+    val pagesFlow = _pagesFlow.asStateFlow()
+    var pages: List<Page>?
+        get() = _pagesFlow.value
+        set(pages) {
+            _pagesFlow.value = pages
+        }
 
     val totalProgress: Int
         get() = pages?.sumOf(Page::progress) ?: 0
@@ -56,24 +63,16 @@ data class Download(
         }
 
     @Transient
-    val progressFlow = flow {
-        if (pages == null) {
-            emit(0)
-            while (pages == null) {
-                delay(50)
-            }
-        }
-
-        val pageProgressFlow = combine(pages!!.map(Page::progressFlow)) { it.average().toInt() }
-        emitAll(
-            merge(
-                pageProgressFlow,
-                uploadProgressFlow.map { it },
-            ),
-        )
-    }
+    val progressFlow = combine(
+        statusFlow,
+        uploadProgressFlow,
+        _pagesFlow
+            .flatMapLatest { pages ->
+                if (pages == null) flowOf(0) else combine(pages.map(Page::progressFlow)) { it.average().toInt() }
+            },
+    ) { status, upload, pages -> if (status == State.UPLOADING) upload else pages }
         .distinctUntilChanged()
-        .debounce(50)
+        .debounce(50.milliseconds)
 
     val progress: Int
         get() {
@@ -89,20 +88,5 @@ data class Download(
         UPLOADING(3),
         DOWNLOADED(4),
         ERROR(5),
-    }
-
-    companion object {
-        suspend fun fromChapterId(
-            chapterId: Long,
-            getChapter: GetChapter = Injekt.get(),
-            getManga: GetManga = Injekt.get(),
-            sourceManager: SourceManager = Injekt.get(),
-        ): Download? {
-            val chapter = getChapter.await(chapterId) ?: return null
-            val manga = getManga.await(chapter.mangaId) ?: return null
-            val source = sourceManager.get(manga.source) as? HttpSource ?: return null
-
-            return Download(source, manga, chapter)
-        }
     }
 }

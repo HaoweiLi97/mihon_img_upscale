@@ -8,12 +8,8 @@ import eu.kanade.tachiyomi.data.track.BaseTracker
 import eu.kanade.tachiyomi.data.track.DeletableTracker
 import eu.kanade.tachiyomi.data.track.anilist.dto.ALOAuth
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.toImmutableList
 import kotlinx.serialization.json.Json
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.injectLazy
 import tachiyomi.domain.track.model.Track as DomainTrack
 
 class Anilist(id: Long) : BaseTracker(id, "AniList"), DeletableTracker {
@@ -31,25 +27,27 @@ class Anilist(id: Long) : BaseTracker(id, "AniList"), DeletableTracker {
         const val POINT_10_DECIMAL = "POINT_10_DECIMAL"
         const val POINT_5 = "POINT_5"
         const val POINT_3 = "POINT_3"
+
+        private const val SEARCH_ID_PREFIX = "id:"
     }
 
-    private val json: Json by injectLazy()
+    private val json: Json by lazy { appGraph.json }
 
     private val interceptor by lazy { AnilistInterceptor(this, getPassword()) }
 
-    private val api by lazy { AnilistApi(client, interceptor) }
+    private val api by lazy { AnilistApi(id, client, interceptor) }
 
     override val supportsReadingDates: Boolean = true
 
     override val supportsPrivateTracking: Boolean = true
 
-    private val scorePreference = trackPreferences.anilistScoreType()
+    private val scorePreference by lazy { trackPreferences.anilistScoreType }
 
     init {
         // If the preference is an int from APIv1, logout user to force using APIv2
         try {
             scorePreference.get()
-        } catch (e: ClassCastException) {
+        } catch (_: ClassCastException) {
             logout()
             scorePreference.delete()
         }
@@ -77,18 +75,18 @@ class Anilist(id: Long) : BaseTracker(id, "AniList"), DeletableTracker {
 
     override fun getCompletionStatus(): Long = COMPLETED
 
-    override fun getScoreList(): ImmutableList<String> {
+    override fun getScoreList(): List<String> {
         return when (scorePreference.get()) {
             // 10 point
-            POINT_10 -> IntRange(0, 10).map(Int::toString).toImmutableList()
+            POINT_10 -> IntRange(0, 10).map(Int::toString)
             // 100 point
-            POINT_100 -> IntRange(0, 100).map(Int::toString).toImmutableList()
+            POINT_100 -> IntRange(0, 100).map(Int::toString)
             // 5 stars
-            POINT_5 -> IntRange(0, 5).map { "$it ★" }.toImmutableList()
+            POINT_5 -> IntRange(0, 5).map { "$it ★" }
             // Smiley
-            POINT_3 -> persistentListOf("-", "😦", "😐", "😊")
+            POINT_3 -> listOf("-", "😦", "😐", "😊")
             // 10 point decimal
-            POINT_10_DECIMAL -> IntRange(0, 100).map { (it / 10f).toString() }.toImmutableList()
+            POINT_10_DECIMAL -> IntRange(0, 100).map { (it / 10f).toString() }
             else -> throw Exception("Unknown score type")
         }
     }
@@ -136,7 +134,7 @@ class Anilist(id: Long) : BaseTracker(id, "AniList"), DeletableTracker {
                 else -> "😊"
             }
 
-            else -> track.toApiScore()
+            else -> track.toApiScore(appGraph.trackPreferences)
         }
     }
 
@@ -199,27 +197,40 @@ class Anilist(id: Long) : BaseTracker(id, "AniList"), DeletableTracker {
     }
 
     override suspend fun search(query: String): List<TrackSearch> {
+        if (query.startsWith(SEARCH_ID_PREFIX)) {
+            query.substringAfter(SEARCH_ID_PREFIX).trim().toIntOrNull()?.let { id ->
+                return api.getMangaDetails(id)?.let { listOf(it) } ?: emptyList()
+            }
+        }
+
         return api.search(query)
     }
 
     override suspend fun refresh(track: Track): Track {
-        val remoteTrack = api.getLibManga(track, getUsername().toInt())
+        val remoteTrack = api.findLibManga(track, getUsername().toInt()) ?: throw Exception("Could not find manga")
         track.copyPersonalFrom(remoteTrack)
         track.title = remoteTrack.title
         track.total_chapters = remoteTrack.total_chapters
         return track
     }
 
+    override suspend fun updateUserConfig() {
+        val currentUser = api.getCurrentUser()
+        scorePreference.set(currentUser.scoreFormat)
+        saveDisplayUsername(currentUser.name)
+    }
+
     override suspend fun login(username: String, password: String) = login(password)
 
     suspend fun login(token: String) {
         try {
-            val oauth = api.createOAuth(token)
+            val oauth = ALOAuth(token)
             interceptor.setAuth(oauth)
-            val (username, scoreType) = api.getCurrentUser()
-            scorePreference.set(scoreType)
-            saveCredentials(username.toString(), oauth.accessToken)
-        } catch (e: Throwable) {
+            val currentUser = api.getCurrentUser()
+            scorePreference.set(currentUser.scoreFormat)
+            saveDisplayUsername(currentUser.name)
+            saveCredentials(currentUser.id.toString(), oauth.accessToken)
+        } catch (_: Throwable) {
             logout()
         }
     }
@@ -237,7 +248,7 @@ class Anilist(id: Long) : BaseTracker(id, "AniList"), DeletableTracker {
     fun loadOAuth(): ALOAuth? {
         return try {
             json.decodeFromString<ALOAuth>(trackPreferences.trackToken(this).get())
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

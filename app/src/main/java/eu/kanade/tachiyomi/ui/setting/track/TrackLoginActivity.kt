@@ -1,8 +1,15 @@
 package eu.kanade.tachiyomi.ui.setting.track
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
+import eu.kanade.tachiyomi.data.track.comick.ComickMissingScopesException
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 
 class TrackLoginActivity : BaseOAuthLoginActivity() {
 
@@ -23,9 +30,12 @@ class TrackLoginActivity : BaseOAuthLoginActivity() {
         lifecycleScope.launch {
             when (uri.host) {
                 "anilist-auth" -> handleAniList(data["access_token"])
+                "comick-auth" -> handleComick(data["code"], data["state"])
                 "bangumi-auth" -> handleBangumi(data["code"])
+                "mangabaka-auth" -> handleMangaBaka(data["code"], data["state"])
                 "myanimelist-auth" -> handleMyAnimeList(data["code"])
                 "shikimori-auth" -> handleShikimori(data["code"])
+                "hikka-auth" -> handleHikka(data["reference"])
             }
             returnToSettings()
         }
@@ -47,6 +57,45 @@ class TrackLoginActivity : BaseOAuthLoginActivity() {
         }
     }
 
+    private suspend fun handleComick(code: String?, state: String?) {
+        if (state == null) {
+            logcat(LogPriority.WARN) { "Did not receive state parameter from Comick OAuth" }
+            return
+        }
+        if (code != null) {
+            if (!trackerManager.comick.verifyOAuthState(state)) {
+                logcat(LogPriority.WARN) { "Received wrong OAuth state back from Comick" }
+                return
+            }
+            try {
+                trackerManager.comick.login(code)
+            } catch (e: ComickMissingScopesException) {
+                withContext(Dispatchers.Main) {
+                    this@TrackLoginActivity.toast(e.message, Toast.LENGTH_LONG)
+                }
+                return
+            }
+        } else {
+            trackerManager.comick.logout()
+        }
+    }
+
+    private suspend fun handleMangaBaka(code: String?, state: String?) {
+        if (state == null) {
+            logcat(LogPriority.WARN) { "Did not receive state parameter from MangaBaka OAuth" }
+            return
+        }
+        if (code != null) {
+            if (!trackerManager.mangaBaka.verifyOAuthState(state)) {
+                logcat(LogPriority.WARN) { "Received wrong OAuth state back from MangaBaka" }
+                return
+            }
+            trackerManager.mangaBaka.login(code)
+        } else {
+            trackerManager.mangaBaka.logout()
+        }
+    }
+
     private suspend fun handleMyAnimeList(code: String?) {
         if (code != null) {
             trackerManager.myAnimeList.login(code)
@@ -60,6 +109,14 @@ class TrackLoginActivity : BaseOAuthLoginActivity() {
             trackerManager.shikimori.login(code)
         } else {
             trackerManager.shikimori.logout()
+        }
+    }
+
+    private suspend fun handleHikka(reference: String?) {
+        if (reference != null) {
+            trackerManager.hikka.login(reference)
+        } else {
+            trackerManager.hikka.logout()
         }
     }
 }

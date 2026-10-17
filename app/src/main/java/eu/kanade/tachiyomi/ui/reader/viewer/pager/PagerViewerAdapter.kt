@@ -2,7 +2,12 @@ package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import android.view.View
 import android.view.ViewGroup
-import eu.kanade.tachiyomi.ui.reader.model.*
+import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+import eu.kanade.tachiyomi.ui.reader.model.InsertPage
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.model.ReaderItem
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.viewer.calculateChapterGap
 import eu.kanade.tachiyomi.util.system.createReaderThemeContext
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
@@ -45,7 +50,6 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
      */
     private var readerThemedContext = viewer.activity.createReaderThemeContext()
 
-
     /** Page used to start the shifted pages */
     var pageToShift: ReaderPage? = null
 
@@ -56,6 +60,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
     var forceTransition = false
 
     private val pageSpreadDetectionState = PageSpreadDetectionState<PageSpreadKey>()
+
     // Splitting a page changes the neighbour used by the preceding source page. ViewPager would
     // otherwise retain that holder because its displayed item is still the same page instance.
     private val pagesNeedingSpreadRefresh = Collections.newSetFromMap(IdentityHashMap<ReaderPage, Boolean>())
@@ -106,7 +111,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
             // selected as the current chapter when one of those pages is selected.
             val prevPages = chapters.prevChapter.pages
             if (prevPages != null) {
-                newItems.addAll(prevPages.takeLast(2))
+                newItems.addAll(prevPages)
             }
         }
 
@@ -121,7 +126,9 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
             val pages = currPages.toMutableList()
 
             // Insert preprocessed pages into current page list
-            preprocessed.keys.sortedDescending()
+            preprocessed.filterValues {
+                it.chapter.chapter.id == chapters.currChapter.chapter.id
+            }.keys.sortedDescending()
                 .forEach { key ->
                     preprocessed[key]?.let { pages.add(key + 1, it) }
                 }
@@ -155,7 +162,7 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         subItems = newItems
         preprocessed = mutableMapOf()
         restoreSplitPages(existingSplitPages)
-        
+
         var useSecondPage = false
         val enteringDoublePages = !doubledUp && viewer.config.doublePages
         if (shifted != viewer.config.shiftDoublePage || (doubledUp != viewer.config.doublePages && doubledUp)) {
@@ -286,12 +293,12 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
                 otherItems.getOrNull(pagedIndex)?.let {
                     val lastPage = subJoinedItems.lastOrNull()?.first as? ReaderPage
                     if (lastPage == null || (
-                        if (it is ChapterTransition.Next) {
-                            it.from.chapter.id == lastPage.chapter.chapter.id
-                        } else {
-                            true
-                        }
-                        )
+                            if (it is ChapterTransition.Next) {
+                                it.from.chapter.id == lastPage.chapter.chapter.id
+                            } else {
+                                true
+                            }
+                            )
                     ) {
                         subJoinedItems.add(it to null)
                         pagedIndex++
@@ -443,7 +450,9 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         val second = adjacentPage
         val key = pageSpreadKey(first, second) ?: return null
         if (!pageSpreadDetectionState.begin(key)) {
-            logcat(LogPriority.INFO) { "PageSpread: page pair ${first.index}/${second.index} already checked or pending" }
+            logcat(LogPriority.INFO) {
+                "PageSpread: page pair ${first.index}/${second.index} already checked or pending"
+            }
             return null
         }
 

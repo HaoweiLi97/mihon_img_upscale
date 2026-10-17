@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.source.globalsearch
 
-import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -8,7 +8,7 @@ import mihon.domain.manga.model.toDomainManga
 import tachiyomi.domain.manga.model.Manga
 
 internal suspend fun searchSource(
-    source: CatalogueSource,
+    source: Source,
     query: String,
     dispatcher: CoroutineDispatcher,
     networkToLocalManga: suspend (List<Manga>) -> List<Manga>,

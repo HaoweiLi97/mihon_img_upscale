@@ -1,44 +1,79 @@
 package tachiyomi.data.updates
 
+import app.cash.sqldelight.Query
+import app.cash.sqldelight.async.coroutines.awaitAsList
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesBinding
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.flow.Flow
-import tachiyomi.data.DatabaseHandler
+import tachiyomi.core.common.util.lang.toLong
+import tachiyomi.data.Database
+import tachiyomi.data.subscribeToList
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.updates.model.UpdatesWithRelations
 import tachiyomi.domain.updates.repository.UpdatesRepository
+import kotlin.time.Instant
 
+@Inject
+@SingleIn(AppScope::class)
+@ContributesBinding(AppScope::class)
 class UpdatesRepositoryImpl(
-    private val databaseHandler: DatabaseHandler,
+    private val database: Database,
 ) : UpdatesRepository {
 
     override suspend fun awaitWithRead(
         read: Boolean,
-        after: Long,
+        after: Instant,
         limit: Long,
     ): List<UpdatesWithRelations> {
-        return databaseHandler.awaitList {
-            updatesViewQueries.getUpdatesByReadStatus(
-                read = read,
-                after = after,
-                limit = limit,
-                mapper = ::mapUpdatesWithRelations,
-            )
-        }
+        return getUpdatesByReadStatus(read = read, after = after, limit = limit).awaitAsList()
     }
 
-    override fun subscribeAll(after: Long, limit: Long): Flow<List<UpdatesWithRelations>> {
-        return databaseHandler.subscribeToList {
-            updatesViewQueries.getRecentUpdates(after, limit, ::mapUpdatesWithRelations)
-        }
+    override fun subscribeAll(
+        after: Instant,
+        limit: Long,
+        unread: Boolean?,
+        started: Boolean?,
+        bookmarked: Boolean?,
+        hideExcludedScanlators: Boolean,
+        includedCategories: List<Long>,
+        excludedCategories: List<Long>,
+    ): Flow<List<UpdatesWithRelations>> {
+        return database.updatesViewQueries
+            .getRecentUpdatesWithFilters(
+                after = after,
+                limit = limit,
+                read = unread?.let { !it },
+                started = started?.toLong(),
+                bookmarked = bookmarked,
+                hideExcludedScanlators = hideExcludedScanlators.toLong(),
+                includedEmpty = includedCategories.isEmpty(),
+                excludedEmpty = excludedCategories.isEmpty(),
+                includedCategories = includedCategories,
+                excludedCategories = excludedCategories,
+                mapper = ::mapUpdatesWithRelations,
+            )
+            .subscribeToList()
     }
 
     override fun subscribeWithRead(
         read: Boolean,
-        after: Long,
+        after: Instant,
         limit: Long,
     ): Flow<List<UpdatesWithRelations>> {
-        return databaseHandler.subscribeToList {
-            updatesViewQueries.getUpdatesByReadStatus(
-                read = read,
+        return getUpdatesByReadStatus(read = read, after = after, limit = limit).subscribeToList()
+    }
+
+    private fun getUpdatesByReadStatus(read: Boolean, after: Instant, limit: Long): Query<UpdatesWithRelations> {
+        return if (read) {
+            database.updatesViewQueries.getReadUpdates(
+                after = after,
+                limit = limit,
+                mapper = ::mapUpdatesWithRelations,
+            )
+        } else {
+            database.updatesViewQueries.getUnreadUpdates(
                 after = after,
                 limit = limit,
                 mapper = ::mapUpdatesWithRelations,
@@ -46,6 +81,7 @@ class UpdatesRepositoryImpl(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun mapUpdatesWithRelations(
         mangaId: Long,
         mangaTitle: String,
@@ -55,13 +91,14 @@ class UpdatesRepositoryImpl(
         chapterUrl: String,
         read: Boolean,
         bookmark: Boolean,
-        lastPageRead: Long,
+        lastPageRead: Int,
         sourceId: Long,
         favorite: Boolean,
         thumbnailUrl: String?,
-        coverLastModified: Long,
-        dateUpload: Long,
-        dateFetch: Long,
+        coverLastModified: Instant?,
+        dateUpload: Instant?,
+        dateFetch: Instant,
+        excludedScanlator: String?,
     ): UpdatesWithRelations = UpdatesWithRelations(
         mangaId = mangaId,
         mangaTitle = mangaTitle,

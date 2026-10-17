@@ -9,7 +9,7 @@ class SpatialSceneCache(context: Context) {
 
     fun sceneFile(page: ReaderPage): File {
         val chapterId = page.chapter.chapter.id
-        val mangaId = page.chapter.chapter.manga_id
+        val mangaId = page.chapter.chapter.mangaId
         val variant = page.enhancementKeySuffix
             .ifBlank { "full" }
             .replace(UNSAFE_FILE_CHARS, "_")

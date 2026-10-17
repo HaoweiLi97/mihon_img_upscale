@@ -1,9 +1,10 @@
 package eu.kanade.tachiyomi.data.backup
 
 import eu.kanade.tachiyomi.data.backup.create.creators.PreferenceBackupCreator
-import eu.kanade.tachiyomi.data.backup.models.backupChapterMapper
+import eu.kanade.tachiyomi.data.backup.models.BackupChapter
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.serialization.protobuf.ProtoBuf
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -42,46 +43,12 @@ class CloudSyncBackupTest {
 
     @Test
     fun `chapter backup uses stable cloud sync marker`() {
-        val mapper = backupChapterMapper(setOf("42"))
-
-        val synced = mapper(
-            42,
-            7,
-            "/chapter-1",
-            "Chapter 1",
-            null,
-            false,
-            false,
-            0,
-            1.0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            "{}",
+        val backup = BackupChapter("/chapter-1", "Chapter 1", cloudSynced = true)
+        val restored = ProtoBuf.decodeFromByteArray(
+            BackupChapter.serializer(),
+            ProtoBuf.encodeToByteArray(BackupChapter.serializer(), backup),
         )
-        val notSynced = mapper(
-            43,
-            7,
-            "/chapter-2",
-            "Chapter 2",
-            null,
-            false,
-            false,
-            0,
-            2.0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            "{}",
-        )
-
-        assertTrue(synced.cloudSynced)
-        assertFalse(notSynced.cloudSynced)
+        assertTrue(restored.cloudSynced)
+        assertFalse(BackupChapter("/chapter-2", "Chapter 2").cloudSynced)
     }
 }

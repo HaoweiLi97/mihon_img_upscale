@@ -4,9 +4,7 @@
     <string name="lock_always">Uvijek</string>
     <string name="pref_fullscreen">Cjeloekranski prikaz</string>
     <string name="obsolete_extension_message">Ovo proširenje više nije dostupno. Možda neće ispravno funkcionirati i može izazvati probleme s aplikacijom. Preporučuje se deinstalirati proširenje.</string>
-    <string name="untrusted_extension_message">Zlonamjerno proširenje može pročitati sve spremljene podatke za prijavu ili izvršiti proizvoljni kod.
-\n
-\nVjerujući ovom certifikatu, prihvaćaš te rizike.</string>
+    <string name="untrusted_extension_message">Zlonamjerno proširenje može pročitati sve spremljene podatke za prijavu ili izvršiti proizvoljni kod. \n \nVjerujući ovom certifikatu, prihvaćaš te rizike.</string>
     <string name="untrusted_extension">Nepovjerljivo proširenje</string>
     <string name="ext_uninstall">Deinstaliraj</string>
     <string name="ext_untrusted">Nepovjerljivo</string>
@@ -219,9 +217,6 @@
     <string name="pref_skip_filtered_chapters">Preskoči filtrirana poglavlja</string>
     <string name="pref_skip_read_chapters">Preskoči pročitana poglavlja</string>
     <string name="update_check_notification_update_available">Dostupna je nova verzija!</string>
-    <string name="update_check_notification_download_error">Greška pri preuzimanju</string>
-    <string name="update_check_notification_download_complete">Dodirni za instaliranje nove verzije</string>
-    <string name="update_check_notification_download_in_progress">Preuzimanje …</string>
     <string name="update_check_no_new_updates">Nema novih verzija</string>
     <string name="update_check_confirm">Preuzmi</string>
     <string name="file_select_backup">Odaberi datoteku sigurnosne kopije</string>
@@ -288,8 +283,7 @@
     <string name="display_mode_chapter">Poglavlje %1$s</string>
     <string name="snack_add_to_library">Dodati u biblioteku?</string>
     <string name="source_not_installed">Izvor nije instaliran: %1$s</string>
-    <string name="copied_to_clipboard">Kopirano u međuspremnik:
-\n%1$s</string>
+    <string name="copied_to_clipboard">Kopirano u međuspremnik: \n%1$s</string>
     <string name="delete_downloads_for_manga">Izbrisati preuzeta poglavlja?</string>
     <string name="manga_info_collapse">Manje</string>
     <string name="manga_info_expand">Više</string>
@@ -393,7 +387,6 @@
     <string name="pref_read_with_tapping_inverted">Preokreni područja za dodirivanje</string>
     <string name="unknown_status">Nepoznato stanje</string>
     <string name="unknown_author">Nepoznat autor</string>
-    <string name="updated_version">Aktualizirano na v%1$s</string>
     <string name="whats_new">Što je novo</string>
     <string name="download_insufficient_space">Neuspjelo preuzimanje poglavlja zbog nedovoljne memorije</string>
     <string name="action_global_search_query">Traži „%1$s” globalno</string>
@@ -406,10 +399,7 @@
     <string name="channel_errors">Greške</string>
     <string name="pref_remove_bookmarked_chapters">Dozvoli brisanje zabilježenih poglavlja</string>
     <string name="pref_category_delete_chapters">Izbriši poglavlja</string>
-    <string name="ext_nsfw_warning">Izvori ovog proširenja mogu sadržavati neprikladan sadržaj (18+)</string>
-    <string name="ext_nsfw_short">18+</string>
     <string name="backup_restore_missing_trackers">Usluge praćenja bez prijave:</string>
-    <string name="parental_controls_info">To ne sprečava neslužbene ili potencijalno krivo označena proširenja prikazati neprikladan sadržaj (18+) unutar aplikacije.</string>
     <string name="no_chapters_error">Nema poglavlja</string>
     <string name="chapter_settings_updated">Standardne postavke poglavlja su aktualizirane</string>
     <string name="share_page_info">%1$s: %2$s, %3$d. stranica</string>
@@ -428,10 +418,8 @@
     <string name="spen_next_page">Sljedeća stranica</string>
     <string name="spen_previous_page">Prethodna stranica</string>
     <string name="migration_help_guide">Vodič za migraciju izvora</string>
-    <string name="pref_category_nsfw_content">Izvori neprikladnog sadržaja (18+)</string>
     <string name="file_picker_error">Nije pronađena nijedna aplikacija za biranje datoteka</string>
     <string name="myanimelist_relogin">Ponovo se prijavi na MAL</string>
-    <string name="pref_show_nsfw_source">Prikaži u popisu izvora i proširenja</string>
     <string name="track_finished_reading_date">Datum kraja</string>
     <string name="track_started_reading_date">Datum početka</string>
     <string name="pref_dump_crash_logs_summary">Sprema zapise grešaka u datoteku za dijeljenje podataka s programerima</string>
@@ -537,7 +525,6 @@
     <string name="label_background_activity">Aktivnost u pozadini</string>
     <string name="pref_hide_threshold">Osjetljivost za skrivanje izbornika pri listanju</string>
     <string name="pref_auto_clear_chapter_cache">Izbriši predmemoriju poglavlja tijekom pokretanja aplikacije</string>
-    <string name="channel_app_updates">Aktualiziranja aplikacije</string>
     <string name="database_clean">Nema se što raščistiti</string>
     <string name="pref_update_only_completely_read">Preskoči unose s nepročitanim poglavljima</string>
     <string name="enhanced_services">Poboljšane usluge praćenja</string>
@@ -564,7 +551,6 @@
     <string name="skipped_reason_completed">Preskočeno, jer je serija kompletna</string>
     <string name="skipped_reason_not_started">Preskočeno, jer nijedno poglavlje nije pročitano</string>
     <string name="skipped_reason_not_caught_up">Preskočeno, jer postoje nepročitana poglavlja</string>
-    <string name="notification_update_error">Nauspjela aktualiziranja: %1$d</string>
     <string name="learn_more">Dodirni za daljnje informacije</string>
     <string name="rotation_reverse_portrait">Preokreni uspravni format</string>
     <string name="action_move_to_top_all_for_series">Premjesti seriju na vrh</string>
@@ -594,7 +580,6 @@
     <string name="ext_info_language">Jezik</string>
     <string name="ext_info_version">Verzija</string>
     <string name="popular">Popularni</string>
-    <string name="ext_info_age_rating">Dobna granica</string>
     <string name="download_ahead">Preuzmi unaprijed</string>
     <string name="multi_lang">Višejezičnost</string>
     <string name="missing_storage_permission">Dozvole za spremište nisu odobrena</string>
@@ -661,8 +646,7 @@
     <string name="crash_screen_title">Ups!</string>
     <string name="not_installed">Nije instalirano</string>
     <string name="updates_last_update_info_just_now">Upravo sada</string>
-    <string name="fdroid_warning">F-Droid verzije nisu službeno podržane.
-\nDodirnite da biste saznali više.</string>
+    <string name="fdroid_warning">F-Droid verzije nisu službeno podržane. \nDodirnite da biste saznali više.</string>
     <string name="download_notifier_cache_renewal">Provjeravanje preuzimanja</string>
     <string name="update_check_open">Otvori na GitHubu</string>
     <string name="skipped_reason_not_always_update">Preskočeno jer serija ne zahtijeva aktualiziranja</string>
@@ -708,7 +692,7 @@
     <string name="library_sync_complete">Sinkroniziranje biblioteke završeno</string>
     <string name="information_cloudflare_help">Dodirni ovdje za pomoć s Cloudflareom</string>
     <string name="track_activity_name">Prijava za uslugu praćenja</string>
-    <string name="download_cache_invalidated">Indeks preuzimanja poništen</string>
+    <string name="download_cache_invalidated">Ponovno stvaranje indeksa preuzimanja</string>
     <string name="create_backup_file_error">Nije bilo moguće stvoriti datoteku sigurnosne kopije</string>
     <string name="unlock_app_title">Otključaj %s</string>
     <string name="exception_offline">Ne postoji veza s internetom</string>
@@ -758,28 +742,15 @@
     <string name="onboarding_permission_ignore_battery_opts">Upotreba baterije u pozadini</string>
     <string name="onboarding_description">Hajdemo najprije postaviti neke stvari. Ako želiš možeš ih kasnije promijeniti u postavkama.</string>
     <string name="no_location_set">Nije postavljeno mjesto spremišta</string>
-    <string name="onboarding_storage_info">Odaberi mapu u koju će %1$s spremati preuzimanja poglavlja, sigurnosne kopije i drugo.
-\n
-\nPreporučujemo koristiti zasebnu mapu.
-\n
-\nOdabrana mapa: %2$s</string>
+    <string name="onboarding_storage_info">Odaberi mapu u koju će %1$s spremati preuzimanja poglavlja, sigurnosne kopije i drugo. \n \nPreporučujemo koristiti zasebnu mapu. \n \nOdabrana mapa: %2$s</string>
     <string name="theme_nord">Nord</string>
     <string name="ext_permission_install_apps_warning">Za instaliranje proširenja su potrebne dozvole. Dodirni ovdje za odobrenje.</string>
     <string name="invalid_backup_file_error">Potpuna greška:</string>
-    <string name="label_extension_repos">Repozitoriji proširenja</string>
-    <string name="information_empty_repos">Nemaš postavljenih reopzitorija.</string>
     <string name="onboarding_storage_help_info">Aktualiziraš sa starije verzije i ne znaš što odabrati? Potraži informacije u vodiču spremišta.</string>
     <string name="onboarding_storage_help_action">Vodič spremišta</string>
-    <string name="error_repo_exists">Ovaj repozitorij već postoji!</string>
     <string name="manga_interval_custom_amount">Prilagođena učestalost aktualiziranja:</string>
     <string name="pref_library_update_smart_update">Pametno aktualiziranje</string>
-    <string name="action_add_repo">Dodaj repozitorij</string>
-    <string name="action_delete_repo">Izbriši repozitorij</string>
-    <string name="label_add_repo_input">URL repozitorija</string>
-    <string name="action_add_repo_message">Dodaj dodatne repozitorije u %s. To bi trebao biti URL koji završava s „index.min.json”.</string>
-    <string name="invalid_repo_name">Neispravan URL repozitorija</string>
     <string name="ext_revoke_trust">Opozovi pouzdana nepoznata proširenja</string>
-    <string name="delete_repo_confirmation">Želiš li izbrisati repozitorij „%s”?</string>
     <string name="action_open_repo">Otvori repozitorij izvora</string>
     <string name="private_settings">Uključi osjetljive postavke (kao što su tokeni za prijavu za usluge praćenja)</string>
     <string name="manga_interval_expected_update">Predviđa se da će nova poglavlja biti izdana za oko %1$s, provjera se svakih %2$s.</string>
@@ -790,13 +761,9 @@
     <string name="label_upcoming">Predstojeći</string>
     <string name="action_add_anyway">Svejedno dodaj</string>
     <string name="upcoming_calendar_prev">Prethodni mjesec</string>
-    <string name="action_replace_repo">Zamijeni</string>
     <string name="upcoming_calendar_next">Sljedeći mjesec</string>
     <string name="action_view_upcoming">Pogledaj nadolazeća aktualizirane verzije</string>
     <string name="upcoming_guide">Vodič za nadolazeće verzije</string>
-    <string name="action_replace_repo_title">Digitalni otisak prsta za potpisivanje već postoji</string>
-    <string name="action_replace_repo_message">Repozitorij %1$s ima isti digitalni otisak ključa za potpisivanje kao %2$s.
-\nAko se to očekuje, %2$s će se zamijeniti, u suprotnom se obrati svom održavatelju repozitorija.</string>
     <string name="file_picker_uri_permission_unsupported">Neuspjelo dobivanje trajnog pristupa mapi. Aplikacija se može ponašati neočekivano.</string>
     <string name="action_copy_link">Kopiraj poveznicu</string>
     <string name="pref_flash_duration">Trajanje bljeskalice</string>
@@ -808,7 +775,6 @@
     <string name="pref_flash_style_white">Bijela</string>
     <string name="pref_download_new_unread_chapters_only">Preskoči preuzimanje duplih pročitanih poglavlja</string>
     <string name="invalid_backup_file_json">JSON sigurnosna kopija nije podržana</string>
-    <string name="extensionRepo_settings">Repozitoriji proširenja</string>
     <string name="manga_interval_expected_update_null">Ovaj je manga dovršen ili ne postoji procijenjeni datum izdanja.</string>
     <string name="invalid_backup_file_unknown">Sigurnosna kopija je pokvarena</string>
     <string name="non_library_settings">Svi pročitani unosi</string>
@@ -826,11 +792,6 @@
     <string name="ext_remove">Ukloni</string>
     <string name="ext_confirm_remove">Ukloniti proširenje?</string>
     <string name="remove_private_extension_message">Stvarno želiš ukloniti proširenje „%s”?</string>
-    <string name="add_repo_confirmation">Želiš li dodati repozitorij „%s”?</string>
-    <string name="pref_hardware_bitmap_threshold_summary">Ako čitač učita praznu sliku, postupno smanji prag.\nOdabrano: %s</string>
-    <string name="pref_hardware_bitmap_threshold">Prilagođeni hardverski prag bitmapa</string>
-    <string name="pref_hardware_bitmap_threshold_default">Standardno (%d)</string>
-    <string name="pref_always_decode_long_strip_with_ssiv_summary">Utječe na performansu. Aktiviraj samo ako smanjenje praga bitmapa ne riješi probleme s praznim slikama</string>
     <string name="label_auto">Automatski</string>
     <string name="action_display_unread_badge">Nepročitana poglavlja</string>
     <string name="action_notes">Bilješke</string>
@@ -847,7 +808,6 @@
     <string name="pref_mark_duplicate_read_chapter_read_existing">Nakon čitanja poglavlja</string>
     <string name="pref_mark_duplicate_read_chapter_read_new">Nakon dohvaćanja novog poglavlja</string>
     <string name="pref_hide_missing_chapter_indicators">Sakrij indikatore nedostajućih poglavlja</string>
-    <string name="pref_always_decode_long_strip_with_ssiv_2">Koristi zastarjeli dekoder za čitač kontinuiranog listanja</string>
     <string name="clear_database_text">Uklonit ćeš unose iz baze podataka</string>
     <string name="clear_database_history_warning">Izgubit će se pročitana poglavlja i napredak unosa koji se ne nalaze u biblioteci</string>
     <string name="clear_db_exclude_read">Zadrži unose s pročitanim poglavljima</string>
@@ -901,7 +861,6 @@
     <string name="migrationListScreen.latestChapterLabel">Najnovije: %1$s</string>
     <string name="migrationListScreen.unknownLatestChapter">Nepoznato</string>
     <string name="migrationListScreen.matchWithoutChapterToast">Nije pronađeno nijedno poglavlje. Ovaj se unos ne može koristiti za premještanje</string>
-    <string name="label_donate">Doniraj</string>
     <string name="pref_display_images_description">Iscrtaj slike u opisima manga</string>
     <string name="pref_disallow_non_ascii_filenames">Zabrani imena datoteka koji nisu u ASCII formatu</string>
     <string name="pref_disallow_non_ascii_filenames_details">Osigurava kompatibilnost s određenim medijima za spremanje podataka koji ne podržavaju Unicode. Kada je ova opcija aktivirana, morat ćeš ručno preimenovati izvor i mape s mangama zamjenjivanjem znakova koji nisu ASCII s njihovim UTF-8 heksadecimalnim vrijednostima (u malim slovima). Datoteke poglavlja se ne moraju preimenovati.</string>
@@ -909,4 +868,19 @@
     <string name="pref_download_concurrent_pages">Istovremena preuzimanja stranica</string>
     <string name="pref_download_concurrent_pages_summary">Istovremeno preuzete stranice po izvoru</string>
     <string name="action_webview_close_tab">Zatvori karticu</string>
+    <string name="action_filter_excluded_scanlators">Filtriraj isključene amaterske prevoditelje</string>
+    <string name="download_bookmarked">Zabilježeno</string>
+    <string name="label_support_us">Podrži nas</string>
+    <string name="supportUsScreen.perks">Pokrovitelji dobivaju pristup ekskluzivnim kanalima, a uskoro slijede i dodatne pogodnosti.</string>
+    <string name="supportUsScreen.donationPlatform.patreon">Patreona (preferiran način)</string>
+    <string name="supportUsScreen.donationPlatform.opencollective">OpenCollective</string>
+    <string name="supportUsScreen.currentlySupportedBy">Trenutačno više od %d pokrovitelja podržavaju Mihon. Želimo se zahvaliti svakome od vas. Učinimo Mihon zajedno još boljim.</string>
+    <string name="supportUsScreen.contactForDetailsMessage">Za alternativne opcije ili bilo koja srodna pitanja, pridruži se našem Discord serveru.</string>
+    <string name="supportUsScreen.contactPlatform">Discord</string>
+    <string name="donationCampaign.title">Sviđa ti se aplikacija?</string>
+    <string name="donationCampaign.contactPlatform">Discord</string>
+    <string name="donationCampaign.dismiss">Odbaci</string>
+    <string name="donationCampaign.paragraph1">Pozdrav! Ja sam glavni programer Mihona i želim te zamoliti da razmisliš o financijskoj potpori njegovom razvoju. Uz dovoljno podrške, moći ću raditi na Mihonu puno radno vrijeme i usredotočiti se na dugogodišnje probleme, kao i na vrlo tražene funkcije.</string>
+    <string name="donationCampaign.paragraph2">Možeš donirati putem Patreona (preferiran način) ili putem OpenCollective-a. Ako imaš pitanja ili želiš podržati korištenje alternativnih načina, slobodno me kontaktiraj putem Mihonovog Discord servera.</string>
+    <string name="donationCampaign.paragraph3">Bez obzira na to, volonteri i ja ćemo i dalje održavati Mihon, i ostat će otvorenog koda.</string>
 </resources>

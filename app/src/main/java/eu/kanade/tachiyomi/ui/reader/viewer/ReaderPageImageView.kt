@@ -1,8 +1,12 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
 package eu.kanade.tachiyomi.ui.reader.viewer
 
-import android.content.Context
 import android.animation.ValueAnimator
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
@@ -10,17 +14,16 @@ import android.graphics.drawable.Animatable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
-import android.view.Gravity
-import android.graphics.Color
-import android.util.TypedValue
-import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import androidx.annotation.AttrRes
 import androidx.annotation.CallSuper
 import androidx.annotation.StyleRes
@@ -34,6 +37,7 @@ import coil3.asDrawable
 import coil3.dispose
 import coil3.imageLoader
 import coil3.request.CachePolicy
+import coil3.request.Disposable
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.size.Precision
@@ -44,48 +48,50 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.EASE_IN_OUT
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.EASE_OUT_QUAD
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE
 import com.github.chrisbanes.photoview.PhotoView
-import eu.kanade.domain.base.BasePreferences
+import eu.kanade.tachiyomi.data.coil.ImageDecoder
 import eu.kanade.tachiyomi.data.coil.cropBorders
-import eu.kanade.tachiyomi.data.coil.customDecoder
-import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
+import eu.kanade.tachiyomi.data.coil.webtoonStrips
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageTurn
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageTurnDrawing
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonStripImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
-import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
-import okio.Buffer
-import tachiyomi.core.common.util.system.logcat
-import logcat.LogPriority
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import okio.BufferedSource
-import tachiyomi.core.common.util.system.ImageUtil
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.withUIContext
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import uy.kohesive.injekt.injectLazy
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import tachiyomi.core.common.util.lang.launchUI
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
+import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.produceIn
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import logcat.LogPriority
+import okio.Buffer
+import okio.BufferedSource
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.launchUI
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.ImageUtil
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import kotlin.math.roundToInt
 
 /**
@@ -93,7 +99,7 @@ import kotlin.math.roundToInt
  *
  * Animated image will be drawn by [PhotoView] while [SubsamplingScaleImageView] will take non-animated image.
  *
- * @param isWebtoon if true, [WebtoonSubsamplingImageView] will be used instead of [SubsamplingScaleImageView]
+ * @param isWebtoon if true, [WebtoonStripImageView] will be used instead of [SubsamplingScaleImageView]
  * and [AppCompatImageView] will be used instead of [PhotoView]
  */
 open class ReaderPageImageView @JvmOverloads constructor(
@@ -103,13 +109,38 @@ open class ReaderPageImageView @JvmOverloads constructor(
     @StyleRes defStyleRes: Int = 0,
     private val isWebtoon: Boolean = false,
 ) : FrameLayout(context, attrs, defStyleAttrs, defStyleRes) {
+    internal var bookPageTurn: BookPageTurn? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+    private val bookPageTurnDrawing = BookPageTurnDrawing()
+
+    override fun draw(canvas: Canvas) {
+        val turn = bookPageTurn
+        if (turn == null) {
+            super.draw(canvas)
+        } else {
+            bookPageTurnDrawing.draw(canvas, width, height, turn) { super.draw(it) }
+        }
+    }
+
+    internal fun bookPageBounds(): eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageBounds? {
+        val image = pageView as? SubsamplingScaleImageView ?: return null
+        if (!image.isReady) return null
+        val start = image.sourceToViewCoord(0f, 0f) ?: return null
+        val end = image.sourceToViewCoord(image.sWidth.toFloat(), image.sHeight.toFloat()) ?: return null
+        return eu.kanade.tachiyomi.ui.reader.viewer.pager.BookPageBounds(
+            start.x + image.left,
+            start.y + image.top,
+            end.x + image.left,
+            end.y + image.top,
+        ).takeIf { it.width > 0f && it.height > 0f }
+    }
 
     private val viewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var isSettingProcessedImage = false // Flag to prevent recursive processing
-    private val alwaysDecodeLongStripWithSSIV by lazy {
-        Injekt.get<BasePreferences>().alwaysDecodeLongStripWithSSIV().get()
-    }
 
     private val preferences: ReaderPreferences by injectLazy()
 
@@ -138,7 +169,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private val realCuganSkipMaxSizeHeight: Int
         get() = preferences.realCuganSkipMaxSizeHeight().get()
-        
+
     private val realCuganShowStatus: Boolean
         get() = preferences.realCuganShowStatus().get()
 
@@ -157,8 +188,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
     var originalImageSourceFactory: (() -> BufferedSource?)? = null
     var suppressDefaultStatus = false
 
+    private var stripRequest: Disposable? = null
+
     private var config: Config? = null
-    
+
     private var processingJob: Job? = null
     private var enhancedBitmap: Bitmap? = null
     private var processedSwapView: SubsamplingScaleImageView? = null
@@ -232,7 +265,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     open fun onImageLoaded() {
         onImageLoaded?.invoke()
         background = pageBackground
-        
+
         // Keep the processed preview fully covering the page until the replacement image is ready,
         // then switch instantly to avoid exposing SSIV's blank loading state.
         if (isSettingProcessedImage) {
@@ -245,15 +278,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
             enhancedBitmap = null
             isSettingProcessedImage = false
         }
-
-
     }
 
     @CallSuper
     open fun onImageLoadError(error: Throwable?) {
         if (recoverEnhancedCacheLoad(error)) return
         onImageLoadError?.invoke(error)
-        
+
         // Hide overlay and recycle temporary bitmap if enhanced image load failed
         if (isSettingProcessedImage) {
             pageView?.alpha = 1f
@@ -314,7 +345,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (processedSwapAnimator?.isRunning == true) {
             completeProcessedSwapTransition(notifyLoaded = true)
         }
-        
+
         // If zooming, dismiss the static overlay immediately to show the zoomable image
         if (newScale != 1f && isSettingProcessedImage) {
             enhancedOverlay.animate().cancel()
@@ -329,7 +360,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun createSubsamplingPageView(): SubsamplingScaleImageView {
         return if (isWebtoon) {
-            WebtoonSubsamplingImageView(context)
+            SubsamplingScaleImageView(context)
         } else {
             SubsamplingScaleImageView(context)
         }.apply {
@@ -661,7 +692,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     fun promoteEnhancementRequest(highPriority: Boolean = true) {
         if (!realCuganEnabled) return
 
-        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
+        val mId = readerPage?.chapter?.chapter?.mangaId ?: mangaId
         val cId = readerPage?.chapter?.chapter?.id ?: chapterId
         val pIdx = readerPage?.index ?: pageIndex
         if (pIdx < 0 || mId == -1L || cId == -1L) return
@@ -750,7 +781,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         requeueEnhancement(mId, cId, pIdx, triggerData, streamFn, forceCurrentPage)
     }
 
-
     @CallSuper
     open fun onViewClicked() {
         onViewClicked?.invoke()
@@ -759,7 +789,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     open fun onPageSelected(forward: Boolean) {
         // Pruning Logic: Triggered only when this page is actually selected/viewed
         // Pruning Logic: Triggered only when this page is actually selected/viewed
-        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
+        val mId = readerPage?.chapter?.chapter?.mangaId ?: mangaId
         val cId = readerPage?.chapter?.chapter?.id ?: chapterId
         val pIdx = readerPage?.index ?: pageIndex
 
@@ -770,9 +800,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
 
         if (pIdx >= 0 && mId != -1L && cId != -1L) {
-             // 1. Check cache status and update UI
-             if (realCuganEnabled) {
-                 ImageEnhancementCache.init(context)
+            // 1. Check cache status and update UI
+            if (realCuganEnabled) {
+                ImageEnhancementCache.init(context)
                 val configHash = ImageEnhancementCache.getConfigHash(
                     noise = realCuganNoiseLevel,
                     scale = realCuganScale,
@@ -787,63 +817,69 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
                     processingBackend = preferences.realCuganProcessingBackend().get(),
                 )
-                 val pageVariant = enhancementVariant()
-                 
-                 val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
-                 if (cachedFile != null) {
-                     // Already processed - update status and load enhanced image
-                     logcat(LogPriority.DEBUG) { "ReaderPageImageView: onPageSelected - Page $pIdx found in cache" }
-                     val uriString = cachedFile.toURI().toString()
-                     if (currentLoadedUri != uriString) {
-                         val revision = imageRevision
-                         // Load the enhanced image if not already loaded or if source changed
-                         viewScope.launchIO {
-                             val transformedSource = enhancedImageSourceFactory?.invoke(cachedFile)
-                             if (transformedSource != null) {
-                                 withUIContext {
-                                     if (revision == imageRevision) {
-                                         setProcessedSource(cachedFile, transformedSource = transformedSource)
-                                     } else {
-                                         transformedSource.close()
-                                     }
-                                 }
-                                 return@launchIO
-                             }
+                val pageVariant = enhancementVariant()
 
-                             val source = ImageEnhancementCache.readCachedImage(cachedFile)
-                             
-                             if (source != null) {
-                                 withUIContext {
-                                     if (revision == imageRevision) {
-                                         setProcessedSource(cachedFile, transformedSource = source)
-                                     } else {
-                                         source.close()
-                                     }
-                                 }
-                             } else {
-                                 healInvalidEnhancedCache(mId, cId, pIdx, configHash, readerPage, forceCurrentPage = true)
-                                 startEnhancementPolling(mId, cId, pIdx, configHash, readerPage)
-                             }
-                         }
-                     } else {
-                         updateStatus(context.stringResource(MR.strings.reader_status_processed))
-                     }
-                 } else if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash, pageVariant)) {
+                val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
+                if (cachedFile != null) {
+                    // Already processed - update status and load enhanced image
+                    logcat(LogPriority.DEBUG) { "ReaderPageImageView: onPageSelected - Page $pIdx found in cache" }
+                    val uriString = cachedFile.toURI().toString()
+                    if (currentLoadedUri != uriString) {
+                        val revision = imageRevision
+                        // Load the enhanced image if not already loaded or if source changed
+                        viewScope.launchIO {
+                            val transformedSource = enhancedImageSourceFactory?.invoke(cachedFile)
+                            if (transformedSource != null) {
+                                withUIContext {
+                                    if (revision == imageRevision) {
+                                        setProcessedSource(cachedFile, transformedSource = transformedSource)
+                                    } else {
+                                        transformedSource.close()
+                                    }
+                                }
+                                return@launchIO
+                            }
 
-                     updateStatus(context.stringResource(MR.strings.reader_status_raw))
+                            val source = ImageEnhancementCache.readCachedImage(cachedFile)
+
+                            if (source != null) {
+                                withUIContext {
+                                    if (revision == imageRevision) {
+                                        setProcessedSource(cachedFile, transformedSource = source)
+                                    } else {
+                                        source.close()
+                                    }
+                                }
+                            } else {
+                                healInvalidEnhancedCache(
+                                    mId,
+                                    cId,
+                                    pIdx,
+                                    configHash,
+                                    readerPage,
+                                    forceCurrentPage = true,
+                                )
+                                startEnhancementPolling(mId, cId, pIdx, configHash, readerPage)
+                            }
+                        }
+                    } else {
+                        updateStatus(context.stringResource(MR.strings.reader_status_processed))
+                    }
+                } else if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash, pageVariant)) {
+                    updateStatus(context.stringResource(MR.strings.reader_status_raw))
                 } else {
                     // Not in cache, not skipped - ensure it's being processed with high priority
                     updateStatus(context.stringResource(MR.strings.reader_status_processing))
-                     enqueueEnhancement(mId, cId, pIdx, highPriority = true)
-                     
-                     // Start/restart polling if not already running
-                     startEnhancementPolling(mId, cId, pIdx, configHash)
-                 }
-             }
-             
-             // 2. Prune others
-             ImageEnhancer.cancelRequestsLessThan(context.applicationContext, mId, cId, pIdx)
-             ImageEnhancer.cancelRequestsGreaterThan(context.applicationContext, mId, cId, pIdx + preloadSize)
+                    enqueueEnhancement(mId, cId, pIdx, highPriority = true)
+
+                    // Start/restart polling if not already running
+                    startEnhancementPolling(mId, cId, pIdx, configHash)
+                }
+            }
+
+            // 2. Prune others
+            ImageEnhancer.cancelRequestsLessThan(context.applicationContext, mId, cId, pIdx)
+            ImageEnhancer.cancelRequestsGreaterThan(context.applicationContext, mId, cId, pIdx + preloadSize)
         }
 
         with(pageView as? SubsamplingScaleImageView) {
@@ -867,7 +903,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
             }
         }
     }
-    
 
     private fun SubsamplingScaleImageView.landscapeZoom(forward: Boolean) {
         if (
@@ -920,6 +955,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (isAnimated) {
             prepareAnimatedImageView()
             setAnimatedImage(source, config)
+        } else if (isWebtoon) {
+            prepareStripImageView()
+            setStripImage(source, config)
         } else {
             prepareNonAnimatedImageView()
             setNonAnimatedImage(source, config, streamFn)
@@ -927,6 +965,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun recycle() {
+        stripRequest?.dispose()
+        stripRequest = null
         imageRevision++
         currentCachedFile = null
         originalStreamFn = null
@@ -938,6 +978,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             when (it) {
                 is SubsamplingScaleImageView -> it.recycle()
                 is AppCompatImageView -> it.dispose()
+                is WebtoonStripImageView -> it.recycle()
             }
             it.isVisible = false
             enhancedOverlay.setImageBitmap(null)
@@ -1063,7 +1104,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
                 // Enhancement Logic for Stream Sources
                 if (allowEnhancement && realCuganEnabled && pageIndex >= 0 && mangaId != -1L) {
-                     processImageHelper(streamFn = streamFn)
+                    processImageHelper(streamFn = streamFn)
                 }
                 return@apply
             }
@@ -1075,7 +1116,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun SubsamplingScaleImageView.processImageHelper(
         streamFn: (() -> java.io.InputStream)? = null,
-        originalData: Any? = null
+        originalData: Any? = null,
     ) {
         if (isSettingProcessedImage || !realCuganEnabled) {
             updateStatus(if (realCuganEnabled) null else context.stringResource(MR.strings.reader_status_raw))
@@ -1083,12 +1124,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
 
         // Initialize IDs from readerPage if available, otherwise use properties
-        val mId = readerPage?.chapter?.chapter?.manga_id ?: mangaId
+        val mId = readerPage?.chapter?.chapter?.mangaId ?: mangaId
         val cId = readerPage?.chapter?.chapter?.id ?: chapterId
         val pIdx = readerPage?.index ?: pageIndex
 
         if (pIdx < 0 || mId == -1L || cId == -1L) {
-            logcat(LogPriority.DEBUG) { "ReaderPageImageView: Skipping enhancement, invalid IDs (m=$mId, c=$cId, p=$pIdx)" }
+            logcat(LogPriority.DEBUG) {
+                "ReaderPageImageView: Skipping enhancement, invalid IDs (m=$mId, c=$cId, p=$pIdx)"
+            }
             return
         }
 
@@ -1111,7 +1154,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
         val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
         if (cachedFile != null) {
-            logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx found in cache on first check: ${cachedFile.absolutePath}" }
+            logcat(LogPriority.DEBUG) {
+                "ReaderPageImageView: Page $pIdx found in cache on first check: ${cachedFile.absolutePath}"
+            }
             val transformedSource = enhancedImageSourceFactory?.invoke(cachedFile)
             if (transformedSource != null) {
                 setProcessedSource(cachedFile, transformedSource = transformedSource)
@@ -1141,19 +1186,19 @@ open class ReaderPageImageView @JvmOverloads constructor(
             return
         }
 
-        
         if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash, pageVariant)) {
             logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx marked as skipped, showing RAW" }
             updateStatus(context.stringResource(MR.strings.reader_status_raw))
             return
         }
 
-        logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx NOT in cache, starting monitoring (m=$mId, c=$cId, config=$configHash)" }
-        
+        logcat(LogPriority.DEBUG) {
+            "ReaderPageImageView: Page $pIdx NOT in cache, starting monitoring (m=$mId, c=$cId, config=$configHash)"
+        }
+
         // Trigger enhancement if it's not already in progress
         val triggerDataProvider = buildEnhancementDataProvider(streamFn, originalData)
-        
-        
+
         if (triggerDataProvider != null) {
             // A page can have several display variants (Webtoon tall-image segments or
             // split spreads). Only the focused variant is allowed to jump the queue.
@@ -1162,9 +1207,11 @@ open class ReaderPageImageView @JvmOverloads constructor(
             val isFocusedTarget = ImageEnhancer.isFocusedTarget(pIdx, pageVariant)
             val isInitialTargetPage = currentGlobalPageIndex < 0 && pIdx == ImageEnhancer.targetPageIndex
             val canEnqueueNow = currentGlobalPageIndex >= 0 || isInitialTargetPage
-            
+
             if (canEnqueueNow) {
-                logcat(LogPriority.DEBUG) { "ReaderPageImageView: Triggering enhancement for page $pIdx/$pageVariant. focused=$isFocusedTarget (target=${ImageEnhancer.targetPageIndex})" }
+                logcat(LogPriority.DEBUG) {
+                    "ReaderPageImageView: Triggering enhancement for page $pIdx/$pageVariant. focused=$isFocusedTarget (target=${ImageEnhancer.targetPageIndex})"
+                }
 
                 ImageEnhancer.enhanceLazy(
                     context = context.applicationContext,
@@ -1181,7 +1228,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 }
             }
         }
-        
+
         // Simplified polling for the enhanced image in cache
         // Simplified polling for the enhanced image in cache
         startEnhancementPolling(mId, cId, pIdx, configHash, originalData, streamFn)
@@ -1191,12 +1238,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * Start or restart the polling job to monitor enhancement progress and update status.
      */
     private fun startEnhancementPolling(
-        mId: Long, 
-        cId: Long, 
-        pIdx: Int, 
-        configHash: String, 
+        mId: Long,
+        cId: Long,
+        pIdx: Int,
+        configHash: String,
         originalData: Any? = null,
-        streamFn: (() -> java.io.InputStream)? = null
+        streamFn: (() -> java.io.InputStream)? = null,
     ) {
         processingJob?.cancel()
         processingJob = viewScope.launchIO {
@@ -1219,7 +1266,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         }
                         val file = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
                         if (file != null) {
-                            logcat(LogPriority.DEBUG) { "ReaderPageImageView: Page $pIdx/$pageVariant found in cache after cache event: ${file.absolutePath}" }
+                            logcat(LogPriority.DEBUG) {
+                                "ReaderPageImageView: Page $pIdx/$pageVariant found in cache after cache event: ${file.absolutePath}"
+                            }
                             val transformedSource = enhancedImageSourceFactory?.invoke(file)
                             if (transformedSource != null) {
                                 withUIContext {
@@ -1248,13 +1297,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
                             }
                         }
                     }
-                    
+
                     // Check progress status
                     if (ImageEnhancer.isActivelyProcessing(mId, cId, pIdx, pageVariant)) {
                         wasEnhancing = true
                         val rawProgress = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgressPercent()
                         if (rawProgress in 0..100) {
-                            updateStatus(context.stringResource(MR.strings.reader_status_enhancing_progress, rawProgress))
+                            updateStatus(
+                                context.stringResource(MR.strings.reader_status_enhancing_progress, rawProgress),
+                            )
                         } else {
                             val dots = (rawProgress % 3).let { if (it < 0) -it else it } + 1
                             updateStatus(context.stringResource(MR.strings.reader_status_enhancing) + ".".repeat(dots))
@@ -1270,16 +1321,25 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         val current = currentGlobalPageIndex
                         val shouldHeal = pIdx >= current && pIdx <= current + preloadSize
                         if (shouldHeal && !ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash, pageVariant)) {
-                            logcat(LogPriority.WARN) { "ReaderPageImageView: Polling re-enqueue page $pIdx/$pageVariant (cur=$current)" }
+                            logcat(LogPriority.WARN) {
+                                "ReaderPageImageView: Polling re-enqueue page $pIdx/$pageVariant (cur=$current)"
+                            }
                             val isCurrent = ImageEnhancer.isFocusedTarget(pIdx, pageVariant)
-                            enqueueEnhancement(mId, cId, pIdx, highPriority = isCurrent, originalData = originalData, streamFn = streamFn)
+                            enqueueEnhancement(
+                                mId,
+                                cId,
+                                pIdx,
+                                highPriority = isCurrent,
+                                originalData = originalData,
+                                streamFn = streamFn,
+                            )
                         } else {
                             updateStatus(context.stringResource(MR.strings.reader_status_raw))
                             delay(2000)
                             return@launchIO
                         }
                     }
-                    
+
                     val event = withTimeoutOrNull(500) {
                         cacheEvents.receive()
                     }
@@ -1292,6 +1352,51 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 android.util.Log.e("ReaderPageImageView", "Error in polling for page $pIdx", e)
             }
         }
+    }
+
+    private fun prepareStripImageView() {
+        if (pageView is WebtoonStripImageView) return
+        removeView(pageView)
+
+        pageView = WebtoonStripImageView(context)
+        addView(pageView, MATCH_PARENT, WRAP_CONTENT)
+    }
+
+    private fun setStripImage(data: BufferedSource, config: Config) {
+        val view = pageView as? WebtoonStripImageView ?: return
+        view.onReload = { requestStrips(view, data, config, isReload = true) }
+        requestStrips(view, data, config, isReload = false)
+    }
+
+    private fun requestStrips(view: WebtoonStripImageView, data: BufferedSource, config: Config, isReload: Boolean) {
+        // A recycled view is reused for another page, where a request still running for the old one must not land
+        stripRequest?.dispose()
+        stripRequest = ImageRequest.Builder(context)
+            // Peeking leaves the data whole for decoding again after the strips were freed off screen
+            .data(data.peek())
+            .memoryCachePolicy(CachePolicy.DISABLED)
+            .diskCachePolicy(CachePolicy.DISABLED)
+            .target(
+                onSuccess = { result ->
+                    view.setImage(result as ImageDecoder.StripsImage)
+                    if (!isReload) {
+                        view.isVisible = true
+                        onImageLoaded()
+                    }
+                },
+            )
+            .listener(
+                onError = { _, result ->
+                    onImageLoadError(result.throwable)
+                },
+            )
+            .size(ViewSizeResolver(this))
+            .precision(Precision.INEXACT)
+            .cropBorders(config.cropBorders)
+            .webtoonStrips(true)
+            .crossfade(false)
+            .build()
+            .let(context.imageLoader::enqueue)
     }
 
     private fun prepareAnimatedImageView() {
@@ -1398,11 +1503,11 @@ open class ReaderPageImageView @JvmOverloads constructor(
         isSettingProcessedImage = false
         currentLoadedUri = null
         clearProcessedSwapView()
-    } 
+    }
 
     companion object {
         var currentGlobalPageIndex: Int = -1
-        
+
         /**
          * Global semaphore to serialize image decoding.
          * Native HEIF decoders on some devices are not thread-safe and can SIGSEGV if used concurrently.

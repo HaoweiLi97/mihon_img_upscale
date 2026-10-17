@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.download
 
 import com.hippo.unifile.UniFile
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
 import logcat.LogPriority
@@ -27,8 +28,9 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
 
+@Inject
 class CloudSyncService(
-    private val networkHelper: NetworkHelper = Injekt.get(),
+    private val networkHelper: NetworkHelper,
 ) {
     private val uploadClient: OkHttpClient by lazy {
         networkHelper.client.newBuilder()
@@ -214,7 +216,9 @@ class CloudSyncService(
             return when {
                 response.isSuccessful -> true
                 response.code == 404 -> false
-                response.code in AUTH_FAILURE_CODES -> throw IllegalStateException("WebDAV PROPFIND failed: HTTP ${response.code}")
+                response.code in AUTH_FAILURE_CODES -> throw IllegalStateException(
+                    "WebDAV PROPFIND failed: HTTP ${response.code}",
+                )
                 else -> false
             }
         }
@@ -230,7 +234,9 @@ class CloudSyncService(
         networkHelper.client.newCall(request).await().use { response ->
             return when {
                 response.code in MKCOL_SUCCESS_CODES -> MkcolResult.Success
-                response.code in AUTH_FAILURE_CODES -> throw IllegalStateException("WebDAV MKCOL failed: HTTP ${response.code}")
+                response.code in AUTH_FAILURE_CODES -> throw IllegalStateException(
+                    "WebDAV MKCOL failed: HTTP ${response.code}",
+                )
                 else -> MkcolResult.Failure(
                     path = path,
                     code = response.code,

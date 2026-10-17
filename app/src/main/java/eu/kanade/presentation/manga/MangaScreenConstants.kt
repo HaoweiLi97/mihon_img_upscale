@@ -6,11 +6,13 @@ enum class DownloadAction {
     NEXT_10_CHAPTERS,
     NEXT_25_CHAPTERS,
     UNREAD_CHAPTERS,
+    BOOKMARKED_CHAPTERS,
 }
 
 enum class EditCoverAction {
     EDIT,
     DELETE,
+    ADD_TO_LIBRARY,
 }
 
 enum class MangaScreenItem {

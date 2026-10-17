@@ -1,5 +1,6 @@
 package mihon.domain.chapter.interactor
 
+import dev.zacsweers.metro.Inject
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
@@ -13,6 +14,7 @@ import tachiyomi.domain.manga.model.Manga
  * @property downloadPreferences User preferences related to chapter downloads.
  * @property getCategories Interactor for retrieving categories associated with a manga.
  */
+@Inject
 class FilterChaptersForDownload(
     private val getChaptersByMangaId: GetChaptersByMangaId,
     private val downloadPreferences: DownloadPreferences,
@@ -29,13 +31,13 @@ class FilterChaptersForDownload(
     suspend fun await(manga: Manga, newChapters: List<Chapter>): List<Chapter> {
         if (
             newChapters.isEmpty() ||
-            !downloadPreferences.downloadNewChapters().get() ||
+            !downloadPreferences.downloadNewChapters.get() ||
             !manga.shouldDownloadNewChapters()
         ) {
             return emptyList()
         }
 
-        if (!downloadPreferences.downloadNewUnreadChaptersOnly().get()) return newChapters
+        if (!downloadPreferences.downloadNewUnreadChaptersOnly.get()) return newChapters
 
         val readChapterNumbers = getChaptersByMangaId.await(manga.id)
             .asSequence()
@@ -56,8 +58,8 @@ class FilterChaptersForDownload(
         if (!favorite) return false
 
         val categories = getCategories.await(id).map { it.id }.ifEmpty { listOf(DEFAULT_CATEGORY_ID) }
-        val includedCategories = downloadPreferences.downloadNewChapterCategories().get().map { it.toLong() }
-        val excludedCategories = downloadPreferences.downloadNewChapterCategoriesExclude().get().map { it.toLong() }
+        val includedCategories = downloadPreferences.downloadNewChapterCategories.get().map { it.toLong() }
+        val excludedCategories = downloadPreferences.downloadNewChapterCategoriesExclude.get().map { it.toLong() }
 
         return when {
             // Default Download from all categories

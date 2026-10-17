@@ -5,6 +5,8 @@ import android.os.Parcelable
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.animation.DecelerateInterpolator
+import android.widget.Scroller
 import androidx.viewpager.widget.DirectionalViewPager
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
 
@@ -23,6 +25,27 @@ open class Pager(
         // restore its raw currentItem causes rotation to reapply stale spread positions.
         isSaveEnabled = false
         isSaveFromParentEnabled = false
+    }
+
+    private var originalScroller: Scroller? = null
+    private var bookScroller: Scroller? = null
+
+    internal fun setBookTurnTiming(enabled: Boolean) {
+        val field = generateSequence(javaClass as Class<*>?) { it.superclass }
+            .mapNotNull { type -> runCatching { type.getDeclaredField("mScroller") }.getOrNull() }
+            .firstOrNull() ?: return
+        runCatching {
+            field.isAccessible = true
+            if (originalScroller == null) originalScroller = field.get(this) as? Scroller
+            if (enabled && bookScroller == null) {
+                bookScroller = object : Scroller(context, DecelerateInterpolator()) {
+                    override fun startScroll(startX: Int, startY: Int, dx: Int, dy: Int, duration: Int) {
+                        super.startScroll(startX, startY, dx, dy, BOOK_PAGE_TURN_MILLIS)
+                    }
+                }
+            }
+            field.set(this, if (enabled) bookScroller else originalScroller)
+        }
     }
 
     /**

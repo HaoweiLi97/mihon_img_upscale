@@ -1,28 +1,27 @@
 package eu.kanade.tachiyomi.ui.browse
 
 import androidx.compose.animation.graphics.res.animatedVectorResource
-import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
-import cafe.adriel.voyager.core.model.rememberScreenModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
+import dev.zacsweers.metrox.viewmodel.metroViewModel
 import eu.kanade.presentation.components.TabbedScreen
 import eu.kanade.presentation.util.Tab
+import eu.kanade.presentation.util.rememberAnimatedVectorPainter
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsScreenModel
+import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsViewModel
 import eu.kanade.tachiyomi.ui.browse.extension.extensionsTab
 import eu.kanade.tachiyomi.ui.browse.migration.sources.migrateSourceTab
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.browse.source.sourcesTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
-import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
@@ -36,11 +35,12 @@ data object BrowseTab : Tab {
         @Composable
         get() {
             val isSelected = LocalTabNavigator.current.current.key == key
-            val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_browse_enter)
+            val enter = AnimatedImageVector.animatedVectorResource(R.drawable.animated_browse_enter)
+            val exit = AnimatedImageVector.animatedVectorResource(R.drawable.animated_browse_exit)
             return TabOptions(
                 index = 3u,
                 title = stringResource(MR.strings.browse),
-                icon = rememberAnimatedVectorPainter(image, isSelected),
+                icon = rememberAnimatedVectorPainter(enter, exit, isSelected),
             )
         }
 
@@ -59,12 +59,12 @@ data object BrowseTab : Tab {
         val context = LocalContext.current
 
         // Hoisted for extensions tab's search bar
-        val extensionsScreenModel = rememberScreenModel { ExtensionsScreenModel() }
-        val extensionsState by extensionsScreenModel.state.collectAsState()
+        val extensionsViewModel = metroViewModel<ExtensionsViewModel>()
+        val extensionsSearchQuery by extensionsViewModel.searchQuery.collectAsStateWithLifecycle()
 
-        val tabs = persistentListOf(
+        val tabs = listOf(
             sourcesTab(),
-            extensionsTab(extensionsScreenModel),
+            extensionsTab(extensionsViewModel),
             migrateSourceTab(),
         )
 
@@ -74,8 +74,8 @@ data object BrowseTab : Tab {
             titleRes = MR.strings.browse,
             tabs = tabs,
             state = state,
-            searchQuery = extensionsState.searchQuery,
-            onChangeSearchQuery = extensionsScreenModel::search,
+            searchQuery = extensionsSearchQuery,
+            onChangeSearchQuery = extensionsViewModel::search,
         )
         LaunchedEffect(Unit) {
             switchToExtensionTabChannel.receiveAsFlow()

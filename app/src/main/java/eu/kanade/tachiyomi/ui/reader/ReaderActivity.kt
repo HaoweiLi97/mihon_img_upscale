@@ -56,10 +56,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
-import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.google.android.material.transition.platform.MaterialContainerTransform
-import com.hippo.unifile.UniFile
-import eu.kanade.core.util.ifSourcesLoaded
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OrientationSelectDialog
@@ -69,9 +67,9 @@ import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReaderPageIndicator
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
+import eu.kanade.presentation.reader.components.ChapterNavigatorType
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
@@ -86,7 +84,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.spatial.DepthSpatialModel
 import eu.kanade.tachiyomi.ui.reader.spatial.DepthSpatialPipeline
@@ -95,13 +93,18 @@ import eu.kanade.tachiyomi.ui.reader.spatial.SpatialSceneControlsView
 import eu.kanade.tachiyomi.ui.reader.spatial.SpatialSceneView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webgpu.WebGpuViewer
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
-import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.util.system.openInBrowser
+import eu.kanade.tachiyomi.util.system.readerBackgroundColor
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -110,17 +113,15 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
+import mihon.app.di.AppGraph
+import mihon.core.metro.metroGraph
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
-import tachiyomi.core.common.util.system.logcat
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.util.collectAsState
@@ -128,8 +129,11 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
 import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class ReaderActivity : BaseActivity() {
+
+    private val graph: AppGraph by lazy { metroGraph() }
 
     companion object {
         private const val UI_BUSY_COOLDOWN_MS = 1_000L
@@ -143,12 +147,13 @@ class ReaderActivity : BaseActivity() {
         }
     }
 
-    private val readerPreferences = Injekt.get<ReaderPreferences>()
-    private val preferences = Injekt.get<BasePreferences>()
+    @Inject private lateinit var readerPreferences: ReaderPreferences
+
+    @Inject private lateinit var preferences: BasePreferences
 
     lateinit var binding: ReaderActivityBinding
 
-    val viewModel by viewModels<ReaderViewModel>()
+    val viewModel by viewModels<ReaderViewModel> { graph.viewModelFactory }
     private var assistUrl: String? = null
 
     /**
@@ -192,6 +197,7 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is created. Initializes the presenter and configuration.
      */
     override fun onCreate(savedInstanceState: Bundle?) {
+        graph.inject(this)
         registerSecureActivity(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
@@ -237,7 +243,7 @@ class ReaderActivity : BaseActivity() {
         setMenuVisibility(viewModel.state.value.menuVisible)
 
         // Finish when incognito mode is disabled
-        preferences.incognitoMode().changes()
+        preferences.incognitoMode.changes()
             .drop(1)
             .onEach { if (!it) finish() }
             .launchIn(lifecycleScope)
@@ -317,13 +323,14 @@ class ReaderActivity : BaseActivity() {
 
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
         val state by viewModel.state.collectAsState()
-        val showPageNumber by readerPreferences.showPageNumber().collectAsState()
-        val settingsScreenModel = remember {
-            ReaderSettingsScreenModel(
+        val showPageNumber by readerPreferences.showPageNumber.collectAsState()
+        val settingsviewModel = remember {
+            ReaderSettingsViewModel(
                 readerState = viewModel.state,
                 onChangeReadingMode = viewModel::setMangaReadingMode,
                 onChangeOrientation = viewModel::setMangaOrientationType,
                 onChangeDoublePageShift = viewModel::setDoublePageShift,
+                preferences = readerPreferences,
             )
         }
 
@@ -365,16 +372,16 @@ class ReaderActivity : BaseActivity() {
                     onDismissRequest = onDismissRequest,
                     onShowMenus = { setMenuVisibility(true) },
                     onHideMenus = { setMenuVisibility(false) },
-                    screenModel = settingsScreenModel,
+                    viewModel = settingsviewModel,
                 )
             }
             is ReaderViewModel.Dialog.ReadingModeSelect -> {
                 ReadingModeSelectDialog(
                     onDismissRequest = onDismissRequest,
-                    screenModel = settingsScreenModel,
+                    viewModel = settingsviewModel,
                     onChange = { stringRes ->
                         menuToggleToast?.cancel()
-                        if (!readerPreferences.showReadingMode().get()) {
+                        if (!readerPreferences.showReadingMode.get()) {
                             menuToggleToast = toast(stringRes)
                         }
                     },
@@ -383,7 +390,7 @@ class ReaderActivity : BaseActivity() {
             is ReaderViewModel.Dialog.PageLayoutSelect -> {
                 PageLayoutSelectDialog(
                     onDismissRequest = onDismissRequest,
-                    screenModel = settingsScreenModel,
+                    screenModel = settingsviewModel,
                     onChange = { stringRes ->
                         menuToggleToast?.cancel()
                         menuToggleToast = toast(stringRes)
@@ -393,7 +400,7 @@ class ReaderActivity : BaseActivity() {
             is ReaderViewModel.Dialog.OrientationModeSelect -> {
                 OrientationSelectDialog(
                     onDismissRequest = onDismissRequest,
-                    screenModel = settingsScreenModel,
+                    viewModel = settingsviewModel,
                     onChange = { stringRes ->
                         menuToggleToast?.cancel()
                         menuToggleToast = toast(stringRes)
@@ -476,7 +483,7 @@ class ReaderActivity : BaseActivity() {
         uiBusyJob?.cancel()
         Waifu2x.setUiBusy(false)
         viewModel.state.value.viewer?.destroy()
-        
+
         config = null
         menuToggleToast?.cancel()
         readingModeToast?.cancel()
@@ -486,9 +493,7 @@ class ReaderActivity : BaseActivity() {
     override fun onPause() {
         spatialSceneView?.stopMotion()
         persistCurrentPagerPage()
-        lifecycleScope.launchNonCancellable {
-            viewModel.updateHistory()
-        }
+        viewModel.saveHistory()
         super.onPause()
     }
 
@@ -591,11 +596,11 @@ class ReaderActivity : BaseActivity() {
 
     @Composable
     private fun ContentOverlay(state: ReaderViewModel.State) {
-        val flashOnPageChange by readerPreferences.flashOnPageChange().collectAsState()
+        val flashOnPageChange by readerPreferences.flashOnPageChange.collectAsState()
 
-        val colorOverlayEnabled by readerPreferences.colorFilter().collectAsState()
-        val colorOverlay by readerPreferences.colorFilterValue().collectAsState()
-        val colorOverlayMode by readerPreferences.colorFilterMode().collectAsState()
+        val colorOverlayEnabled by readerPreferences.colorFilter.collectAsState()
+        val colorOverlay by readerPreferences.colorFilterValue.collectAsState()
+        val colorOverlayMode by readerPreferences.colorFilterMode.collectAsState()
         val colorOverlayBlendMode = remember(colorOverlayMode) {
             ReaderPreferences.ColorFilterMode.getOrNull(colorOverlayMode)?.second
         }
@@ -613,17 +618,20 @@ class ReaderActivity : BaseActivity() {
 
     @Composable
     fun AppBars(state: ReaderViewModel.State) {
-        if (!ifSourcesLoaded()) {
-            return
-        }
+        val isHttpSource = state.source is HttpSource
 
-        val isHttpSource = viewModel.getSource() is HttpSource
-
-        val cropBorderPaged by readerPreferences.cropBorders().collectAsState()
-        val cropBorderWebtoon by readerPreferences.cropBordersWebtoon().collectAsState()
+        val cropBorderPaged by readerPreferences.cropBorders.collectAsState()
+        val cropBorderWebtoon by readerPreferences.cropBordersWebtoon.collectAsState()
         val imageEnhancementEnabled by readerPreferences.realCuganEnabled().collectAsState()
         val isPagerType = ReadingMode.isPagerType(viewModel.getMangaReadingMode())
         val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
+
+        val verticalNavigatorModes by readerPreferences.verticalNavigator.collectAsState()
+        val verticalNavigator = verticalNavigatorModes.contains(
+            ReadingMode.fromPreference(viewModel.getMangaReadingMode()),
+        )
+        val verticalNavigatorOnLeft by readerPreferences.verticalNavigatorOnLeft.collectAsState()
+        val verticalNavigatorHeight by readerPreferences.verticalNavigatorHeight.collectAsState()
 
         ReaderAppBars(
             visible = state.menuVisible,
@@ -638,7 +646,20 @@ class ReaderActivity : BaseActivity() {
             onOpenInBrowser = ::openChapterInBrowser.takeIf { isHttpSource },
             onShare = ::shareChapter.takeIf { isHttpSource },
 
-            viewer = state.viewer,
+            chapterNavigatorType = if (!verticalNavigator) {
+                if (state.viewer is R2LPagerViewer || (state.viewer as? WebGpuViewer)?.isReversed ?: false) {
+                    ChapterNavigatorType.HORIZONTAL_RTL
+                } else {
+                    ChapterNavigatorType.HORIZONTAL_LTR
+                }
+            } else {
+                if (verticalNavigatorOnLeft) {
+                    ChapterNavigatorType.VERTICAL_LEFT
+                } else {
+                    ChapterNavigatorType.VERTICAL_RIGHT
+                }
+            },
+            verticalNavigatorHeight = verticalNavigatorHeight / 100f,
             onNextChapter = ::loadNextChapter,
             enabledNext = state.viewerChapters?.nextChapter != null,
             onPreviousChapter = ::loadPreviousChapter,
@@ -648,6 +669,9 @@ class ReaderActivity : BaseActivity() {
             onPageIndexChange = {
                 isScrollingThroughPages = true
                 moveToPageIndex(it)
+            },
+            onPageIndexChangeFinished = {
+                isScrollingThroughPages = false
             },
 
             readingMode = ReadingMode.fromPreference(
@@ -690,7 +714,7 @@ class ReaderActivity : BaseActivity() {
         viewModel.showMenus(visible)
         if (visible) {
             windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
-        } else if (readerPreferences.fullscreen().get()) {
+        } else if (readerPreferences.fullscreen.get()) {
             windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
         }
     }
@@ -717,10 +741,10 @@ class ReaderActivity : BaseActivity() {
             binding.viewerContainer.removeAllViews()
         }
         viewModel.onViewerLoaded(newViewer)
-        updateViewerInset(readerPreferences.fullscreen().get(), readerPreferences.drawUnderCutout().get())
+        updateViewerInset(readerPreferences.fullscreen.get(), readerPreferences.drawUnderCutout.get())
         binding.viewerContainer.addView(newViewer.getView())
 
-        if (readerPreferences.showReadingMode().get()) {
+        if (readerPreferences.showReadingMode.get()) {
             showReadingModeToast(viewModel.getMangaReadingMode())
         }
 
@@ -760,7 +784,7 @@ class ReaderActivity : BaseActivity() {
     private fun shareChapter() {
         assistUrl?.let {
             val intent = it.toUri().toShareIntent(this, type = "text/plain")
-            startActivity(Intent.createChooser(intent, stringResource(MR.strings.action_share)))
+            startActivity(intent)
         }
     }
 
@@ -783,7 +807,7 @@ class ReaderActivity : BaseActivity() {
         binding.readerContainer.removeView(loadingIndicator)
         viewModel.state.value.viewer?.setChapters(viewerChapters)
 
-        lifecycleScope.launchIO {
+        lifecycleScope.launch(Dispatchers.IO) {
             viewModel.getChapterUrl()?.let { url ->
                 assistUrl = url
             }
@@ -894,132 +918,132 @@ class ReaderActivity : BaseActivity() {
                         spatialModelCompiling = true
                     }
                 ) {
-                is DepthSpatialPipeline.Result.Ready -> {
-                    val scene = runCatching {
-                        withContext(Dispatchers.IO) { SpatialDepthSceneIO.read(result.file) }
-                    }.getOrElse { error ->
-                        spatialSceneBusy = false
-                        spatialScenePageKey = null
-                        menuToggleToast = toast(
-                            stringResource(MR.strings.reader_spatial_scene_failed, error.message.orEmpty()),
-                        )
-                        return@launch
-                    }
-                    if (spatialScenePageKey != (page.chapter.chapter.id to page.index)) return@launch
-                    val sceneView = SpatialSceneView(this@ReaderActivity).apply {
-                        showScene(scene)
-                        setMotionSensitivity(spatialMotionSensitivity)
-                        setDepthStrength(spatialDepthStrength)
-                        setRotationAngles(
-                            spatialRotationAngleX,
-                            spatialRotationAngleY,
-                            spatialRotationAngleZ,
-                        )
-                        setOnClickListener { toggleMenu() }
-                    }
-                    val sceneContainer = FrameLayout(this@ReaderActivity).apply {
-                        addView(sceneView, MATCH_PARENT, MATCH_PARENT)
-                    }
-                    val controls = SpatialSceneControlsView(this@ReaderActivity).apply {
-                        configure(
-                            sensitivity = spatialMotionSensitivity,
-                            depthStrength = spatialDepthStrength,
-                            rotationAngleX = spatialRotationAngleX,
-                            rotationAngleY = spatialRotationAngleY,
-                            rotationAngleZ = spatialRotationAngleZ,
-                            anchorText = stringResource(MR.strings.reader_spatial_rotation_anchor),
-                            anchorPickText = stringResource(MR.strings.reader_spatial_rotation_anchor_pick),
-                            sensitivityText = { value ->
-                                stringResource(
-                                    MR.strings.reader_spatial_gyro_sensitivity,
-                                    String.format(Locale.getDefault(), "%.1f", value),
-                                )
-                            },
-                            depthText = { value ->
-                                stringResource(
-                                    MR.strings.reader_spatial_depth_strength,
-                                    String.format(Locale.getDefault(), "%.1f", value),
-                                )
-                            },
-                            rotationText = { axis, value ->
-                                stringResource(
-                                    MR.strings.reader_spatial_rotation_angle,
-                                    axis,
-                                    String.format(Locale.getDefault(), "%.1f", value),
-                                )
-                            },
-                            rotationButtonText = stringResource(MR.strings.reader_spatial_rotation_angles),
-                            rotationResetText = stringResource(MR.strings.reader_spatial_rotation_reset),
-                            gyroResetText = stringResource(MR.strings.reader_spatial_gyro_reset),
-                            onAnchorRequested = {
-                                sceneView.beginRotationAnchorSelection {
-                                    completeAnchorSelection()
-                                    menuToggleToast?.cancel()
-                                    menuToggleToast = toast(MR.strings.reader_spatial_rotation_anchor_set)
-                                }
-                            },
-                            onGyroscopeReset = {
-                                sceneView.resetGyroscope()
-                                menuToggleToast?.cancel()
-                                menuToggleToast = toast(MR.strings.reader_spatial_gyro_reset_done)
-                            },
-                            onSensitivityChanged = { sensitivity ->
-                                spatialMotionSensitivity = sensitivity
-                                sceneView.setMotionSensitivity(sensitivity)
-                            },
-                            onDepthStrengthChanged = { strength ->
-                                spatialDepthStrength = strength
-                                sceneView.setDepthStrength(strength)
-                            },
-                            onRotationAnglesChanged = { xDegrees, yDegrees, zDegrees ->
-                                spatialRotationAngleX = xDegrees
-                                spatialRotationAngleY = yDegrees
-                                spatialRotationAngleZ = zDegrees
-                                sceneView.setRotationAngles(xDegrees, yDegrees, zDegrees)
-                            },
-                        )
-                    }
-                    val controlMargin = (16 * resources.displayMetrics.density + 0.5f).toInt()
-                    binding.root.addView(
-                        controls,
-                        FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.END or Gravity.BOTTOM).apply {
-                            marginEnd = controlMargin
-                            bottomMargin = controlMargin
-                        },
-                    )
-                    ViewCompat.setOnApplyWindowInsetsListener(controls) { view, insets ->
-                        val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-                        (view.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
-                            params.marginEnd = controlMargin + systemBars.right
-                            params.bottomMargin = controlMargin + systemBars.bottom
-                            view.layoutParams = params
+                    is DepthSpatialPipeline.Result.Ready -> {
+                        val scene = runCatching {
+                            withContext(Dispatchers.IO) { SpatialDepthSceneIO.read(result.file) }
+                        }.getOrElse { error ->
+                            spatialSceneBusy = false
+                            spatialScenePageKey = null
+                            menuToggleToast = toast(
+                                stringResource(MR.strings.reader_spatial_scene_failed, error.message.orEmpty()),
+                            )
+                            return@launch
                         }
-                        insets
+                        if (spatialScenePageKey != (page.chapter.chapter.id to page.index)) return@launch
+                        val sceneView = SpatialSceneView(this@ReaderActivity).apply {
+                            showScene(scene)
+                            setMotionSensitivity(spatialMotionSensitivity)
+                            setDepthStrength(spatialDepthStrength)
+                            setRotationAngles(
+                                spatialRotationAngleX,
+                                spatialRotationAngleY,
+                                spatialRotationAngleZ,
+                            )
+                            setOnClickListener { toggleMenu() }
+                        }
+                        val sceneContainer = FrameLayout(this@ReaderActivity).apply {
+                            addView(sceneView, MATCH_PARENT, MATCH_PARENT)
+                        }
+                        val controls = SpatialSceneControlsView(this@ReaderActivity).apply {
+                            configure(
+                                sensitivity = spatialMotionSensitivity,
+                                depthStrength = spatialDepthStrength,
+                                rotationAngleX = spatialRotationAngleX,
+                                rotationAngleY = spatialRotationAngleY,
+                                rotationAngleZ = spatialRotationAngleZ,
+                                anchorText = stringResource(MR.strings.reader_spatial_rotation_anchor),
+                                anchorPickText = stringResource(MR.strings.reader_spatial_rotation_anchor_pick),
+                                sensitivityText = { value ->
+                                    stringResource(
+                                        MR.strings.reader_spatial_gyro_sensitivity,
+                                        String.format(Locale.getDefault(), "%.1f", value),
+                                    )
+                                },
+                                depthText = { value ->
+                                    stringResource(
+                                        MR.strings.reader_spatial_depth_strength,
+                                        String.format(Locale.getDefault(), "%.1f", value),
+                                    )
+                                },
+                                rotationText = { axis, value ->
+                                    stringResource(
+                                        MR.strings.reader_spatial_rotation_angle,
+                                        axis,
+                                        String.format(Locale.getDefault(), "%.1f", value),
+                                    )
+                                },
+                                rotationButtonText = stringResource(MR.strings.reader_spatial_rotation_angles),
+                                rotationResetText = stringResource(MR.strings.reader_spatial_rotation_reset),
+                                gyroResetText = stringResource(MR.strings.reader_spatial_gyro_reset),
+                                onAnchorRequested = {
+                                    sceneView.beginRotationAnchorSelection {
+                                        completeAnchorSelection()
+                                        menuToggleToast?.cancel()
+                                        menuToggleToast = toast(MR.strings.reader_spatial_rotation_anchor_set)
+                                    }
+                                },
+                                onGyroscopeReset = {
+                                    sceneView.resetGyroscope()
+                                    menuToggleToast?.cancel()
+                                    menuToggleToast = toast(MR.strings.reader_spatial_gyro_reset_done)
+                                },
+                                onSensitivityChanged = { sensitivity ->
+                                    spatialMotionSensitivity = sensitivity
+                                    sceneView.setMotionSensitivity(sensitivity)
+                                },
+                                onDepthStrengthChanged = { strength ->
+                                    spatialDepthStrength = strength
+                                    sceneView.setDepthStrength(strength)
+                                },
+                                onRotationAnglesChanged = { xDegrees, yDegrees, zDegrees ->
+                                    spatialRotationAngleX = xDegrees
+                                    spatialRotationAngleY = yDegrees
+                                    spatialRotationAngleZ = zDegrees
+                                    sceneView.setRotationAngles(xDegrees, yDegrees, zDegrees)
+                                },
+                            )
+                        }
+                        val controlMargin = (16 * resources.displayMetrics.density + 0.5f).toInt()
+                        binding.root.addView(
+                            controls,
+                            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.END or Gravity.BOTTOM).apply {
+                                marginEnd = controlMargin
+                                bottomMargin = controlMargin
+                            },
+                        )
+                        ViewCompat.setOnApplyWindowInsetsListener(controls) { view, insets ->
+                            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                            (view.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+                                params.marginEnd = controlMargin + systemBars.right
+                                params.bottomMargin = controlMargin + systemBars.bottom
+                                view.layoutParams = params
+                            }
+                            insets
+                        }
+                        binding.viewerContainer.addView(sceneContainer, MATCH_PARENT, MATCH_PARENT)
+                        sceneView.startMotion()
+                        spatialSceneView = sceneView
+                        spatialSceneContainer = sceneContainer
+                        spatialSceneControls = controls
+                        spatialSceneActive = true
                     }
-                    binding.viewerContainer.addView(sceneContainer, MATCH_PARENT, MATCH_PARENT)
-                    sceneView.startMotion()
-                    spatialSceneView = sceneView
-                    spatialSceneContainer = sceneContainer
-                    spatialSceneControls = controls
-                    spatialSceneActive = true
-                }
-                DepthSpatialPipeline.Result.ModelMissing -> {
-                    showSpatialModelDownloadDialog = true
-                    spatialScenePageKey = null
-                }
-                DepthSpatialPipeline.Result.RuntimeUnavailable -> {
-                    menuToggleToast = toast(MR.strings.reader_spatial_scene_runtime_unavailable)
-                    spatialScenePageKey = null
-                }
-                is DepthSpatialPipeline.Result.Failed -> {
-                    menuToggleToast = toast(
-                        stringResource(
-                            MR.strings.reader_spatial_scene_failed,
-                            result.cause.message.orEmpty(),
-                        ),
-                    )
-                    spatialScenePageKey = null
-                }
+                    DepthSpatialPipeline.Result.ModelMissing -> {
+                        showSpatialModelDownloadDialog = true
+                        spatialScenePageKey = null
+                    }
+                    DepthSpatialPipeline.Result.RuntimeUnavailable -> {
+                        menuToggleToast = toast(MR.strings.reader_spatial_scene_runtime_unavailable)
+                        spatialScenePageKey = null
+                    }
+                    is DepthSpatialPipeline.Result.Failed -> {
+                        menuToggleToast = toast(
+                            stringResource(
+                                MR.strings.reader_spatial_scene_failed,
+                                result.cause.message.orEmpty(),
+                            ),
+                        )
+                        spatialScenePageKey = null
+                    }
                 }
             } finally {
                 spatialModelCompiling = false
@@ -1112,7 +1136,7 @@ class ReaderActivity : BaseActivity() {
      * the viewer is reaching the beginning or end of a chapter or the transition page is active.
      */
     fun requestPreloadChapter(chapter: ReaderChapter) {
-        lifecycleScope.launchIO { viewModel.preload(chapter) }
+        lifecycleScope.launch(Dispatchers.IO) { viewModel.preload(chapter) }
     }
 
     /**
@@ -1153,7 +1177,7 @@ class ReaderActivity : BaseActivity() {
             context = applicationContext,
             message = stringResource(MR.strings.share_page_info, manga.title, chapter.name, page.number),
         )
-        startActivity(Intent.createChooser(intent, stringResource(MR.strings.action_share)))
+        startActivity(intent)
     }
 
     private fun onCopyImageResult(uri: Uri) {
@@ -1259,40 +1283,27 @@ class ReaderActivity : BaseActivity() {
             }
         }
 
-        private val grayBackgroundColor = Color.rgb(0x20, 0x21, 0x25)
-
         /*
          * Initializes the reader subscriptions.
          */
         init {
-            readerPreferences.readerTheme().changes()
+            readerPreferences.readerTheme.changes()
                 .onEach { theme ->
-                    binding.readerContainer.setBackgroundColor(
-                        when (theme) {
-                            0 -> Color.WHITE
-                            2 -> grayBackgroundColor
-                            3 -> automaticBackgroundColor()
-                            else -> Color.BLACK
-                        },
-                    )
+                    binding.readerContainer.setBackgroundColor(baseContext.readerBackgroundColor(theme))
                 }
                 .launchIn(lifecycleScope)
 
-            preferences.displayProfile().changes()
-                .onEach { setDisplayProfile(it) }
-                .launchIn(lifecycleScope)
-
-            readerPreferences.keepScreenOn().changes()
+            readerPreferences.keepScreenOn.changes()
                 .onEach(::setKeepScreenOn)
                 .launchIn(lifecycleScope)
 
-            readerPreferences.customBrightness().changes()
+            readerPreferences.customBrightness.changes()
                 .onEach(::setCustomBrightness)
                 .launchIn(lifecycleScope)
 
             combine(
-                readerPreferences.grayscale().changes(),
-                readerPreferences.invertedColors().changes(),
+                readerPreferences.grayscale.changes(),
+                readerPreferences.invertedColors.changes(),
             ) { grayscale, invertedColors -> grayscale to invertedColors }
                 .onEach { (grayscale, invertedColors) ->
                     setLayerPaint(grayscale, invertedColors)
@@ -1300,43 +1311,13 @@ class ReaderActivity : BaseActivity() {
                 .launchIn(lifecycleScope)
 
             combine(
-                readerPreferences.fullscreen().changes(),
-                readerPreferences.drawUnderCutout().changes(),
+                readerPreferences.fullscreen.changes(),
+                readerPreferences.drawUnderCutout.changes(),
             ) { fullscreen, drawUnderCutout -> fullscreen to drawUnderCutout }
                 .onEach { (fullscreen, drawUnderCutout) ->
                     updateViewerInset(fullscreen, drawUnderCutout)
                 }
                 .launchIn(lifecycleScope)
-        }
-
-        /**
-         * Picks background color for [ReaderActivity] based on light/dark theme preference
-         */
-        private fun automaticBackgroundColor(): Int {
-            return if (baseContext.isNightMode()) {
-                grayBackgroundColor
-            } else {
-                Color.WHITE
-            }
-        }
-
-        /**
-         * Sets the display profile to [path].
-         */
-        private fun setDisplayProfile(path: String) {
-            val file = UniFile.fromUri(baseContext, path.toUri())
-            if (file != null && file.exists()) {
-                val inputStream = file.openInputStream()
-                val outputStream = ByteArrayOutputStream()
-                inputStream.use { input ->
-                    outputStream.use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                val data = outputStream.toByteArray()
-                SubsamplingScaleImageView.setDisplayProfile(data)
-                TachiyomiImageDecoder.displayProfile = data
-            }
         }
 
         /**
@@ -1355,8 +1336,8 @@ class ReaderActivity : BaseActivity() {
          */
         private fun setCustomBrightness(enabled: Boolean) {
             if (enabled) {
-                readerPreferences.customBrightnessValue().changes()
-                    .sample(100)
+                readerPreferences.customBrightnessValue.changes()
+                    .sample(0.1.seconds)
                     .onEach(::setCustomBrightnessValue)
                     .launchIn(lifecycleScope)
             } else {

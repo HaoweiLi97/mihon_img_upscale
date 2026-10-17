@@ -14,8 +14,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import tachiyomi.decoder.ImageDecoder
 import java.io.File
+import eu.kanade.tachiyomi.util.image.EnhancementImageDecoder as ImageDecoder
 
 @RunWith(AndroidJUnit4::class)
 class ImageEnhancementCacheTest {
@@ -40,7 +40,7 @@ class ImageEnhancementCacheTest {
         val snapshot = ImageEnhancementCache.readCachedImage(file)
         assertNotNull(snapshot)
         assertTrue(file.delete())
-        val decoder = ImageDecoder.newInstance(snapshot!!.inputStream(), false, null)
+        val decoder = ImageDecoder.open(snapshot!!.inputStream())
         assertNotNull("Reader native decoder must accept the snapshot", decoder)
         try {
             val bitmap = decoder!!.decode(sampleSize = 1)

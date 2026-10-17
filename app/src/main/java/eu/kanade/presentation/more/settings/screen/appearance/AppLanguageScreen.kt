@@ -6,8 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -25,13 +23,13 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.util.system.LocaleHelper
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.toImmutableList
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Check
 import org.xmlpull.v1.XmlPullParser
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.R
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -73,29 +71,28 @@ class AppLanguageScreen : Screen() {
                         modifier = Modifier.clickable {
                             currentLanguage = it.langTag
                         },
-                        headlineContent = { Text(it.displayName) },
-                        supportingContent = {
-                            it.localizedDisplayName?.let {
-                                Text(it)
-                            }
-                        },
                         trailingContent = {
                             if (currentLanguage == it.langTag) {
                                 Icon(
-                                    imageVector = Icons.Default.Check,
+                                    imageVector = MaterialSymbols.Rounded.Check,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
                         },
+                        supportingContent = {
+                            it.localizedDisplayName?.let {
+                                Text(it)
+                            }
+                        },
+                        content = { Text(it.displayName) },
                     )
                 }
             }
         }
     }
 
-    private fun getLangs(context: Context): ImmutableList<Language> {
-        val langs = mutableListOf<Language>()
+    private fun getLangs(context: Context): List<Language> = buildList {
         val parser = context.resources.getXml(R.xml.locales_config)
         var eventType = parser.eventType
         while (eventType != XmlPullParser.END_DOCUMENT) {
@@ -105,7 +102,7 @@ class AppLanguageScreen : Screen() {
                         val langTag = parser.getAttributeValue(i)
                         val displayName = LocaleHelper.getLocalizedDisplayName(langTag)
                         if (displayName.isNotEmpty()) {
-                            langs.add(Language(langTag, displayName, LocaleHelper.getDisplayName(langTag)))
+                            add(Language(langTag, displayName, LocaleHelper.getDisplayName(langTag)))
                         }
                     }
                 }
@@ -113,10 +110,8 @@ class AppLanguageScreen : Screen() {
             eventType = parser.next()
         }
 
-        langs.sortBy { it.displayName }
-        langs.add(0, Language("", context.stringResource(MR.strings.label_default), null))
-
-        return langs.toImmutableList()
+        sortBy { it.displayName }
+        add(0, Language("", context.stringResource(MR.strings.label_default), null))
     }
 
     private data class Language(

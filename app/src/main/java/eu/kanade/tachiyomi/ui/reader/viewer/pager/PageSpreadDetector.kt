@@ -82,10 +82,14 @@ internal object PageSpreadDetector {
         } else {
             Bitmap.createScaledBitmap(bitmap, width, height, true)
         }
-        return PageSpreadScorer.Image(width, height, IntArray(width * height).also {
-            scaled.getPixels(it, 0, width, 0, 0, width, height)
-            if (scaled !== bitmap) scaled.recycle()
-        })
+        return PageSpreadScorer.Image(
+            width,
+            height,
+            IntArray(width * height).also {
+                scaled.getPixels(it, 0, width, 0, 0, width, height)
+                if (scaled !== bitmap) scaled.recycle()
+            },
+        )
     }
 
     private const val MAX_DECODE_SIZE = 1024

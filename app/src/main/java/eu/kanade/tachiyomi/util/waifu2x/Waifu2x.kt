@@ -1,3 +1,5 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
 package eu.kanade.tachiyomi.util.waifu2x
 
 import android.content.Context
@@ -28,11 +30,17 @@ object Waifu2x {
     private const val QNN_CONTEXT_CACHE_VERSION = "18"
 
     @Volatile private var isInitialized = false
+
     @Volatile private var isRealCuganInitialized = false
+
     @Volatile private var isRealEsrganInitialized = false
+
     @Volatile private var isNoseInitialized = false
+
     @Volatile private var isWaifu2xInitialized = false
+
     @Volatile private var isAnime4kInitialized = false
+
     @Volatile private var isW2xExInitialized = false
 
     init {
@@ -96,6 +104,7 @@ object Waifu2x {
         val fp16Arithmetic: Boolean,
         val processingBackend: Int,
     )
+
     @Volatile private var lastRealCuganConfig: RealCuganConfig? = null
 
     fun initRealCugan(
@@ -140,7 +149,10 @@ object Waifu2x {
 
             // Force reinit only if model parameters changed (not tileSleepMs)
             if (lastRealCuganConfig != currentConfig) {
-                android.util.Log.d("Waifu2x", "Config changed from $lastRealCuganConfig to $currentConfig, reinitializing...")
+                android.util.Log.d(
+                    "Waifu2x",
+                    "Config changed from $lastRealCuganConfig to $currentConfig, reinitializing...",
+                )
                 isRealCuganInitialized = false
             }
 
@@ -205,7 +217,13 @@ object Waifu2x {
     }
 
     // Track Real-ESRGAN config
-    private data class RealEsrganConfig(val style: Int, val scale: Int, val precision: Int, val fp16Arithmetic: Boolean, val processingBackend: Int)
+    private data class RealEsrganConfig(
+        val style: Int,
+        val scale: Int,
+        val precision: Int,
+        val fp16Arithmetic: Boolean,
+        val processingBackend: Int,
+    )
     private var lastRealEsrganConfig: RealEsrganConfig? = null
 
     fun initRealESRGAN(
@@ -225,7 +243,10 @@ object Waifu2x {
         val config = RealEsrganConfig(style, outputScale, resolvedPrecision, fp16Arithmetic, resolvedBackend)
         // Force reinit if config changed
         if (lastRealEsrganConfig != config) {
-            android.util.Log.d("Waifu2x", "Real-ESRGAN config changed from $lastRealEsrganConfig to $config, reinitializing...")
+            android.util.Log.d(
+                "Waifu2x",
+                "Real-ESRGAN config changed from $lastRealEsrganConfig to $config, reinitializing...",
+            )
             isRealEsrganInitialized = false
         }
 
@@ -285,7 +306,12 @@ object Waifu2x {
             isW2xExInitialized = false
 
             val variant = if (isPhotoStyle) "general-x4v3" else "animevideov3"
-            android.util.Log.d("Waifu2x", "Initialized Real-ESRGAN $variant: outputScale=$outputScale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}, backend=${backendName(config.processingBackend)}")
+            android.util.Log.d(
+                "Waifu2x",
+                "Initialized Real-ESRGAN $variant: outputScale=$outputScale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}, backend=${backendName(
+                    config.processingBackend,
+                )}",
+            )
         }
         isRealEsrganInitialized
     }
@@ -293,7 +319,9 @@ object Waifu2x {
     private data class GenericModelConfig(val precision: Int, val fp16Arithmetic: Boolean)
     private var lastNoseConfig: GenericModelConfig? = null
 
-    fun initNose(context: Context, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(this) {
+    fun initNose(context: Context, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(
+        this,
+    ) {
         val config = GenericModelConfig(precision.coerceIn(0, 3), fp16Arithmetic)
         if (lastNoseConfig != config) {
             isNoseInitialized = false
@@ -321,7 +349,10 @@ object Waifu2x {
             isAnime4kInitialized = false
             isW2xExInitialized = false
 
-            android.util.Log.d("Waifu2x", "Initialized Nose model, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}")
+            android.util.Log.d(
+                "Waifu2x",
+                "Initialized Nose model, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${config.precision}",
+            )
         }
         isNoseInitialized
     }
@@ -330,12 +361,17 @@ object Waifu2x {
     private data class Waifu2xConfig(val noise: Int, val scale: Int, val precision: Int, val fp16Arithmetic: Boolean)
     private var lastWaifu2xConfig: Waifu2xConfig? = null
 
-    fun initWaifu2x(context: Context, noise: Int, scale: Int, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(this) {
+    fun initWaifu2x(context: Context, noise: Int, scale: Int, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(
+        this,
+    ) {
         val newConfig = Waifu2xConfig(noise, scale, precision.coerceIn(0, 3), fp16Arithmetic)
 
         // Force reinit if config changed
         if (lastWaifu2xConfig != newConfig) {
-            android.util.Log.d("Waifu2x", "Waifu2x config changed from $lastWaifu2xConfig to $newConfig, reinitializing...")
+            android.util.Log.d(
+                "Waifu2x",
+                "Waifu2x config changed from $lastWaifu2xConfig to $newConfig, reinitializing...",
+            )
             isWaifu2xInitialized = false
         }
 
@@ -360,17 +396,25 @@ object Waifu2x {
             isAnime4kInitialized = false
             isW2xExInitialized = false
 
-            android.util.Log.d("Waifu2x", "Initialized Waifu2x: noise=$noise, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${newConfig.precision}")
+            android.util.Log.d(
+                "Waifu2x",
+                "Initialized Waifu2x: noise=$noise, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${newConfig.precision}",
+            )
         }
         isWaifu2xInitialized
     }
 
-    fun initWaifu2xUpconv7(context: Context, noise: Int, scale: Int, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(this) {
+    fun initWaifu2xUpconv7(context: Context, noise: Int, scale: Int, tileSleepMs: Int = 0, tileSize: Int = 128, precision: Int = 0, fp16Arithmetic: Boolean = false): Boolean = synchronized(
+        this,
+    ) {
         val newConfig = Waifu2xConfig(noise, scale, precision.coerceIn(0, 3), fp16Arithmetic)
 
         // Force reinit if config changed
         if (lastWaifu2xConfig != newConfig) {
-            android.util.Log.d("Waifu2x", "Waifu2x UpConv7 config changed from $lastWaifu2xConfig to $newConfig, reinitializing...")
+            android.util.Log.d(
+                "Waifu2x",
+                "Waifu2x UpConv7 config changed from $lastWaifu2xConfig to $newConfig, reinitializing...",
+            )
             isWaifu2xInitialized = false
         }
 
@@ -382,7 +426,8 @@ object Waifu2x {
         val modelDir = extractModelsToCache(context, "waifu2x-models-upconv7")
         if (modelDir == null) return false
 
-        isWaifu2xInitialized = nativeInitWaifu2xUpconv7(modelDir, noise, scale, newConfig.precision, newConfig.fp16Arithmetic)
+        isWaifu2xInitialized =
+            nativeInitWaifu2xUpconv7(modelDir, noise, scale, newConfig.precision, newConfig.fp16Arithmetic)
         if (isWaifu2xInitialized) {
             lastWaifu2xConfig = newConfig
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
@@ -395,7 +440,10 @@ object Waifu2x {
             isAnime4kInitialized = false
             isW2xExInitialized = false
 
-            android.util.Log.d("Waifu2x", "Initialized Waifu2x UpConv7: noise=$noise, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${newConfig.precision}")
+            android.util.Log.d(
+                "Waifu2x",
+                "Initialized Waifu2x UpConv7: noise=$noise, scale=$scale, tileSleepMs=$tileSleepMs, tileSize=$tileSize, precision=${newConfig.precision}",
+            )
         }
         isWaifu2xInitialized
     }
@@ -502,7 +550,9 @@ object Waifu2x {
 
             android.util.Log.d(
                 "Waifu2x",
-                "Initialized generic ncnn model: $modelStem, scale=$effectiveScale, precision=${config.precision}, backend=${backendName(config.processingBackend)}",
+                "Initialized generic ncnn model: $modelStem, scale=$effectiveScale, precision=${config.precision}, backend=${backendName(
+                    config.processingBackend,
+                )}",
             )
         }
         isW2xExInitialized
@@ -623,7 +673,11 @@ object Waifu2x {
      * Release native resources.
      */
     fun destroy() {
-        if (isInitialized || isRealCuganInitialized || isRealEsrganInitialized || isNoseInitialized || isWaifu2xInitialized || isAnime4kInitialized || isW2xExInitialized) {
+        if (isInitialized || isRealCuganInitialized || isRealEsrganInitialized || isNoseInitialized ||
+            isWaifu2xInitialized ||
+            isAnime4kInitialized ||
+            isW2xExInitialized
+        ) {
             nativeDestroy()
             isInitialized = false
             isRealCuganInitialized = false
@@ -668,12 +722,12 @@ object Waifu2x {
         isAnime4kInitialized = nativeInitAnime4K(shaders.toTypedArray(), names.toTypedArray())
         // Invalidate all other models
         if (isAnime4kInitialized) {
-             isInitialized = false
-             isRealCuganInitialized = false
-             isRealEsrganInitialized = false
-             isNoseInitialized = false
-             isWaifu2xInitialized = false
-             isW2xExInitialized = false
+            isInitialized = false
+            isRealCuganInitialized = false
+            isRealEsrganInitialized = false
+            isNoseInitialized = false
+            isWaifu2xInitialized = false
+            isW2xExInitialized = false
         }
         return isAnime4kInitialized
     }
@@ -703,7 +757,6 @@ object Waifu2x {
             // so we SHOULD NOT recycle it here if it's the result.
         }
     }
-
 
     private fun extractModelsToCache(context: Context, assetPath: String): String? {
         return try {
@@ -989,8 +1042,20 @@ object Waifu2x {
     }
 
     // Native methods
-    private external fun nativeInit(modelDir: String, noiseLevel: Int, scale: Int, precision: Int, fp16Arithmetic: Boolean): Boolean
-    private external fun nativeInitWaifu2xUpconv7(modelDir: String, noiseLevel: Int, scale: Int, precision: Int, fp16Arithmetic: Boolean): Boolean
+    private external fun nativeInit(
+        modelDir: String,
+        noiseLevel: Int,
+        scale: Int,
+        precision: Int,
+        fp16Arithmetic: Boolean,
+    ): Boolean
+    private external fun nativeInitWaifu2xUpconv7(
+        modelDir: String,
+        noiseLevel: Int,
+        scale: Int,
+        precision: Int,
+        fp16Arithmetic: Boolean,
+    ): Boolean
     private external fun nativeInitW2xEx(
         modelDir: String,
         modelStem: String,
@@ -1017,7 +1082,9 @@ object Waifu2x {
     private external fun nativeUpdatePerformanceConfig(tileSleepMs: Int, tileSize: Int)
 
     fun updatePerformance(tileSleepMs: Int, tileSize: Int) {
-        if (isRealCuganInitialized || isRealEsrganInitialized || isNoseInitialized || isWaifu2xInitialized || isW2xExInitialized) {
+        if (isRealCuganInitialized || isRealEsrganInitialized || isNoseInitialized || isWaifu2xInitialized ||
+            isW2xExInitialized
+        ) {
             nativeUpdatePerformanceConfig(tileSleepMs, tileSize)
         }
     }

@@ -1,24 +1,31 @@
 package tachiyomi.domain.manga.model
 
+import android.annotation.SuppressLint
 import androidx.compose.runtime.Immutable
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import mihon.core.common.extensions.EMPTY
 import tachiyomi.core.common.preference.TriState
-import java.io.Serializable
-import java.time.Instant
+import java.io.ObjectStreamException
+import kotlin.time.Instant
+import java.io.Serializable as JavaSerializable
 
+@SuppressLint("UnsafeOptInUsageError")
+@Serializable
 @Immutable
 data class Manga(
     val id: Long,
     val source: Long,
-    val favorite: Boolean,
-    val lastUpdate: Long,
-    val nextUpdate: Long,
+    val lastUpdate: Instant?,
+    val nextUpdate: Instant?,
     val fetchInterval: Int,
-    val dateAdded: Long,
+    val favoriteAt: Instant?,
     val viewerFlags: Long,
     val chapterFlags: Long,
-    val coverLastModified: Long,
+    val coverLastModified: Instant?,
     val url: String,
     val title: String,
     val artist: String?,
@@ -29,16 +36,15 @@ data class Manga(
     val thumbnailUrl: String?,
     val updateStrategy: UpdateStrategy,
     val initialized: Boolean,
-    val lastModifiedAt: Long,
-    val favoriteModifiedAt: Long?,
-    val version: Long,
     val notes: String,
-) : Serializable {
+    val memo: JsonObject,
+) : JavaSerializable {
+
+    val favorite: Boolean
+        get() = favoriteAt != null
 
     val expectedNextUpdate: Instant?
-        get() = nextUpdate
-            .takeIf { status != SManga.COMPLETED.toLong() }
-            ?.let { Instant.ofEpochMilli(it) }
+        get() = nextUpdate?.takeIf { status != SManga.COMPLETED.toLong() }
 
     val sorting: Long
         get() = chapterFlags and CHAPTER_SORTING_MASK
@@ -103,19 +109,23 @@ data class Manga(
         const val CHAPTER_DISPLAY_NUMBER = 0x00100000L
         const val CHAPTER_DISPLAY_MASK = 0x00100000L
 
+        /**
+         * [favoriteAt] of an entry added to the library before the time it was added was recorded.
+         */
+        val UNKNOWN_FAVORITE_AT = Instant.fromEpochMilliseconds(0)
+
         fun create() = Manga(
             id = -1L,
             url = "",
             title = "",
             source = -1L,
-            favorite = false,
-            lastUpdate = 0L,
-            nextUpdate = 0L,
+            lastUpdate = null,
+            nextUpdate = null,
             fetchInterval = 0,
-            dateAdded = 0L,
+            favoriteAt = null,
             viewerFlags = 0L,
             chapterFlags = 0L,
-            coverLastModified = 0L,
+            coverLastModified = null,
             artist = null,
             author = null,
             description = null,
@@ -124,10 +134,21 @@ data class Manga(
             thumbnailUrl = null,
             updateStrategy = UpdateStrategy.ALWAYS_UPDATE,
             initialized = false,
-            lastModifiedAt = 0L,
-            favoriteModifiedAt = null,
-            version = 0L,
             notes = "",
+            memo = JsonObject.EMPTY,
         )
+    }
+
+    @Throws(ObjectStreamException::class)
+    private fun writeReplace(): Any {
+        return JavaToKotlinXSerializable(Json.encodeToString<Manga>(this))
+    }
+
+    class JavaToKotlinXSerializable(private val data: String) : JavaSerializable {
+
+        @Throws(ObjectStreamException::class)
+        private fun readResolve(): Any {
+            return Json.decodeFromString<Manga>(data)
+        }
     }
 }

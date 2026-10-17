@@ -1,11 +1,5 @@
 package eu.kanade.presentation.browse.components
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.ViewModule
-import androidx.compose.material.icons.outlined.Checklist
-import androidx.compose.material.icons.outlined.FlipToBack
-import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -22,6 +16,12 @@ import eu.kanade.presentation.components.SearchToolbar
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.Source
 import kotlinx.collections.immutable.persistentListOf
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.automirroredroundedfilled.ViewList
+import mihon.icons.materialsymbols.rounded.FlipToBack
+import mihon.icons.materialsymbols.rounded.SelectAll
+import mihon.icons.materialsymbols.roundedfilled.ViewCompact
+import mihon.icons.materialsymbols.roundedfilled.ViewModule
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -62,12 +62,12 @@ fun BrowseSourceToolbar(
                     actions = persistentListOf(
                         AppBar.Action(
                             title = stringResource(MR.strings.action_select_all),
-                            icon = Icons.Outlined.SelectAll,
+                            icon = MaterialSymbols.Rounded.SelectAll,
                             onClick = onSelectAll,
                         ),
                         AppBar.Action(
                             title = stringResource(MR.strings.action_select_inverse),
-                            icon = Icons.Outlined.FlipToBack,
+                            icon = MaterialSymbols.Rounded.FlipToBack,
                             onClick = onInvertSelection,
                         ),
                     ),
@@ -89,12 +89,25 @@ fun BrowseSourceToolbar(
         onClickCloseSearch = navigateUp,
         actions = {
             AppBarActions(
-                actions = persistentListOf<AppBar.AppBarAction>().builder()
-                    .apply {
+                actions = buildList {
+                    add(
+                        AppBar.Action(
+                            title = stringResource(MR.strings.action_display_mode),
+                            icon = when (displayMode) {
+                                LibraryDisplayMode.List -> MaterialSymbols.AutoMirroredRoundedFilled.ViewList
+                                LibraryDisplayMode.ComfortableGrid -> MaterialSymbols.RoundedFilled.ViewModule
+                                LibraryDisplayMode.CompactGrid,
+                                LibraryDisplayMode.CoverOnlyGrid,
+                                -> MaterialSymbols.RoundedFilled.ViewCompact
+                            },
+                            onClick = { selectingDisplayMode = true },
+                        ),
+                    )
+                    if (isLocalSource) {
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select),
-                                icon = Icons.Outlined.Checklist,
+                                icon = MaterialSymbols.Rounded.SelectAll,
                                 onClick = onEnterSelectionMode,
                             ),
                         )
@@ -102,38 +115,23 @@ fun BrowseSourceToolbar(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_display_mode),
                                 icon = if (displayMode == LibraryDisplayMode.List) {
-                                    Icons.AutoMirrored.Filled.ViewList
+                                    MaterialSymbols.AutoMirroredRoundedFilled.ViewList
                                 } else {
-                                    Icons.Filled.ViewModule
+                                    MaterialSymbols.RoundedFilled.ViewModule
                                 },
                                 onClick = { selectingDisplayMode = true },
                             ),
                         )
-                        if (isLocalSource) {
-                            add(
-                                AppBar.OverflowAction(
-                                    title = stringResource(MR.strings.label_help),
-                                    onClick = onHelpClick,
-                                ),
-                            )
-                        } else {
-                            add(
-                                AppBar.OverflowAction(
-                                    title = stringResource(MR.strings.action_open_in_web_view),
-                                    onClick = onWebViewClick,
-                                ),
-                            )
-                        }
-                        if (isConfigurableSource) {
-                            add(
-                                AppBar.OverflowAction(
-                                    title = stringResource(MR.strings.action_settings),
-                                    onClick = onSettingsClick,
-                                ),
-                            )
-                        }
                     }
-                    .build(),
+                    if (isConfigurableSource) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_settings),
+                                onClick = onSettingsClick,
+                            ),
+                        )
+                    }
+                },
             )
 
             DropdownMenu(

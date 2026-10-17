@@ -1,10 +1,10 @@
 package eu.kanade.presentation.reader
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.PreviewLightDark
@@ -24,18 +25,17 @@ import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.reader.components.ModeSelectionDialog
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.SettingsItemsPaddings
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import androidx.compose.ui.Alignment
 
 @Composable
 fun PageLayoutSelectDialog(
     onDismissRequest: () -> Unit,
-    screenModel: ReaderSettingsScreenModel,
+    screenModel: ReaderSettingsViewModel,
     onChange: (StringResource) -> Unit,
 ) {
     val pageLayout by screenModel.preferences.pageLayout().collectAsState()

@@ -1,12 +1,11 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
-import android.content.res.Resources
 import android.view.LayoutInflater
-import android.widget.LinearLayout
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updateMargins
@@ -20,16 +19,17 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import okio.Buffer
 import okio.BufferedSource
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.ImageUtil
@@ -141,9 +141,8 @@ class WebtoonPageHolder(
                 bottomMargin = 15.dpToPx
             }
 
-            val margin = Resources.getSystem().displayMetrics.widthPixels * (viewer.config.sidePadding / 100f)
-            marginEnd = margin.toInt()
-            marginStart = margin.toInt()
+            marginEnd = viewer.recycler.sidePaddingPixels
+            marginStart = viewer.recycler.sidePaddingPixels
         }
     }
 
@@ -174,7 +173,7 @@ class WebtoonPageHolder(
         val page = page ?: return
         val loader = page.chapter.pageLoader ?: return
         supervisorScope {
-            launchIO {
+            launch(Dispatchers.IO) {
                 loader.loadPage(page)
             }
             page.statusFlow.collectLatest { state ->
@@ -241,7 +240,7 @@ class WebtoonPageHolder(
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
-            withUIContext {
+            withContext(Dispatchers.Main) {
                 setError(e)
             }
         }
@@ -273,7 +272,7 @@ class WebtoonPageHolder(
         // The loader cannot know that Webtoon will split this source, so it may already have
         // queued a full-page request. Segment variants are the only results displayed here;
         // cancel the redundant full-page work as soon as splitting is confirmed.
-        val mangaId = page.chapter.chapter.manga_id
+        val mangaId = page.chapter.chapter.mangaId
         val chapterId = page.chapter.chapter.id
         if (mangaId != null && chapterId != null) {
             ImageEnhancer.cancel(mangaId, chapterId, page.index, page.enhancementKeySuffix)

@@ -5,15 +5,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.vector.ImageVector
 import eu.kanade.tachiyomi.data.track.Tracker
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.ImmutableMap
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.core.common.preference.Preference as PreferenceData
 
 sealed class Preference {
     abstract val title: String
-    abstract val enabled: Boolean
+    abstract val visible: Boolean
 
     sealed class PreferenceItem<T, R> : Preference() {
         abstract val subtitle: String?
@@ -26,7 +24,8 @@ sealed class Preference {
         data class TextPreference(
             override val title: String,
             override val subtitle: String? = null,
-            override val enabled: Boolean = true,
+            override val visible: Boolean = true,
+            val widget: @Composable (() -> Unit)? = null,
             val onClick: (() -> Unit)? = null,
         ) : PreferenceItem<String, Unit>() {
             override val icon: ImageVector? = null
@@ -40,7 +39,7 @@ sealed class Preference {
             val preference: PreferenceData<Boolean>,
             override val title: String,
             override val subtitle: String? = null,
-            override val enabled: Boolean = true,
+            override val visible: Boolean = true,
             override val onValueChanged: suspend (value: Boolean) -> Boolean = { true },
         ) : PreferenceItem<Boolean, Boolean>() {
             override val icon: ImageVector? = null
@@ -50,15 +49,15 @@ sealed class Preference {
          * A [PreferenceItem] that provides a slider to select an integer number.
          */
         data class SliderPreference(
-            val value: Int,
+            val preference: PreferenceData<Int>,
             override val title: String,
             override val subtitle: String? = null,
-            val valueString: String? = null,
+            val valueText: @Composable (Int) -> String = { it.toString() },
             val valueRange: IntProgression = 0..1,
-            @IntRange(from = 0) val steps: Int = with(valueRange) { (last - first) - 1 },
-            override val enabled: Boolean = true,
-            override val onValueChanged: suspend (value: Int) -> Unit = {},
-        ) : PreferenceItem<Int, Unit>() {
+            @IntRange(from = 0) val steps: Int = with(valueRange) { ((last - first) / step) - 1 },
+            override val visible: Boolean = true,
+            override val onValueChanged: suspend (value: Int) -> Boolean = { true },
+        ) : PreferenceItem<Int, Boolean>() {
             override val icon: ImageVector? = null
         }
 
@@ -68,21 +67,21 @@ sealed class Preference {
         @Suppress("UNCHECKED_CAST")
         data class ListPreference<T>(
             val preference: PreferenceData<T>,
-            val entries: ImmutableMap<T, String>,
+            val entries: Map<T, String>,
             override val title: String,
             override val subtitle: String? = "%s",
-            val subtitleProvider: @Composable (value: T, entries: ImmutableMap<T, String>) -> String? =
+            val subtitleProvider: @Composable (value: T, entries: Map<T, String>) -> String? =
                 { v, e -> subtitle?.format(e[v]) },
             override val icon: ImageVector? = null,
-            override val enabled: Boolean = true,
+            override val visible: Boolean = true,
             override val onValueChanged: suspend (value: T) -> Boolean = { true },
         ) : PreferenceItem<T, Boolean>() {
             internal fun internalSet(value: Any) = preference.set(value as T)
             internal suspend fun internalOnValueChanged(value: Any) = onValueChanged(value as T)
 
             @Composable
-            internal fun internalSubtitleProvider(value: Any?, entries: ImmutableMap<out Any?, String>) =
-                subtitleProvider(value as T, entries as ImmutableMap<T, String>)
+            internal fun internalSubtitleProvider(value: Any?, entries: Map<out Any?, String>) =
+                subtitleProvider(value as T, entries as Map<T, String>)
         }
 
         /**
@@ -90,13 +89,13 @@ sealed class Preference {
          */
         data class BasicListPreference(
             val value: String,
-            val entries: ImmutableMap<String, String>,
+            val entries: Map<String, String>,
             override val title: String,
             override val subtitle: String? = "%s",
-            val subtitleProvider: @Composable (value: String, entries: ImmutableMap<String, String>) -> String? =
+            val subtitleProvider: @Composable (value: String, entries: Map<String, String>) -> String? =
                 { v, e -> subtitle?.format(e[v]) },
             override val icon: ImageVector? = null,
-            override val enabled: Boolean = true,
+            override val visible: Boolean = true,
             override val onValueChanged: suspend (value: String) -> Unit = {},
         ) : PreferenceItem<String, Unit>()
 
@@ -104,12 +103,13 @@ sealed class Preference {
          * A [PreferenceItem] that displays a list of entries as a dialog.
          * Multiple entries can be selected at the same time.
          */
-        data class MultiSelectListPreference(
-            val preference: PreferenceData<Set<String>>,
-            val entries: ImmutableMap<String, String>,
+        @Suppress("UNCHECKED_CAST")
+        data class MultiSelectListPreference<T>(
+            val preference: PreferenceData<Set<T>>,
+            val entries: Map<T, String>,
             override val title: String,
             override val subtitle: String? = "%s",
-            val subtitleProvider: @Composable (value: Set<String>, entries: ImmutableMap<String, String>) -> String? =
+            val subtitleProvider: @Composable (value: Set<T>, entries: Map<T, String>) -> String? =
                 { v, e ->
                     val combined = remember(v, e) {
                         v.mapNotNull { e[it] }
@@ -120,9 +120,16 @@ sealed class Preference {
                     subtitle?.format(combined)
                 },
             override val icon: ImageVector? = null,
-            override val enabled: Boolean = true,
-            override val onValueChanged: suspend (value: Set<String>) -> Boolean = { true },
-        ) : PreferenceItem<Set<String>, Boolean>()
+            override val visible: Boolean = true,
+            override val onValueChanged: suspend (value: Set<T>) -> Boolean = { true },
+        ) : PreferenceItem<Set<T>, Boolean>() {
+            internal fun internalSet(value: Set<Any?>) = preference.set(value as Set<T>)
+            internal suspend fun internalOnValueChanged(value: Set<Any?>) = onValueChanged(value as Set<T>)
+
+            @Composable
+            internal fun internalSubtitleProvider(value: Set<Any?>, entries: Map<out Any?, String>) =
+                subtitleProvider(value as Set<T>, entries as Map<T, String>)
+        }
 
         /**
          * A [PreferenceItem] that shows a EditText in the dialog.
@@ -131,7 +138,7 @@ sealed class Preference {
             val preference: PreferenceData<String>,
             override val title: String,
             override val subtitle: String? = "%s",
-            override val enabled: Boolean = true,
+            override val visible: Boolean = true,
             override val onValueChanged: suspend (value: String) -> Boolean = { true },
         ) : PreferenceItem<String, Boolean>() {
             override val icon: ImageVector? = null
@@ -146,7 +153,7 @@ sealed class Preference {
             val logout: () -> Unit,
         ) : PreferenceItem<String, Unit>() {
             override val title: String = ""
-            override val enabled: Boolean = true
+            override val visible: Boolean = true
             override val subtitle: String? = null
             override val icon: ImageVector? = null
             override val onValueChanged: suspend (value: String) -> Unit = {}
@@ -155,7 +162,7 @@ sealed class Preference {
         data class InfoPreference(
             override val title: String,
         ) : PreferenceItem<String, Unit>() {
-            override val enabled: Boolean = true
+            override val visible: Boolean = true
             override val subtitle: String? = null
             override val icon: ImageVector? = null
             override val onValueChanged: suspend (value: String) -> Unit = {}
@@ -165,7 +172,7 @@ sealed class Preference {
             override val title: String,
             val content: @Composable () -> Unit,
         ) : PreferenceItem<Unit, Unit>() {
-            override val enabled: Boolean = true
+            override val visible: Boolean = true
             override val subtitle: String? = null
             override val icon: ImageVector? = null
             override val onValueChanged: suspend (value: Unit) -> Unit = {}
@@ -174,8 +181,8 @@ sealed class Preference {
 
     data class PreferenceGroup(
         override val title: String,
-        override val enabled: Boolean = true,
+        override val visible: Boolean = true,
 
-        val preferenceItems: ImmutableList<PreferenceItem<out Any, out Any>>,
+        val preferenceItems: List<PreferenceItem<out Any, out Any>>,
     ) : Preference()
 }

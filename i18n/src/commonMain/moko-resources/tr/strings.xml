@@ -97,9 +97,7 @@
     <string name="ext_untrusted">Güvenilmeyen</string>
     <string name="ext_uninstall">Kaldır</string>
     <string name="untrusted_extension">Güvenilmeyen uzantı</string>
-    <string name="untrusted_extension_message">Kötü niyetli uzantılar, oturum açma bilgilerini okuyabilir veya güvenilmeyen kodlar çalıştırabilir.
-\n
-\nBu uzantıya güvenerek bu riskleri kabul etmiş olursunuz.</string>
+    <string name="untrusted_extension_message">Kötü niyetli uzantılar, oturum açma bilgilerini okuyabilir veya güvenilmeyen kodlar çalıştırabilir. \n \nBu uzantıya güvenerek bu riskleri kabul etmiş olursunuz.</string>
     <string name="pref_fullscreen">Tam ekran</string>
     <string name="pref_page_transitions">Sayfa geçişlerini animasyonla yap</string>
     <string name="pref_double_tap_anim_speed">Çift dokunma animasyon hızı</string>
@@ -195,8 +193,7 @@
     <string name="manga_added_library">Kitaplığa eklendi</string>
     <string name="manga_removed_library">Kitaplıktan kaldırıldı</string>
     <string name="delete_downloads_for_manga">İndirilen bölümler silinsin mi?</string>
-    <string name="copied_to_clipboard">Panoya kopyalandı:
-\n%1$s</string>
+    <string name="copied_to_clipboard">Panoya kopyalandı: \n%1$s</string>
     <string name="source_not_installed">Kaynak yüklenmedi: %1$s</string>
     <string name="display_mode_chapter">Bölüm %1$s</string>
     <string name="chapter_downloading_progress">İndiriliyor (%1$d/%2$d)</string>
@@ -245,9 +242,6 @@
     <string name="file_select_backup">Yedek dosyasını seç</string>
     <string name="update_check_confirm">İndir</string>
     <string name="update_check_no_new_updates">Yeni güncelleme yok</string>
-    <string name="update_check_notification_download_in_progress">İndiriliyor…</string>
-    <string name="update_check_notification_download_complete">Güncellemeyi yüklemek için dokunun</string>
-    <string name="update_check_notification_download_error">İndirme hatası</string>
     <string name="update_check_notification_update_available">Yeni sürüm var!</string>
     <string name="information_no_downloads">İndirme yok</string>
     <string name="information_no_recent">Yeni güncelleme yok</string>
@@ -285,8 +279,8 @@
     <string name="action_webview_forward">İleri</string>
     <string name="action_webview_refresh">Yenile</string>
     <string name="pref_category_library">Kitaplık</string>
-    <string name="ext_obsolete">Geçersiz</string>
-    <string name="obsolete_extension_message">Bu uzantı artık kullanılamıyor. Düzgün çalışmayabilir ve uygulamada sorunlara neden olabilir. Kaldırılması önerilir.</string>
+    <string name="ext_obsolete">Kullanılamıyor</string>
+    <string name="obsolete_extension_message">Bu uzantı herhangi bir mağazaya bağlı değil. Yeni güncellemeler almayacak, beklendiği gibi çalışmayabilir ve uygulama içerisinde sorunlara sebep olabilir. Kaldırmanız önerilir.</string>
     <string name="pref_date_format">Tarih biçimi</string>
     <string name="pref_category_library_update">Genel güncelleme</string>
     <string name="logout_title">%1$s \'den çıkılsın mı?</string>
@@ -393,7 +387,6 @@
     <string name="tapping_inverted_horizontal">Yatay</string>
     <string name="unknown_status">Bilinmeyen durum</string>
     <string name="unknown_author">Bilinmeyen yazar</string>
-    <string name="updated_version">v%1$s sürümüne güncellendi</string>
     <string name="whats_new">Yenilikler</string>
     <string name="download_insufficient_space">Depolama alanı az olduğu için bölümler indirilemedi</string>
     <string name="action_sort_date_added">Eklendiği tarih</string>
@@ -407,9 +400,6 @@
     <string name="backup_restore_missing_trackers">Giriş yapılmamış izleyiciler:</string>
     <string name="pref_remove_bookmarked_chapters">Yer imi eklenmiş bölümleri silmeye izin ver</string>
     <string name="pref_category_delete_chapters">Bölümleri sil</string>
-    <string name="ext_nsfw_warning">Bu uzantıdaki kaynaklar yetişkin içerik (18+) içerebilir</string>
-    <string name="ext_nsfw_short">18+</string>
-    <string name="parental_controls_info">Bu, resmî olmayan veya yanlış işaretlenmiş uzantıların uygulama içinde yetişkin içeriği (18+) göstermesini engellemez.</string>
     <string name="no_chapters_error">Bölüm bulunamadı</string>
     <string name="chapter_settings_updated">Varsayılan bölüm ayarları güncellendi</string>
     <string name="set_chapter_settings_as_default">Varsayılan olarak ayarla</string>
@@ -428,8 +418,6 @@
     <string name="spen_next_page">Sonraki sayfa</string>
     <string name="spen_previous_page">Önceki sayfa</string>
     <string name="migration_help_guide">Kaynak taşıma kılavuzu</string>
-    <string name="pref_category_nsfw_content">Yetişkin içerik (18+) kaynakları</string>
-    <string name="pref_show_nsfw_source">Kaynaklar ve uzantılar listelerinde göster</string>
     <string name="file_picker_error">Dosya seçme uygulaması bulunamadı</string>
     <string name="myanimelist_relogin">Lütfen MAL\'a tekrar giriş yapın</string>
     <string name="pref_viewer_nav">Dokunma bölgeleri</string>
@@ -544,7 +532,6 @@
     <string name="download_queue_size_warning">Uyarı: Büyük toplu indirmeler kaynakların yavaşlamasına ve/veya %s\'u engellemesine neden olabilir. Daha fazla bilgi için dokunun.</string>
     <string name="update_72hour">3 günde bir</string>
     <string name="ext_update_all">Tümünü güncelle</string>
-    <string name="channel_app_updates">Uygulama güncellemeleri</string>
     <string name="pref_auto_clear_chapter_cache">Uygulama başlatıldığında bölüm önbelleğini temizle</string>
     <string name="clear_database_source_item_count">Veri tabanında %1$d kitaplık dışı girdi</string>
     <string name="database_clean">Temizlenecek bir şey yok</string>
@@ -564,7 +551,6 @@
     <string name="skipped_reason_not_started">Hiçbir bölüm okunmadığı için atlandı</string>
     <string name="pref_navigate_pan">Geniş görselleri kaydır</string>
     <string name="pref_landscape_zoom">Geniş görsellere otomatik yakınlaştır</string>
-    <string name="notification_update_error">%1$d güncelleme başarısız oldu</string>
     <string name="learn_more">Daha fazla bilgi için dokunun</string>
     <string name="rotation_reverse_portrait">Ters portre</string>
     <string name="action_move_to_top_all_for_series">Seriyi en üste taşı</string>
@@ -589,7 +575,6 @@
     <string name="empty_screen">Peki, bu garip</string>
     <string name="ext_info_version">Sürüm</string>
     <string name="ext_info_language">Dil</string>
-    <string name="ext_info_age_rating">Yaş derecelendirmesi</string>
     <string name="wish_list">İstek Listesi</string>
     <string name="on_hold_list">Beklemede Listesi</string>
     <string name="unfinished_list">Bitirilmemiş Listesi</string>
@@ -643,8 +628,7 @@
     <string name="download_notifier_cache_renewal">İndirilenler kontrol ediliyor</string>
     <string name="action_open_random_manga">Rastgele girdi aç</string>
     <string name="information_no_entries_found">Bu kategoride girdi bulunamadı</string>
-    <string name="fdroid_warning">F-Droid derlemeleri desteklenmemektedir.
-\nDaha fazla bilgi için dokunun.</string>
+    <string name="fdroid_warning">F-Droid derlemeleri desteklenmemektedir. \nDaha fazla bilgi için dokunun.</string>
     <string name="action_display_show_continue_reading_button">Okumaya devam et butonu</string>
     <string name="track_remove_date_conf_title">Tarih kaldırılsın mı?</string>
     <string name="track_remove_start_date_conf_text">Bu, daha önce seçtiğiniz başlangıç tarihini şuradan kaldıracak: %s</string>
@@ -705,7 +689,7 @@
     <string name="has_results">Sonuç var</string>
     <string name="delete_downloaded">İndirilenleri sil</string>
     <string name="create_backup_file_error">Yedekleme dosyası oluşturulamadı</string>
-    <string name="download_cache_invalidated">İndirilenler dizini geçersiz kılındı</string>
+    <string name="download_cache_invalidated">İndirme dizini tekrar oluşturuluyor</string>
     <string name="information_cloudflare_help">Cloudflare ile ilgili yardım için buraya dokunun</string>
     <string name="exception_unknown_host">%s verisine erişilemedi</string>
     <string name="track_activity_name">İzleyici girişi</string>
@@ -751,11 +735,7 @@
     <string name="onboarding_action_next">Sonraki</string>
     <string name="onboarding_description">Hadi bazı şeyleri ayarlayalım. Bunları daha sonra ayarlardan da değiştirebilirsiniz.</string>
     <string name="no_location_set">Depolama konumu ayarlanmadı</string>
-    <string name="onboarding_storage_info">%1$s\'un bölüm indirmelerini, yedeklemeleri ve daha fazlasını kaydedeceği bir klasör seçin.
-\n
-\nYalnızca buna ait bir klasör tavsiye edilir.
-\n
-\nSeçilen klasör: %2$s</string>
+    <string name="onboarding_storage_info">%1$s\'un bölüm indirmelerini, yedeklemeleri ve daha fazlasını kaydedeceği bir klasör seçin. \n \nYalnızca buna ait bir klasör tavsiye edilir. \n \nSeçilen klasör: %2$s</string>
     <string name="onboarding_permission_notifications">Bildirim izni</string>
     <string name="onboarding_permission_install_apps">Uygulama yükleme izni</string>
     <string name="onboarding_permission_ignore_battery_opts_description">Uzun süren kitaplık güncellemelerinin, indirmelerin, yedeklemelerin ve geri yüklemelerinin kesintiye uğramasını önleyin.</string>
@@ -768,19 +748,10 @@
     <string name="private_settings">Hassas ayarları dahil et (örn. izleyici oturum açma bilgileri)</string>
     <string name="manga_interval_expected_update">Sonraki bölümlerin %1$s içinde yayınlanacağı tahmin ediliyor, her %2$s içinde bir kontrol ediliyor.</string>
     <string name="invalid_backup_file_error">Tüm hata:</string>
-    <string name="information_empty_repos">Hiç depo ayarlamadınız.</string>
     <string name="onboarding_storage_help_action">Depolama kılavuzu</string>
-    <string name="action_add_repo">Depo ekle</string>
-    <string name="label_add_repo_input">Depo bağlantısı</string>
-    <string name="action_add_repo_message">%s\'a ek depolar ekleyin. Bu, \"index.min.json\" ile biten bir bağlantı olmalıdır.</string>
-    <string name="error_repo_exists">Bu depo zaten var!</string>
-    <string name="action_delete_repo">Depoyu sil</string>
-    <string name="invalid_repo_name">Geçersiz depo bağlantısı</string>
-    <string name="delete_repo_confirmation">\"%s\" deposunu silmek istiyor musunuz?</string>
     <string name="manga_interval_custom_amount">Özel güncelleme sıklığı:</string>
     <string name="onboarding_storage_help_info">Eski bir sürümden güncelleme yapıyorsunuz ve neyi seçeceğinizden emin değil misiniz? Daha fazla bilgi için depolama kılavuzuna bakın.</string>
     <string name="pref_library_update_smart_update">Akıllı güncelleme</string>
-    <string name="label_extension_repos">Uzantı depoları</string>
     <string name="theme_nord">Nord</string>
     <string name="ext_revoke_trust">Güvenilmiş bilinmeyen uzantıları geri al</string>
     <string name="manga_interval_expected_update_soon">Yakında</string>
@@ -794,16 +765,11 @@
     <string name="pref_flash_duration_summary">%1$s ms</string>
     <string name="pref_flash_page_interval">Işık çakma aralığı</string>
     <string name="pref_display_profile">Özel görünüm profili</string>
-    <string name="action_replace_repo_message">%1$s deposunun İmzalama Anahtarı Parmak İzi %2$s deposuyla aynı.
-\nEğer böyle olması gerekiyorsa %2$s ile değiştirilecek. Aksi takdirde depo yöneticinize ulaşın.</string>
     <string name="pref_webtoon_disable_zoom_out">Uzaklaştırmayı devre dışı bırak</string>
     <string name="invalid_backup_file_json">JSON yedekleri desteklenmiyor</string>
     <string name="invalid_backup_file_unknown">Yedek dosyası bozuk</string>
     <string name="manga_interval_expected_update_null">Bu manga ya tamamlanmış ya da tahmin edilen yayımlanma tarihi yok.</string>
     <string name="action_add_anyway">Yine de ekle</string>
-    <string name="action_replace_repo">Değiştir</string>
-    <string name="action_replace_repo_title">İmzalama Anahtarı Parmak İzi Zaten Var</string>
-    <string name="extensionRepo_settings">Eklenti depoları</string>
     <string name="file_picker_uri_permission_unsupported">Stabil klasör erişimi sağlanamadı. Uygulama belirsiz çalışabilir.</string>
     <string name="label_upcoming">Takvim</string>
     <string name="action_view_upcoming">Gelecek Güncellemeleri Görüntüle</string>
@@ -811,7 +777,6 @@
     <string name="upcoming_calendar_next">Gelecek Ay</string>
     <string name="upcoming_calendar_prev">Önceki Ay</string>
     <string name="pref_download_new_unread_chapters_only">Yinelenen okunmuş bölümlerin indirilmesini atla</string>
-    <string name="add_repo_confirmation">\"%s\" deposunu eklemek istiyor musunuz?</string>
     <string name="confirm_tracker_update">İzleyicileri %d. bölüme güncelle?</string>
     <string name="onboarding_permission_crashlytics">Çökme kayıtlarını gönder</string>
     <string name="pref_security">Güvenlik</string>
@@ -822,16 +787,12 @@
     <string name="pref_firebase">Kullanım İstatistikleri ve Çökme Kayıtları</string>
     <string name="action_sort_random">Rastgele</string>
     <string name="ext_remove">Kaldır</string>
-    <string name="remove_private_extension_message">\"%s\" eklentisini kaldırmak istediğinize emin misiniz?</string>
-    <string name="ext_confirm_remove">Eklentiyi Kaldır?</string>
+    <string name="remove_private_extension_message">\"%s\" uzantısını kaldırmak istediğinize emin misiniz?</string>
+    <string name="ext_confirm_remove">Uzantıyı Kaldır?</string>
     <string name="non_library_settings">Tüm okunmuş girdiler</string>
     <string name="pref_auto_update_manga_on_mark_read">Okundu olarak işaretlendiğinde ilerlemeyi güncelle</string>
     <string name="trackers_updated_summary">İzleyiciler %d. bölüme güncellendi</string>
-    <string name="pref_hardware_bitmap_threshold">Özel bitmap donanım sınırı</string>
-    <string name="pref_hardware_bitmap_threshold_default">Varsayılan (%d)</string>
-    <string name="pref_hardware_bitmap_threshold_summary">Eğer okuyucu boş bir görsel yüklerse bu sınırı kademeli olarak azaltın.\nSeçili: %s</string>
-    <string name="pref_always_decode_long_strip_with_ssiv_summary">Performansı etkiler. Yalnızca bitmap sınırını düşürmek boş görsel sorunlarını çözmediğinde kullanın</string>
-    <string name="pref_incognito_mode_extension_summary">Eklenti için okuma geçmişini duraklat</string>
+    <string name="pref_incognito_mode_extension_summary">Uzantı için okuma geçmişini duraklat</string>
     <string name="label_auto">Otomatik</string>
     <string name="theme_monochrome">Monokrom</string>
     <string name="tracked_privately">Gizli olarak izlendi</string>
@@ -842,7 +803,6 @@
     <string name="library_list">Kitaplık Listesi</string>
     <string name="export">Dışa Aktar</string>
     <string name="action_toggle_private_off">Herkese açık olarak izle</string>
-    <string name="pref_always_decode_long_strip_with_ssiv_2">Uzun şerit okuyucusu için eski çözümleyiciyi kullan</string>
     <string name="pref_mark_duplicate_read_chapter_read">Yinelenen okunmuş bölümleri okundu olarak işaretle</string>
     <string name="action_display_unread_badge">Okunmamış bölümler</string>
     <string name="pref_behavior">Davranış</string>
@@ -902,11 +862,43 @@
     <string name="migrationListScreen.exitDialog.stopLabel">Durdur</string>
     <string name="pref_hide_missing_chapter_indicators">Eksik bölüm göstergelerini gizle</string>
     <string name="pref_display_images_description">Manga açıklamalarında bulunan görselleri göster</string>
-    <string name="label_donate">Bağış</string>
     <string name="pref_disallow_non_ascii_filenames">ASCII olmayan dosya isimlerine izin verme</string>
     <string name="pref_disallow_non_ascii_filenames_details">Unicode desteklemeyen bazı depolama sistemleri için uyumluluk sağlar. Etkinleştirildiğinde kaynak ve manga klasörlerini manuel olarak yeniden adlandırıp ASCII olmayan karakterleri küçük UTF-8 heksadesimal karşılıklarıyla değiştirmeniz gerekir. Bölüm dosyalarının yeniden adlandırılması gerekli değildir.</string>
     <string name="pref_download_concurrent_pages">Tek seferde indirilen sayfa sayısı</string>
     <string name="pref_download_concurrent_pages_summary">Her kaynak için aynı anda indirilen sayfa sayısı</string>
     <string name="pref_download_concurrent_sources">Tek seferde indirilen kaynak sayısı</string>
     <string name="action_webview_close_tab">Sekmeyi kapat</string>
+    <string name="action_filter_excluded_scanlators">Hariç tutulan Çevirenleri filtrele</string>
+    <string name="download_bookmarked">Yer imli</string>
+    <string name="label_support_us">Bizi Destekleyin</string>
+    <string name="supportUsScreen.perks">Patronlar, özel kanallara ve gelecekte daha fazlasına erişim elde eder.</string>
+    <string name="supportUsScreen.donationPlatform.patreon">Patreon (tercih edilen)</string>
+    <string name="supportUsScreen.donationPlatform.opencollective">OpenCollective</string>
+    <string name="supportUsScreen.currentlySupportedBy">Mihon, şu anda %d+ patron tarafından desteklenmektedir. Her birinize ayrı olarak teşekkür etmek istiyoruz. Hadi Mihon\'u birlikte daha iyi yapalım.</string>
+    <string name="supportUsScreen.contactForDetailsMessage">Başka seçenekler ve sorularınız için Discord sunucumuza katılın.</string>
+    <string name="supportUsScreen.contactPlatform">Discord</string>
+    <string name="donationCampaign.title">Uygulamayı beğendiniz mi?</string>
+    <string name="donationCampaign.paragraph1">Merhaba! Ben, Mihon\'un ana geliştiricisiyim ve geliştirme sürecine maddi olarak destek olmayı düşünmenizi isterim. Yeterli destek olursa Mihon üzerinde tam zamanlı olarak çalışabilirim ve uzun zamandır olan sorunlara ve çok istenen özelliklere odaklanabilirim.</string>
+    <string name="donationCampaign.paragraph2">Patreon (tercih edilen) veya OpenCollective üzerinden bağışta bulunabilirsiniz. Sorularınız varsa veya başka bir yolla destek olmak isterseniz Mihon\'un Discord sunucusu üzerinden bana ulaşmaktan çekinmeyin.</string>
+    <string name="donationCampaign.paragraph3">Ancak ne olursa olsun Mihon, ben ve gönüllü insanlar tarafından geliştirilmeye devam edecek ve açık kaynak kodlu olarak kalacaktır.</string>
+    <string name="donationCampaign.contactPlatform">Discord</string>
+    <string name="donationCampaign.dismiss">Kapat</string>
+    <string name="extensionStores">Uzantı mağazaları</string>
+    <string name="action.addExtensionStore">Uzantı mağazası ekle</string>
+    <string name="extensionStoresScreen.emptyLabel">Henüz uzantı mağazası eklemediniz</string>
+    <string name="extensionStoresScreen.addStore.title">Uzantı mağazası ekle</string>
+    <string name="extensionStoresScreen.addStore.alreadyExists">Bu uzantı mağazası zaten mevcut</string>
+    <string name="extensionStoresScreen.addStore.processing">İşleniyor…</string>
+    <string name="extensionStoresScreen.addStoreInput.inputLabel">Mağaza dizini bağlantısı</string>
+    <string name="extensionStoresScreen.addStoreDeeplink.bodyText">Aşağıdaki uzantı mağazasını eklemek istiyor musunuz?</string>
+    <string name="extensionStoresScreen.deleteStore.title">Uzantı mağazasını kaldır</string>
+    <string name="extensionStoresScreen.deleteStore.body">%1$s (%2$s) uzantı mağazasını kaldırmak istiyor musunuz?</string>
+    <string name="pref_webtoon_vertical_navigator_on_left">Dikey gezinti bölmesini sol tarafa yerleştir</string>
+    <string name="pref_vertical_navigator">Dikey bölüm gezintisi kullan</string>
+    <string name="pref_vertical_navigator_height">Dikey gezinti göstergesi yüksekliği</string>
+    <string name="considering">Düşünülüyor</string>
+    <string name="theme_tokyonight">Tokyo Gecesi</string>
+    <string name="downloading_with_progress">İndiriliyor… (%d%%)</string>
+    <string name="pref_filter_update_categories_details">Hariç tutulan kategorilerdeki güncellemeler, dahil edilen kategorilerde olsalar bile gösterilmeyecektir.</string>
+    <string name="pref_filter_upcoming_categories_details">Hariç tutulan kategorilerdeki girdiler gizlendi. Bu girdiler dahil edilen kategorilerde olsalar bile gösterilmez.</string>
 </resources>

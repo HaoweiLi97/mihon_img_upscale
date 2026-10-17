@@ -37,7 +37,10 @@ class SpatialSceneControlsView(context: Context) : LinearLayout(context) {
         val panelPadding = 12.dp
         setPadding(panelPadding, 8.dp, panelPadding, 4.dp)
         background = roundedBackground(Color.argb(220, 28, 27, 31), 14.dp)
-        addView(sensitivityLabel, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(
+            sensitivityLabel,
+            LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
         addView(sensitivitySlider, LayoutParams(220.dp, 36.dp))
     }
     private val depthLabel = TextView(context).apply {
@@ -92,7 +95,10 @@ class SpatialSceneControlsView(context: Context) : LinearLayout(context) {
         orientation = VERTICAL
         gravity = Gravity.END
         isClickable = false
-        addView(sensitivityPanel, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(
+            sensitivityPanel,
+            LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
         addView(depthPanel, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addView(rotationPanel, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addView(
@@ -210,18 +216,24 @@ class SpatialSceneControlsView(context: Context) : LinearLayout(context) {
             updateRotationUi()
             onRotationAnglesChanged(currentRotationX, currentRotationY, currentRotationZ)
         }
-        rotationXSlider.setOnSeekBarChangeListener(angleListener { value ->
-            currentRotationX = value
-            notifyRotationChanged()
-        })
-        rotationYSlider.setOnSeekBarChangeListener(angleListener { value ->
-            currentRotationY = value
-            notifyRotationChanged()
-        })
-        rotationZSlider.setOnSeekBarChangeListener(angleListener { value ->
-            currentRotationZ = value
-            notifyRotationChanged()
-        })
+        rotationXSlider.setOnSeekBarChangeListener(
+            angleListener { value ->
+                currentRotationX = value
+                notifyRotationChanged()
+            },
+        )
+        rotationYSlider.setOnSeekBarChangeListener(
+            angleListener { value ->
+                currentRotationY = value
+                notifyRotationChanged()
+            },
+        )
+        rotationZSlider.setOnSeekBarChangeListener(
+            angleListener { value ->
+                currentRotationZ = value
+                notifyRotationChanged()
+            },
+        )
         rotationXSlider.progress = angleToProgress(currentRotationX)
         rotationYSlider.progress = angleToProgress(currentRotationY)
         rotationZSlider.progress = angleToProgress(currentRotationZ)

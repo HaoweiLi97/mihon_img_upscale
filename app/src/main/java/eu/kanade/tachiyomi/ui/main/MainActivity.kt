@@ -5,30 +5,40 @@ import android.app.SearchManager
 import android.app.assist.AssistContent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,6 +51,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import androidx.core.animation.doOnEnd
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen
@@ -48,28 +60,30 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.util.Consumer
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import androidx.interpolator.view.animation.LinearOutSlowInInterpolator
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.NavigatorDisposeBehavior
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.components.AppStateBanners
 import eu.kanade.presentation.components.DownloadedOnlyBannerBackgroundColor
 import eu.kanade.presentation.components.IncognitoModeBannerBackgroundColor
 import eu.kanade.presentation.components.IndexingBannerBackgroundColor
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionReposScreen
+import eu.kanade.presentation.more.AppMigratingScreen
+import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.DefaultNavigatorScreenTransition
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
-import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
-import eu.kanade.tachiyomi.data.updater.RELEASE_URL
-import eu.kanade.tachiyomi.extension.api.ExtensionApi
+import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
@@ -78,12 +92,17 @@ import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.more.NewUpdateScreen
 import eu.kanade.tachiyomi.ui.more.OnboardingScreen
+import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.system.isBenchmarkBuildType
 import eu.kanade.tachiyomi.util.system.isNavigationBarNeedsScrim
-import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.updaterEnabled
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
@@ -92,27 +111,51 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.app.di.AppGraph
+import mihon.app.di.appGraph
+import mihon.core.metro.metroGraph
 import mihon.core.migration.Migrator
+import mihon.domain.database.repository.DatabaseRepository
+import mihon.feature.support.SupportUsScreen
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.automirroredrounded.OpenInNew
+import mihon.icons.materialsymbols.roundedfilled.VolunteerActivism
 import tachiyomi.core.common.Constants
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.release.interactor.GetApplicationRelease
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.injectLazy
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
+import kotlin.time.TimeSource
+import kotlin.time.times
 
 class MainActivity : BaseActivity() {
 
-    private val libraryPreferences: LibraryPreferences by injectLazy()
-    private val preferences: BasePreferences by injectLazy()
+    private val graph: AppGraph by lazy { metroGraph() }
 
-    private val downloadCache: DownloadCache by injectLazy()
-    private val chapterCache: ChapterCache by injectLazy()
+    @Inject private lateinit var libraryPreferences: LibraryPreferences
 
-    private val getIncognitoState: GetIncognitoState by injectLazy()
+    @Inject private lateinit var preferences: BasePreferences
+
+    @Inject private lateinit var downloadCache: DownloadCache
+
+    @Inject private lateinit var chapterCache: ChapterCache
+
+    @Inject private lateinit var databaseRepository: DatabaseRepository
+
+    private val isAppMigrating = MutableStateFlow(Migrator.isRunning)
+
+    @Inject private lateinit var getIncognitoState: GetIncognitoState
+
+    @Inject private lateinit var extensionManager: ExtensionManager
 
     // To be checked by splash screen. If true then splash screen will be removed.
     var ready = false
@@ -124,6 +167,7 @@ class MainActivity : BaseActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        graph.inject(this)
         val isLaunch = savedInstanceState == null
 
         // Prevent splash screen showing up on configuration changes
@@ -131,7 +175,13 @@ class MainActivity : BaseActivity() {
 
         super.onCreate(savedInstanceState)
 
-        val didMigration = Migrator.awaitAndRelease()
+        lifecycleScope.launch {
+            Migrator.awaitAndRelease()
+            isAppMigrating.value = false
+        }
+        // Uncaught on purpose: a failed database migration otherwise leaves the migrating screen up for good,
+        // while the crash screen tells what went wrong and lets the logs be shared
+        lifecycleScope.launch { databaseRepository.awaitOpen() }
 
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
         if (!isTaskRoot) {
@@ -140,10 +190,31 @@ class MainActivity : BaseActivity() {
         }
 
         setComposeContent {
+            val appMigrating by isAppMigrating.collectAsState()
+            val databaseMigrating by databaseRepository.isMigrating.collectAsState()
+            val migrating = appMigrating || databaseMigrating
+            var migratingSince by remember { mutableStateOf(if (migrating) TimeSource.Monotonic.markNow() else null) }
+            LaunchedEffect(migrating) {
+                val since = migratingSince
+                if (migrating) {
+                    if (since == null) migratingSince = TimeSource.Monotonic.markNow()
+                } else if (since != null) {
+                    // A migration that finishes right away would otherwise only flash the screen
+                    delay(MIGRATING_SCREEN_MIN_DURATION - since.elapsedNow())
+                    migratingSince = null
+                }
+            }
+            if (migrating || migratingSince != null) {
+                AppMigratingScreen()
+                // Release the splash screen so the reason for the wait shows
+                LaunchedEffect(Unit) { ready = true }
+                return@setComposeContent
+            }
+
             val context = LocalContext.current
 
-            var incognito by remember { mutableStateOf(getIncognitoState.await(null)) }
-            val downloadOnly by preferences.downloadedOnly().collectAsState()
+            var incognito by remember { mutableStateOf(false) }
+            val downloadOnly by preferences.downloadedOnly.collectAsState()
             val indexing by downloadCache.isInitializing.collectAsState()
 
             val isSystemInDarkTheme = isSystemInDarkTheme()
@@ -175,7 +246,7 @@ class MainActivity : BaseActivity() {
                         handleIntentAction(intent, navigator)
 
                         // Reset Incognito Mode on relaunch
-                        preferences.incognitoMode().set(false)
+                        preferences.incognitoMode.set(false)
                     }
                 }
                 LaunchedEffect(navigator.lastItem) {
@@ -222,7 +293,7 @@ class MainActivity : BaseActivity() {
 
                 // Pop source-related screens when incognito mode is turned off
                 LaunchedEffect(Unit) {
-                    preferences.incognitoMode().changes()
+                    preferences.incognitoMode.changes()
                         .drop(1)
                         .filter { !it }
                         .onEach {
@@ -238,26 +309,11 @@ class MainActivity : BaseActivity() {
 
                 HandleOnNewIntent(context = context, navigator = navigator)
 
-                CheckForUpdates(isLaunch)
-                ShowOnboarding()
-            }
-
-            var showChangelog by remember { mutableStateOf(didMigration && !BuildConfig.DEBUG) }
-            if (showChangelog) {
-                AlertDialog(
-                    onDismissRequest = { showChangelog = false },
-                    title = { Text(text = stringResource(MR.strings.updated_version, BuildConfig.VERSION_NAME)) },
-                    dismissButton = {
-                        TextButton(onClick = { openInBrowser(RELEASE_URL) }) {
-                            Text(text = stringResource(MR.strings.whats_new))
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showChangelog = false }) {
-                            Text(text = stringResource(MR.strings.action_ok))
-                        }
-                    },
-                )
+                if (!isBenchmarkBuildType) {
+                    if (isLaunch) CheckForUpdates()
+                    ShowOnboarding()
+                    ShowDonationCampaign()
+                }
             }
         }
 
@@ -268,8 +324,8 @@ class MainActivity : BaseActivity() {
         }
         setSplashScreenExitAnimation(splashScreen)
 
-        if (isLaunch && libraryPreferences.autoClearChapterCache().get()) {
-            lifecycleScope.launchIO {
+        if (isLaunch && libraryPreferences.autoClearChapterCache.get()) {
+            lifecycleScope.launch(Dispatchers.IO) {
                 chapterCache.clear()
             }
         }
@@ -281,6 +337,16 @@ class MainActivity : BaseActivity() {
             is AssistContentScreen -> {
                 screen.onProvideAssistUrl()?.let { outContent.webUri = it.toUri() }
             }
+        }
+    }
+
+    override fun reportFullyDrawn() {
+        try {
+            super.reportFullyDrawn()
+        } catch (e: SecurityException) {
+            // Some Samsung Android 9 to 11 builds deny the platform's fully drawn broadcast
+            // and the report only feeds startup metrics, so it shouldn't crash the app
+            logcat(LogPriority.WARN, e)
         }
     }
 
@@ -298,26 +364,42 @@ class MainActivity : BaseActivity() {
     }
 
     @Composable
-    private fun CheckForUpdates(isLaunch: Boolean) {
+    private fun CheckForUpdates() {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
         // App updates
         LaunchedEffect(Unit) {
-            if (isLaunch && updaterEnabled) {
-                try {
-                    val result = AppUpdateChecker().checkForUpdate(context, forceCheck = true)
-                    if (result is GetApplicationRelease.Result.NewUpdate) {
-                        val updateScreen = NewUpdateScreen(
-                            versionName = result.release.version,
-                            changelogInfo = result.release.info,
-                            releaseLink = result.release.releaseLink,
-                            downloadLink = result.release.downloadLink,
-                        )
-                        navigator.push(updateScreen)
+            if (!updaterEnabled) return@LaunchedEffect
+            var lastCheck: Long? = null
+            // The app can stay open for days now, so a cold start alone rarely checks.
+            // Elapsed realtime keeps counting while the device sleeps, unlike the monotonic clock.
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    lastCheck?.let {
+                        delay(it + APP_UPDATE_CHECK_INTERVAL.inWholeMilliseconds - SystemClock.elapsedRealtime())
                     }
-                } catch (e: Exception) {
-                    logcat(LogPriority.ERROR, e)
+                    lastCheck = SystemClock.elapsedRealtime()
+                    try {
+                        val result = context.appGraph.updateChecker.checkForUpdate()
+                        if (
+                            result is GetApplicationRelease.Result.NewUpdate &&
+                            result.release.version != preferences.skippedAppUpdate.get() &&
+                            navigator.items.none { it is NewUpdateScreen }
+                        ) {
+                            val updateScreen = NewUpdateScreen(
+                                versionName = result.release.version,
+                                changelogInfo = result.release.info,
+                                releaseLink = result.release.releaseLink,
+                                downloadLink = result.release.downloadLink,
+                            )
+                            navigator.push(updateScreen)
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logcat(LogPriority.ERROR, e)
+                    }
                 }
             }
         }
@@ -325,7 +407,7 @@ class MainActivity : BaseActivity() {
         // Extensions updates
         LaunchedEffect(Unit) {
             try {
-                ExtensionApi().checkForUpdates(context)
+                extensionManager.checkForUpdates()
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e)
             }
@@ -337,8 +419,128 @@ class MainActivity : BaseActivity() {
         val navigator = LocalNavigator.currentOrThrow
 
         LaunchedEffect(Unit) {
-            if (!preferences.shownOnboardingFlow().get() && navigator.lastItem !is OnboardingScreen) {
+            if (!preferences.shownOnboardingFlow.get() && navigator.lastItem !is OnboardingScreen) {
                 navigator.push(OnboardingScreen())
+            }
+        }
+    }
+
+    @Composable
+    private fun ShowDonationCampaign() {
+        val navigator = LocalNavigator.currentOrThrow
+
+        var showCampaign by remember { mutableStateOf(false) }
+        if (showCampaign) {
+            val uriHandler = LocalUriHandler.current
+            val dismissSupportMessage = {
+                preferences.donationCampaignShown.set(true)
+                showCampaign = false
+            }
+            AdaptiveSheet(
+                onDismissRequest = dismissSupportMessage,
+                enableImplicitDismiss = false,
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Column(
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp)
+                            .weight(1f, fill = false)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(MR.strings.donationCampaign_title),
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                        Text(
+                            text = stringResource(MR.strings.donationCampaign_paragraph1),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = stringResource(MR.strings.donationCampaign_paragraph2),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = stringResource(MR.strings.donationCampaign_paragraph3),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+
+                    HorizontalDivider()
+
+                    Button(
+                        modifier = Modifier
+                            .padding(top = MaterialTheme.padding.small)
+                            .padding(horizontal = MaterialTheme.padding.medium)
+                            .fillMaxWidth(),
+                        onClick = {
+                            navigator.push(SupportUsScreen())
+                            dismissSupportMessage()
+                        },
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                        ) {
+                            Icon(
+                                imageVector = MaterialSymbols.RoundedFilled.VolunteerActivism,
+                                contentDescription = null,
+                            )
+                            Text(
+                                text = stringResource(MR.strings.label_support_us),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                        modifier = Modifier
+                            .padding(bottom = MaterialTheme.padding.small)
+                            .padding(horizontal = MaterialTheme.padding.medium),
+                    ) {
+                        OutlinedButton(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            onClick = { uriHandler.openUri(Constants.URL_DISCORD) },
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                            ) {
+                                Text(
+                                    text = stringResource(MR.strings.donationCampaign_contactPlatform),
+                                )
+                                Icon(
+                                    imageVector = MaterialSymbols.AutoMirroredRounded.OpenInNew,
+                                    contentDescription = null,
+                                )
+                            }
+                        }
+                        OutlinedButton(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            onClick = dismissSupportMessage,
+                        ) {
+                            Text(
+                                text = stringResource(MR.strings.donationCampaign_dismiss),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        LaunchedEffect(Unit) {
+            try {
+                val firstInstallTime = packageManager.getPackageInfo(packageName, 0).firstInstallTime
+                val eligibleTime = Instant.fromEpochMilliseconds(firstInstallTime).plus(6 * 30.days)
+                showCampaign = (Clock.System.now() >= eligibleTime && !preferences.donationCampaignShown.get())
+            } catch (_: PackageManager.NameNotFoundException) {
             }
         }
     }
@@ -412,6 +614,11 @@ class MainActivity : BaseActivity() {
                 navigator.popUntilRoot()
                 HomeScreen.Tab.More(toDownloads = true)
             }
+            Intent.ACTION_APPLICATION_PREFERENCES -> {
+                navigator.popUntilRoot()
+                navigator.push(SettingsScreen())
+                null
+            }
             Intent.ACTION_SEARCH, Intent.ACTION_SEND, "com.google.android.gms.actions.SEARCH_ACTION" -> {
                 // If the intent match the "standard" Android search intent
                 // or the Google-specific search intent (triggered by saying or typing "search *query* on *Tachiyomi*" in Google Search/Google Assistant)
@@ -439,11 +646,11 @@ class MainActivity : BaseActivity() {
                     navigator.popUntilRoot()
                     navigator.push(RestoreBackupScreen(intent.data.toString()))
                 }
-                // Deep link to add extension repo
-                else if (intent.scheme == "tachiyomi" && intent.data?.host == "add-repo") {
+                // Deep link to add extension store
+                else if (intent.isAddExtensionStoreIntent()) {
                     intent.data?.getQueryParameter("url")?.let { repoUrl ->
                         navigator.popUntilRoot()
-                        navigator.push(ExtensionReposScreen(repoUrl))
+                        navigator.push(ExtensionStoresScreen(repoUrl))
                     }
                 }
                 null
@@ -459,6 +666,11 @@ class MainActivity : BaseActivity() {
         return true
     }
 
+    private fun Intent.isAddExtensionStoreIntent(): Boolean {
+        return (scheme == "tachiyomi" && data?.host == "add-repo") ||
+            (scheme == "mihon" && data?.host == "extension-store")
+    }
+
     companion object {
         const val INTENT_SEARCH = "eu.kanade.tachiyomi.SEARCH"
         const val INTENT_SEARCH_QUERY = "query"
@@ -470,3 +682,6 @@ class MainActivity : BaseActivity() {
 private const val SPLASH_MIN_DURATION = 500 // ms
 private const val SPLASH_MAX_DURATION = 5000 // ms
 private const val SPLASH_EXIT_ANIM_DURATION = 400L // ms
+
+private val MIGRATING_SCREEN_MIN_DURATION = 1.seconds
+private val APP_UPDATE_CHECK_INTERVAL = 6.hours

@@ -8,14 +8,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.tachiyomi.ui.reader.setting.PageLayout
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.webgpu.WebGpuViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
+import mihon.app.di.appGraph
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.HeadingItem
@@ -26,17 +29,74 @@ import tachiyomi.presentation.core.util.collectAsState
 import java.text.NumberFormat
 
 @Composable
-internal fun ColumnScope.ReadingModePage(screenModel: ReaderSettingsScreenModel) {
+internal fun ColumnScope.ReadingModePage(viewModel: ReaderSettingsViewModel) {
     HeadingItem(MR.strings.pref_category_for_this_series)
-    val manga by screenModel.mangaFlow.collectAsState()
+    val manga by viewModel.mangaFlow.collectAsState()
+    val viewer by viewModel.viewerFlow.collectAsState()
 
     val readingMode = remember(manga) { ReadingMode.fromPreference(manga?.readingMode?.toInt()) }
     SettingsChipRow(MR.strings.pref_category_reading_mode) {
         ReadingMode.entries.map {
             FilterChip(
                 selected = it == readingMode,
-                onClick = { screenModel.onChangeReadingMode(it) },
+                onClick = { viewModel.onChangeReadingMode(it) },
                 label = { Text(stringResource(it.stringRes)) },
+            )
+        }
+    }
+
+    if (viewer is WebGpuViewer) {
+        val default = LocalContext.current.appGraph.readerPreferences.defaultReadingMode.get()
+        val resolved = ReadingMode.fromPreference(
+            when {
+                readingMode == ReadingMode.DEFAULT -> default
+                else -> manga?.readingMode?.toInt() ?: default
+            },
+        )
+        if (resolved == ReadingMode.LEFT_TO_RIGHT || resolved == ReadingMode.RIGHT_TO_LEFT) {
+            val dualPageView by viewModel.preferences.dualPageView.collectAsState()
+            SettingsChipRow(MR.strings.pref_dual_page_view) {
+                ReaderPreferences.DualPageView.entries.map {
+                    FilterChip(
+                        selected = it == dualPageView,
+                        onClick = { viewModel.preferences.dualPageView.set(it) },
+                        label = { Text(stringResource(it.titleRes)) },
+                    )
+                }
+            }
+        }
+
+        if (resolved == ReadingMode.WEBTOON || resolved == ReadingMode.CONTINUOUS_VERTICAL) {
+            val numberFormat = remember { NumberFormat.getPercentInstance() }
+            val continuousMinWidth by viewModel.preferences.continuousMinWidth.collectAsState()
+            SliderItem(
+                value = continuousMinWidth,
+                valueRange = ReaderPreferences.let { 1..100 },
+                label = stringResource(MR.strings.pref_continuous_minwidth),
+                valueString = numberFormat.format(continuousMinWidth / 100f),
+                onChange = {
+                    viewModel.preferences.continuousMinWidth.set(it)
+                },
+                pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            )
+
+            if (resolved == ReadingMode.CONTINUOUS_VERTICAL) {
+                val continuousGap by viewModel.preferences.continuousGap.collectAsState()
+                SliderItem(
+                    value = continuousGap,
+                    valueRange = ReaderPreferences.let { 1..100 },
+                    label = stringResource(MR.strings.pref_continuous_gap),
+                    valueString = numberFormat.format(continuousGap / 100f),
+                    onChange = {
+                        viewModel.preferences.continuousGap.set(it)
+                    },
+                    pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                )
+            }
+
+            CheckboxItem(
+                label = stringResource(MR.strings.pref_webtoon_disable_zoom_out),
+                pref = viewModel.preferences.webtoonDisableZoomOut,
             )
         }
     }
@@ -46,50 +106,49 @@ internal fun ColumnScope.ReadingModePage(screenModel: ReaderSettingsScreenModel)
         ReaderOrientation.entries.map {
             FilterChip(
                 selected = it == orientation,
-                onClick = { screenModel.onChangeOrientation(it) },
+                onClick = { viewModel.onChangeOrientation(it) },
                 label = { Text(stringResource(it.stringRes)) },
             )
         }
     }
 
-    val viewer by screenModel.viewerFlow.collectAsState()
-    if (viewer is WebtoonViewer) {
-        WebtoonViewerSettings(screenModel)
-    } else {
-        PagerViewerSettings(screenModel)
+    when (viewer) {
+        is WebtoonViewer -> WebtoonViewerSettings(viewModel)
+        is WebGpuViewer -> WebGpuViewerSettings(viewModel)
+        else -> PagerViewerSettings(viewModel)
     }
 }
 
 @Composable
-private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenModel) {
+private fun ColumnScope.PagerViewerSettings(viewModel: ReaderSettingsViewModel) {
     HeadingItem(MR.strings.pager_viewer)
 
-    val navigationModePager by screenModel.preferences.navigationModePager().collectAsState()
-    val pagerNavInverted by screenModel.preferences.pagerNavInverted().collectAsState()
+    val navigationModePager by viewModel.preferences.navigationModePager.collectAsState()
+    val pagerNavInverted by viewModel.preferences.pagerNavInverted.collectAsState()
     TapZonesItems(
         selected = navigationModePager,
-        onSelect = screenModel.preferences.navigationModePager()::set,
+        onSelect = viewModel.preferences.navigationModePager::set,
         invertMode = pagerNavInverted,
-        onSelectInvertMode = screenModel.preferences.pagerNavInverted()::set,
+        onSelectInvertMode = viewModel.preferences.pagerNavInverted::set,
     )
 
-    val imageScaleType by screenModel.preferences.imageScaleType().collectAsState()
+    val imageScaleType by viewModel.preferences.imageScaleType.collectAsState()
     SettingsChipRow(MR.strings.pref_image_scale_type) {
         ReaderPreferences.ImageScaleType.mapIndexed { index, it ->
             FilterChip(
                 selected = imageScaleType == index + 1,
-                onClick = { screenModel.preferences.imageScaleType().set(index + 1) },
+                onClick = { viewModel.preferences.imageScaleType.set(index + 1) },
                 label = { Text(stringResource(it)) },
             )
         }
     }
 
-    val zoomStart by screenModel.preferences.zoomStart().collectAsState()
+    val zoomStart by viewModel.preferences.zoomStart.collectAsState()
     SettingsChipRow(MR.strings.pref_zoom_start) {
         ReaderPreferences.ZoomStart.mapIndexed { index, it ->
             FilterChip(
                 selected = zoomStart == index + 1,
-                onClick = { screenModel.preferences.zoomStart().set(index + 1) },
+                onClick = { viewModel.preferences.zoomStart.set(index + 1) },
                 label = { Text(stringResource(it)) },
             )
         }
@@ -97,133 +156,151 @@ private fun ColumnScope.PagerViewerSettings(screenModel: ReaderSettingsScreenMod
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_crop_borders),
-        pref = screenModel.preferences.cropBorders(),
+        pref = viewModel.preferences.cropBorders,
     )
 
-    val pageLayout by screenModel.preferences.pageLayout().collectAsState()
+    val pageLayout by viewModel.preferences.pageLayout().collectAsState()
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_landscape_zoom),
-        pref = screenModel.preferences.landscapeZoom(),
+        pref = viewModel.preferences.landscapeZoom,
     )
 
-    val pagerVerticalPadding by screenModel.preferences.pagerVerticalPadding().collectAsState()
+    val pagerVerticalPadding by viewModel.preferences.pagerVerticalPadding().collectAsState()
     SliderItem(
         value = pagerVerticalPadding,
         valueRange = ReaderPreferences.PAGER_VERTICAL_PADDING_MIN..ReaderPreferences.PAGER_VERTICAL_PADDING_MAX,
         label = stringResource(MR.strings.pref_pager_page_inset),
         valueString = "${pagerVerticalPadding}dp",
-        onChange = { screenModel.preferences.pagerVerticalPadding().set(it) },
+        onChange = { viewModel.preferences.pagerVerticalPadding().set(it) },
         pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
     )
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_navigate_pan),
-        pref = screenModel.preferences.navigateToPan(),
+        pref = viewModel.preferences.navigateToPan,
+    )
+
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_book_page_turn),
+        pref = viewModel.preferences.bookPageTransitions,
     )
 
     SettingsChipRow(MR.strings.pref_page_layout) {
         PageLayout.selectableEntries
             .map {
-            FilterChip(
-                selected = pageLayout == it.value,
-                onClick = { screenModel.preferences.pageLayout().set(it.value) },
-                label = { Text(stringResource(it.stringRes)) },
-            )
-        }
+                FilterChip(
+                    selected = pageLayout == it.value,
+                    onClick = { viewModel.preferences.pageLayout().set(it.value) },
+                    label = { Text(stringResource(it.stringRes)) },
+                )
+            }
     }
 
-    val splitWidePages by screenModel.preferences.automaticSplitsPage().collectAsState()
+    val splitWidePages by viewModel.preferences.automaticSplitsPage().collectAsState()
     CheckboxItem(
         label = stringResource(MR.strings.pref_dual_page_split),
-        pref = screenModel.preferences.automaticSplitsPage(),
+        pref = viewModel.preferences.automaticSplitsPage(),
     )
 
     if (splitWidePages) {
         CheckboxItem(
             label = stringResource(MR.strings.pref_dual_page_invert),
-            pref = screenModel.preferences.dualPageInvertPaged(),
+            pref = viewModel.preferences.dualPageInvertPaged,
         )
     }
 
     if (pageLayout == PageLayout.DOUBLE_PAGES.value || pageLayout == PageLayout.AUTOMATIC.value) {
-        val hingeGapSize by screenModel.preferences.hingeGapSize().collectAsState()
+        val hingeGapSize by viewModel.preferences.hingeGapSize().collectAsState()
         SliderItem(
             value = hingeGapSize,
             valueRange = 0..200,
             label = stringResource(MR.strings.pref_hinge_gap_size),
             valueString = "${hingeGapSize}px",
-            onChange = { screenModel.preferences.hingeGapSize().set(it) },
+            onChange = { viewModel.preferences.hingeGapSize().set(it) },
             pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         )
     }
 
-    val dualPageRotateToFit by screenModel.preferences.dualPageRotateToFit().collectAsState()
+    val dualPageRotateToFit by viewModel.preferences.dualPageRotateToFit.collectAsState()
     CheckboxItem(
         label = stringResource(MR.strings.pref_page_rotate),
-        pref = screenModel.preferences.dualPageRotateToFit(),
+        pref = viewModel.preferences.dualPageRotateToFit,
     )
 
     if (dualPageRotateToFit) {
         CheckboxItem(
             label = stringResource(MR.strings.pref_page_rotate_invert),
-            pref = screenModel.preferences.dualPageRotateToFitInvert(),
+            pref = viewModel.preferences.dualPageRotateToFitInvert,
         )
     }
 }
 
 @Composable
-private fun ColumnScope.WebtoonViewerSettings(screenModel: ReaderSettingsScreenModel) {
+private fun ColumnScope.WebtoonViewerSettings(viewModel: ReaderSettingsViewModel) {
     val numberFormat = remember { NumberFormat.getPercentInstance() }
 
     HeadingItem(MR.strings.webtoon_viewer)
 
-    val navigationModeWebtoon by screenModel.preferences.navigationModeWebtoon().collectAsState()
-    val webtoonNavInverted by screenModel.preferences.webtoonNavInverted().collectAsState()
+    val navigationModeWebtoon by viewModel.preferences.navigationModeWebtoon.collectAsState()
+    val webtoonNavInverted by viewModel.preferences.webtoonNavInverted.collectAsState()
     TapZonesItems(
         selected = navigationModeWebtoon,
-        onSelect = screenModel.preferences.navigationModeWebtoon()::set,
+        onSelect = viewModel.preferences.navigationModeWebtoon::set,
         invertMode = webtoonNavInverted,
-        onSelectInvertMode = screenModel.preferences.webtoonNavInverted()::set,
+        onSelectInvertMode = viewModel.preferences.webtoonNavInverted::set,
     )
 
-    val webtoonSidePadding by screenModel.preferences.webtoonSidePadding().collectAsState()
+    val webtoonSidePadding by viewModel.preferences.webtoonSidePadding.collectAsState()
     SliderItem(
         value = webtoonSidePadding,
         valueRange = ReaderPreferences.let { it.WEBTOON_PADDING_MIN..it.WEBTOON_PADDING_MAX },
         label = stringResource(MR.strings.pref_webtoon_side_padding),
         valueString = numberFormat.format(webtoonSidePadding / 100f),
         onChange = {
-            screenModel.preferences.webtoonSidePadding().set(it)
+            viewModel.preferences.webtoonSidePadding.set(it)
         },
         pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
     )
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_crop_borders),
-        pref = screenModel.preferences.cropBordersWebtoon(),
+        pref = viewModel.preferences.cropBordersWebtoon,
     )
 
-    val dualPageRotateToFitWebtoon by screenModel.preferences.dualPageRotateToFitWebtoon().collectAsState()
+    val dualPageSplitWebtoon by viewModel.preferences.dualPageSplitWebtoon.collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_dual_page_split),
+        pref = viewModel.preferences.dualPageSplitWebtoon,
+    )
+
+    if (dualPageSplitWebtoon) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_dual_page_invert),
+            pref = viewModel.preferences.dualPageInvertWebtoon,
+        )
+    }
+
+    val dualPageRotateToFitWebtoon by viewModel.preferences.dualPageRotateToFitWebtoon.collectAsState()
     CheckboxItem(
         label = stringResource(MR.strings.pref_page_rotate),
-        pref = screenModel.preferences.dualPageRotateToFitWebtoon(),
+        pref = viewModel.preferences.dualPageRotateToFitWebtoon,
     )
 
     if (dualPageRotateToFitWebtoon) {
         CheckboxItem(
             label = stringResource(MR.strings.pref_page_rotate_invert),
-            pref = screenModel.preferences.dualPageRotateToFitInvertWebtoon(),
+            pref = viewModel.preferences.dualPageRotateToFitInvertWebtoon,
         )
     }
 
     CheckboxItem(
         label = stringResource(MR.strings.pref_double_tap_zoom),
-        pref = screenModel.preferences.webtoonDoubleTapZoomEnabled(),
+        pref = viewModel.preferences.webtoonDoubleTapZoomEnabled,
     )
     CheckboxItem(
         label = stringResource(MR.strings.pref_webtoon_disable_zoom_out),
-        pref = screenModel.preferences.webtoonDisableZoomOut(),
+        pref = viewModel.preferences.webtoonDisableZoomOut,
     )
 }
 
@@ -250,6 +327,123 @@ private fun ColumnScope.TapZonesItems(
                 FilterChip(
                     selected = it == invertMode,
                     onClick = { onSelectInvertMode(it) },
+                    label = { Text(stringResource(it.titleRes)) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.WebGpuViewerSettings(viewModel: ReaderSettingsViewModel) {
+    HeadingItem(MR.strings.webgpu_viewer)
+
+    val manga by viewModel.mangaFlow.collectAsState()
+    val viewer by viewModel.viewerFlow.collectAsState()
+
+    val readingMode = remember(manga) { ReadingMode.fromPreference(manga?.readingMode?.toInt()) }
+    val default = LocalContext.current.appGraph.readerPreferences.defaultReadingMode.get()
+    val resolved = ReadingMode.fromPreference(
+        when {
+            readingMode == ReadingMode.DEFAULT -> default
+            else -> manga?.readingMode?.toInt() ?: default
+        },
+    )
+    val isDual = (viewer as? WebGpuViewer)?.isDualPageMode() == true
+
+    val navigationModePager by viewModel.preferences.navigationModePager.collectAsState()
+    val pagerNavInverted by viewModel.preferences.pagerNavInverted.collectAsState()
+    TapZonesItems(
+        selected = navigationModePager,
+        onSelect = viewModel.preferences.navigationModePager::set,
+        invertMode = pagerNavInverted,
+        onSelectInvertMode = viewModel.preferences.pagerNavInverted::set,
+    )
+
+    if (isDual) {
+        val transitionAnimation by viewModel.preferences.transitionAnimationDual.collectAsState()
+        SettingsChipRow(MR.strings.pref_transition_animation_dual) {
+            (
+                ReaderPreferences.TransitionAnimation.entries - ReaderPreferences.TransitionAnimation.FLIP_LEFT -
+                    ReaderPreferences.TransitionAnimation.FLIP_RIGHT
+                ).forEach {
+                FilterChip(
+                    selected = it == transitionAnimation,
+                    onClick = { viewModel.preferences.transitionAnimationDual.set(it) },
+                    label = { Text(stringResource(it.titleRes)) },
+                )
+            }
+        }
+        val cutoutMode by viewModel.preferences.cutoutModeDual.collectAsState()
+        SettingsChipRow(MR.strings.pref_cutout_mode_dual) {
+            ReaderPreferences.CutoutMode.entries.forEach {
+                FilterChip(
+                    selected = it == cutoutMode,
+                    onClick = { viewModel.preferences.cutoutModeDual.set(it) },
+                    label = { Text(stringResource(it.titleRes)) },
+                )
+            }
+        }
+        return
+    }
+
+    if (resolved != ReadingMode.WEBTOON && resolved != ReadingMode.CONTINUOUS_VERTICAL) {
+        val imageScaleType by viewModel.preferences.imageScaleType.collectAsState()
+        SettingsChipRow(MR.strings.pref_image_scale_type) {
+            ReaderPreferences.ImageScaleTypeWebGpuViewer.forEach {
+                FilterChip(
+                    selected = ReaderPreferences.ImageScaleType[imageScaleType - 1] == it,
+                    onClick = {
+                        viewModel.preferences.imageScaleType.set(ReaderPreferences.ImageScaleType.indexOf(it) + 1)
+                    },
+                    label = { Text(stringResource(it)) },
+                )
+            }
+        }
+
+        val zoomStart by viewModel.preferences.zoomStart.collectAsState()
+        SettingsChipRow(MR.strings.pref_zoom_start) {
+            ReaderPreferences.ZoomStart.mapIndexed { index, it ->
+                FilterChip(
+                    selected = zoomStart == index + 1,
+                    onClick = { viewModel.preferences.zoomStart.set(index + 1) },
+                    label = { Text(stringResource(it)) },
+                )
+            }
+        }
+
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_crop_borders),
+            pref = viewModel.preferences.cropBorders,
+        )
+
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_landscape_zoom),
+            pref = viewModel.preferences.landscapeZoom,
+        )
+
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_navigate_pan),
+            pref = viewModel.preferences.navigateToPan,
+        )
+
+        val transitionAnimation by viewModel.preferences.transitionAnimation.collectAsState()
+        SettingsChipRow(MR.strings.pref_transition_animation) {
+            ReaderPreferences.TransitionAnimation.entries.forEach {
+                FilterChip(
+                    selected = it == transitionAnimation,
+                    onClick = { viewModel.preferences.transitionAnimation.set(it) },
+                    label = { Text(stringResource(it.titleRes)) },
+                )
+            }
+        }
+
+        val cutoutMode by viewModel.preferences.cutoutMode.collectAsState()
+        SettingsChipRow(MR.strings.pref_cutout_mode) {
+            ReaderPreferences.CutoutMode.entries.forEach {
+                FilterChip(
+                    selected = it == cutoutMode,
+                    onClick = { viewModel.preferences.cutoutMode.set(it) },
                     label = { Text(stringResource(it.titleRes)) },
                 )
             }

@@ -15,8 +15,6 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * Configuration used by pager viewers.
@@ -24,14 +22,14 @@ import uy.kohesive.injekt.api.get
 class PagerConfig(
     private val viewer: PagerViewer,
     scope: CoroutineScope,
-    readerPreferences: ReaderPreferences = Injekt.get(),
+    readerPreferences: ReaderPreferences,
 ) : ViewerConfig(
     readerPreferences,
     scope,
     isLandscape = { viewer.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE },
 ) {
 
-    var theme = readerPreferences.readerTheme().get()
+    var theme = readerPreferences.readerTheme.get()
         private set
 
     var automaticBackground = false
@@ -56,7 +54,7 @@ class PagerConfig(
         private set
 
     init {
-        readerPreferences.readerTheme()
+        readerPreferences.readerTheme
             .register(
                 {
                     theme = it
@@ -65,44 +63,52 @@ class PagerConfig(
                 { imagePropertyChangedListener?.invoke() },
             )
 
-        readerPreferences.imageScaleType()
+        readerPreferences.imageScaleType
             .register({ imageScaleType = it }, { imagePropertyChangedListener?.invoke() })
 
-        readerPreferences.zoomStart()
+        readerPreferences.zoomStart
             .register({ zoomTypeFromPreference(it) }, { imagePropertyChangedListener?.invoke() })
 
-        readerPreferences.cropBorders()
+        readerPreferences.cropBorders
             .register({ imageCropBorders = it }, { imagePropertyChangedListener?.invoke() })
 
         readerPreferences.pagerVerticalPadding()
             .register({ verticalPaddingDp = it }, { imagePropertyChangedListener?.invoke() })
 
-        readerPreferences.navigateToPan()
+        readerPreferences.navigateToPan
             .register({ navigateToPan = it })
 
-        readerPreferences.landscapeZoom()
+        readerPreferences.landscapeZoom
             .register({ landscapeZoom = it }, { imagePropertyChangedListener?.invoke() })
 
-        readerPreferences.navigationModePager()
+        readerPreferences.navigationModePager
             .register({ navigationMode = it }, { updateNavigation(navigationMode) })
 
-        readerPreferences.pagerNavInverted()
+        readerPreferences.pagerNavInverted
             .register({ tappingInverted = it }, { navigator.invertMode = it })
-        readerPreferences.pagerNavInverted().changes()
+        readerPreferences.pagerNavInverted.changes()
             .drop(1)
             .onEach { navigationModeChangedListener?.invoke() }
             .launchIn(scope)
 
-        readerPreferences.dualPageInvertPaged()
+        readerPreferences.dualPageSplitPaged
+            .register(
+                { dualPageSplit = it },
+                {
+                    imagePropertyChangedListener?.invoke()
+                },
+            )
+
+        readerPreferences.dualPageInvertPaged
             .register({ dualPageInvert = it }, { imagePropertyChangedListener?.invoke() })
 
-        readerPreferences.dualPageRotateToFit()
+        readerPreferences.dualPageRotateToFit
             .register(
                 { dualPageRotateToFit = it },
                 { imagePropertyChangedListener?.invoke() },
             )
 
-        readerPreferences.dualPageRotateToFitInvert()
+        readerPreferences.dualPageRotateToFitInvert
             .register(
                 { dualPageRotateToFitInvert = it },
                 { imagePropertyChangedListener?.invoke() },
@@ -111,19 +117,19 @@ class PagerConfig(
         // Real-CUGAN settings - refresh pages when changed
         readerPreferences.realCuganEnabled().changes()
             .drop(1)
-            .onEach { 
+            .onEach {
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganEnabled changed")
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                imagePropertyChangedListener?.invoke() 
+                imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
 
         readerPreferences.realCuganModel().changes()
             .drop(1)
-            .onEach { 
+            .onEach {
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganModel changed")
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                imagePropertyChangedListener?.invoke() 
+                imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
 
@@ -140,9 +146,9 @@ class PagerConfig(
             .drop(1)
             .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganNoiseLevel changed") }
             .debounce(500)
-            .onEach { 
+            .onEach {
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                imagePropertyChangedListener?.invoke() 
+                imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
 
@@ -150,9 +156,9 @@ class PagerConfig(
             .drop(1)
             .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("realCuganScale changed") }
             .debounce(500)
-            .onEach { 
+            .onEach {
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(viewer.activity)
-                imagePropertyChangedListener?.invoke() 
+                imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
 
@@ -244,12 +250,11 @@ class PagerConfig(
 
         readerPreferences.realCuganPreloadSize().changes()
             .drop(1)
-            .onEach { 
+            .onEach {
                 // No need to clear cache for preload size change
-                imagePropertyChangedListener?.invoke() 
+                imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)
-
     }
 
     private fun zoomTypeFromPreference(value: Int) {

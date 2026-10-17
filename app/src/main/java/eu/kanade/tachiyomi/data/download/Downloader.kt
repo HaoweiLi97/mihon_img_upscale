@@ -2,11 +2,14 @@ package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
 import com.hippo.unifile.UniFile
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.getComicInfo
 import eu.kanade.domain.manga.model.toSManga
-import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
@@ -21,89 +24,93 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import mihon.core.archive.ZipWriter
+import mihon.core.metro.AppCoroutineScope
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNow
-import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
 import tachiyomi.core.metadata.comicinfo.ComicInfo
+import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.getChapterSort
-import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.File
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * This class is the one in charge of downloading chapters.
  *
  * Its queue contains the list of chapters to download.
  */
+@Inject
+@SingleIn(AppScope::class)
 class Downloader(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val provider: DownloadProvider,
     private val cache: DownloadCache,
-    private val sourceManager: SourceManager = Injekt.get(),
-    private val chapterCache: ChapterCache = Injekt.get(),
-    private val coverCache: CoverCache = Injekt.get(),
-    private val downloadPreferences: DownloadPreferences = Injekt.get(),
-    private val cloudSyncService: CloudSyncService = Injekt.get(),
-    private val xml: XML = Injekt.get(),
-    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
-    private val getCategories: GetCategories = Injekt.get(),
-    private val getTracks: GetTracks = Injekt.get(),
+    private val sourceManager: SourceManager,
+    private val chapterCache: ChapterCache,
+    private val coverCache: CoverCache,
+    private val cloudSyncService: CloudSyncService,
+    private val getChaptersByMangaId: GetChaptersByMangaId,
+    private val downloadPreferences: DownloadPreferences,
+    private val xml: XML,
+    private val getCategories: GetCategories,
+    private val getTracks: GetTracks,
+    private val store: DownloadStore,
+    private val notifier: DownloadNotifier,
 ) {
-
-    /**
-     * Store for persisting downloads across restarts.
-     */
-    private val store = DownloadStore(context)
-
     /**
      * Queue where active downloads are kept.
      */
@@ -113,10 +120,6 @@ class Downloader(
     private val _uploadQueueState = MutableStateFlow<List<Download>>(emptyList())
     val uploadQueueState = _uploadQueueState.asStateFlow()
 
-    /**
-     * Notifier for the downloader state and progress.
-     */
-    private val notifier by lazy { DownloadNotifier(context) }
     private val json by lazy {
         Json {
             encodeDefaults = true
@@ -124,7 +127,12 @@ class Downloader(
         }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Held by every start, stop and queue edit, which come from the main thread, the download worker and the
+    // deletion jobs, so a check of isRunning can't interleave with another caller's start or stop
+    private val lock = Mutex()
+
+    // Kept when canceled, so the next job can wait for it to finish
+    @Volatile
     private var downloaderJob: Job? = null
     private val cloudUploadQueue = Channel<CloudUploadQueueEntry>(Channel.UNLIMITED)
     private val queuedCloudUploadKeys = Collections.synchronizedSet(mutableSetOf<String>())
@@ -146,9 +154,8 @@ class Downloader(
     var isPaused: Boolean = false
 
     init {
-        launchNow {
-            val chapters = async { store.restore() }
-            addAllToQueue(chapters.await())
+        scope.launch(Dispatchers.Main, CoroutineStart.UNDISPATCHED) {
+            addAllToQueue(withContext(Dispatchers.IO) { store.restore() })
         }
     }
 
@@ -158,7 +165,42 @@ class Downloader(
      *
      * @return true if the downloader is started, false otherwise.
      */
-    fun start(): Boolean {
+    suspend fun start(): Boolean = lock.withLock { startLocked() }
+
+    /**
+     * Stops the downloader.
+     */
+    suspend fun stop(reason: String? = null) = lock.withLock { stopLocked(reason) }
+
+    // Download jobs check these under the lock: by the time they get it, chapters may have been queued or the
+    // downloader stopped and started again, and that newer run must not be stopped
+    private suspend fun stopIfFinished(owner: Job) = lock.withLock {
+        if (downloaderJob === owner && owner.isActive && areAllDownloadsFinished()) stopLocked()
+    }
+
+    private suspend fun stopIfCurrent(owner: Job) = lock.withLock {
+        if (downloaderJob === owner && owner.isActive) stopLocked()
+    }
+
+    /**
+     * Pauses and stops the downloader, keeping the queue for a later start
+     */
+    suspend fun pause() = lock.withLock {
+        pauseLocked()
+        stopLocked()
+    }
+
+    /**
+     * Removes everything from the queue.
+     */
+    suspend fun clearQueue() = lock.withLock {
+        cancelDownloaderJob()
+
+        internalClearQueue()
+        notifier.dismissProgress()
+    }
+
+    private fun startLocked(): Boolean {
         if (isRunning || queueState.value.isEmpty()) {
             return false
         }
@@ -173,10 +215,7 @@ class Downloader(
         return pending.isNotEmpty()
     }
 
-    /**
-     * Stops the downloader.
-     */
-    fun stop(reason: String? = null) {
+    private fun stopLocked(reason: String? = null) {
         cancelDownloaderJob()
         queueState.value
             .filter { it.status == Download.State.DOWNLOADING || it.status == Download.State.UPLOADING }
@@ -194,14 +233,9 @@ class Downloader(
         }
 
         isPaused = false
-
-        DownloadJob.stop(context)
     }
 
-    /**
-     * Pauses the downloader
-     */
-    fun pause() {
+    private fun pauseLocked() {
         cancelDownloaderJob()
         queueState.value
             .filter { it.status == Download.State.DOWNLOADING || it.status == Download.State.UPLOADING }
@@ -210,25 +244,21 @@ class Downloader(
     }
 
     /**
-     * Removes everything from the queue.
-     */
-    fun clearQueue() {
-        cancelDownloaderJob()
-
-        internalClearQueue()
-        notifier.dismissProgress()
-    }
-
-    /**
      * Prepares the subscriptions to start downloading.
      */
     private fun launchDownloaderJob() {
         if (isRunning) return
 
+        val previousJob = downloaderJob
         downloaderJob = scope.launch {
+            // Page writes block, so a canceled job can still be writing the pages this one would start on. Not
+            // cancelable, so a job canceled while waiting still finishes after the one before it.
+            withContext(NonCancellable) { previousJob?.join() }
+            val owner = coroutineContext.job
+
             val activeDownloadsFlow = combine(
                 queueState,
-                downloadPreferences.parallelSourceLimit().changes(),
+                downloadPreferences.parallelSourceLimit.changes(),
             ) { a, b -> a to b }.transformLatest { (queue, parallelCount) ->
                 while (true) {
                     val activeDownloads = queue.asSequence()
@@ -253,40 +283,93 @@ class Downloader(
 
             // Use supervisorScope to cancel child jobs when the downloader job is cancelled
             supervisorScope {
-                val downloadJobs = mutableMapOf<Download, Job>()
+                val sourceJobs = mutableMapOf<HttpSource, Job>()
+                val downloadJobs = ConcurrentHashMap<Download, Job>()
+
+                // A source runs several of its chapters at once, so a removed one is stopped by itself
+                launch {
+                    queueState.collect { queue ->
+                        downloadJobs.keys.filter { it !in queue }.forEach { downloadJobs.remove(it)?.cancel() }
+                    }
+                }
 
                 activeDownloadsFlow.collectLatest { activeDownloads ->
-                    val downloadJobsToStop = downloadJobs.filter { it.key !in activeDownloads }
-                    downloadJobsToStop.forEach { (download, job) ->
+                    val activeSources = activeDownloads.map { it.source }
+                    val sourceJobsToStop = sourceJobs.filter { it.key !in activeSources }
+                    sourceJobsToStop.forEach { (source, job) ->
                         job.cancel()
-                        downloadJobs.remove(download)
+                        sourceJobs.remove(source)
                     }
 
-                    val downloadsToStart = activeDownloads.filter { it !in downloadJobs }
-                    downloadsToStart.forEach { download ->
-                        downloadJobs[download] = launchDownloadJob(download)
+                    val sourcesToStart = activeSources.filter { it !in sourceJobs }
+                    sourcesToStart.forEach { source ->
+                        sourceJobs[source] = launchSourceJob(source, downloadJobs, owner)
                     }
                 }
             }
         }
     }
 
-    private fun CoroutineScope.launchDownloadJob(download: Download) = launchIO {
+    /**
+     * Downloads the queued chapters of [source] in queue order. They share the source's page slots, and the next
+     * chapter starts once every page of the current one has a slot, so slots don't sit idle while a chapter's last
+     * pages finish and it's archived.
+     */
+    private fun CoroutineScope.launchSourceJob(
+        source: HttpSource,
+        downloadJobs: MutableMap<Download, Job>,
+        owner: Job,
+    ) = launch(Dispatchers.IO) {
+        val slots = Semaphore(downloadPreferences.parallelPageLimit.get())
+        while (true) {
+            // A canceled job can mark a chapter as downloading after it's been reset, so that counts as waiting too
+            val download = queueState
+                .map { queue ->
+                    queue.firstOrNull {
+                        it.source == source &&
+                            (it.status == Download.State.QUEUE || it.status == Download.State.DOWNLOADING) &&
+                            it !in downloadJobs
+                    }
+                }
+                .filterNotNull()
+                .first()
+            val pagesStarted = CompletableDeferred<Unit>()
+            val job = launchDownloadJob(download, slots, pagesStarted, owner)
+            downloadJobs[download] = job
+            job.invokeOnCompletion {
+                downloadJobs.remove(download, job)
+                // A job canceled before it starts never reaches its finally block
+                pagesStarted.complete(Unit)
+            }
+            pagesStarted.await()
+        }
+    }
+
+    private fun CoroutineScope.launchDownloadJob(
+        download: Download,
+        slots: Semaphore,
+        pagesStarted: CompletableDeferred<Unit>,
+        owner: Job,
+    ) = launch(Dispatchers.IO) {
         try {
-            downloadChapter(download)
+            // Removed from the queue between being picked and starting
+            if (download !in queueState.value) return@launch
+
+            downloadChapter(download, slots, pagesStarted)
 
             // Remove successful download from queue
             if (download.status == Download.State.DOWNLOADED) {
                 removeFromQueue(download)
             }
-            if (areAllDownloadsFinished()) {
-                stop()
-            }
+            stopIfFinished(owner)
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
             logcat(LogPriority.ERROR, e)
             notifier.onError(e.message)
-            stop()
+            stopIfCurrent(owner)
+        } finally {
+            // Also when the chapter fails before its pages, so the source moves on to the next one
+            pagesStarted.complete(Unit)
         }
     }
 
@@ -295,7 +378,6 @@ class Downloader(
      */
     private fun cancelDownloaderJob() {
         downloaderJob?.cancel()
-        downloaderJob = null
     }
 
     /**
@@ -304,22 +386,28 @@ class Downloader(
      * @param manga the manga of the chapters to download.
      * @param chapters the list of chapters to download.
      * @param autoStart whether to start the downloader after enqueing the chapters.
+     * @return true if the downloader should be started.
      */
-    fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean) {
-        if (chapters.isEmpty()) return
+    suspend fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean): Boolean {
+        if (chapters.isEmpty()) return false
 
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return false
         val wasEmpty = queueState.value.isEmpty()
-        val chaptersToQueue = chapters.asSequence()
-            // Filter out those already downloaded.
-            .filter { provider.findChapterDir(it.name, it.scanlator, it.url, manga.title, source) == null }
-            // Add chapters to queue from the start.
-            .sortedByDescending { it.sourceOrder }
-            // Filter out those already enqueued.
-            .filter { chapter -> queueState.value.none { it.chapter.id == chapter.id } }
-            // Create a download for each one.
-            .map { Download(source, manga, it) }
-            .toList()
+        val chaptersToQueue = withContext(Dispatchers.IO) {
+            val downloadedChapterIds = provider.findDownloadedChapterIds(chapters, manga, source)
+            val queuedChapterIds = queueState.value.mapTo(HashSet()) { it.chapter.id }
+            chapters
+                // Filter out those already downloaded.
+                .filter { it.id !in downloadedChapterIds }
+                .asSequence()
+                // Add chapters to queue from the start.
+                .sortedByDescending { it.sourceOrder }
+                // Filter out those already enqueued.
+                .filter { it.id !in queuedChapterIds }
+                // Create a download for each one.
+                .map { Download(source, manga, it) }
+                .toList()
+        }
 
         if (chaptersToQueue.isNotEmpty()) {
             addAllToQueue(chaptersToQueue)
@@ -345,13 +433,14 @@ class Downloader(
                         NotificationHandler.openUrl(context, LibraryUpdateNotifier.HELP_WARNING_URL),
                     )
                 }
-                DownloadJob.start(context)
+                return true
             }
         }
+        return false
     }
 
     fun isCloudSyncAvailable(): Boolean {
-        return downloadPreferences.saveChaptersAsCBZ().get() && cloudSyncTargetOrNull() != null
+        return downloadPreferences.saveChaptersAsCBZ.get() && cloudSyncTargetOrNull() != null
     }
 
     internal suspend fun queueChaptersForCloudSync(
@@ -386,7 +475,9 @@ class Downloader(
                 cloudSyncChapterAction(
                     isUploaded = downloadPreferences.isChapterUploadedToCloud(chapter.id),
                     hasLocalDownload = downloadedChapter != null,
-                    isLocalCbz = downloadedChapter?.isFile == true && downloadedChapter.extension == "cbz",
+                    isLocalCbz =
+                    downloadedChapter?.isFile == true &&
+                        downloadedChapter.name?.endsWith(".cbz", ignoreCase = true) == true,
                 )
             ) {
                 CloudSyncChapterAction.Skip -> skipped++
@@ -433,8 +524,10 @@ class Downloader(
      * Downloads a chapter.
      *
      * @param download the chapter to be downloaded.
+     * @param slots the page download slots of the chapter's source.
+     * @param pagesStarted completed once every page has a slot.
      */
-    private suspend fun downloadChapter(download: Download) {
+    private suspend fun downloadChapter(download: Download, slots: Semaphore, pagesStarted: CompletableDeferred<Unit>) {
         val mangaDir = provider.getMangaDir(download.manga, download.source).getOrElse { e ->
             download.status = Download.State.ERROR
             notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)
@@ -460,6 +553,16 @@ class Downloader(
             download.chapter.scanlator,
             download.chapter.url,
         )
+
+        // Being stopped after the download is moved into place but before it's indexed leaves a finished download
+        // on disk that is still queued, and downloading it again would save a second copy next to it
+        if (mangaDir.findFile("$chapterDirname.cbz") != null || mangaDir.findFile(chapterDirname) != null) {
+            mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
+            cache.addChapter(chapterDirname, mangaDir, download.manga)
+            download.status = Download.State.DOWNLOADED
+            return
+        }
+
         val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
 
         try {
@@ -480,27 +583,27 @@ class Downloader(
             download.status = Download.State.DOWNLOADING
 
             // Start downloading images, consider we can have downloaded images already
-            pageList.asFlow().flatMapMerge(concurrency = downloadPreferences.parallelPageLimit().get()) { page ->
-                flow {
-                    // Fetch image URL if necessary
-                    if (page.imageUrl.isNullOrEmpty()) {
-                        page.status = Page.State.LoadPage
-                        try {
-                            page.imageUrl = download.source.getImageUrl(page)
-                        } catch (e: Throwable) {
-                            page.status = Page.State.Error(e)
+            coroutineScope {
+                pageList.forEach { page ->
+                    slots.acquire()
+                    // Released on completion, since a page canceled before it starts never runs its body
+                    launch(Dispatchers.IO) {
+                        // Fetch image URL if necessary
+                        if (page.imageUrl.isNullOrEmpty()) {
+                            page.status = Page.State.LoadPage
+                            try {
+                                page.imageUrl = download.source.getImageUrl(page)
+                            } catch (e: Throwable) {
+                                page.status = Page.State.Error(e)
+                            }
                         }
-                    }
 
-                    withIOContext { getOrDownloadImage(page, download, tmpDir) }
-                    emit(page)
+                        getOrDownloadImage(page, download, tmpDir)
+                        notifier.onProgressChange(download)
+                    }.invokeOnCompletion { slots.release() }
                 }
-                    .flowOn(Dispatchers.IO)
+                pagesStarted.complete(Unit)
             }
-                .collect {
-                    // Do when page is downloaded.
-                    notifier.onProgressChange(download)
-                }
 
             // Do after download completes
 
@@ -517,7 +620,7 @@ class Downloader(
             )
 
             // Only rename the directory if it's downloaded
-            val downloadedChapter = if (downloadPreferences.saveChaptersAsCBZ().get()) {
+            val downloadedChapter = if (downloadPreferences.saveChaptersAsCBZ.get()) {
                 archiveChapter(mangaDir, chapterDirname, tmpDir)
             } else {
                 tmpDir.renameTo(chapterDirname)
@@ -557,6 +660,7 @@ class Downloader(
 
         val digitCount = (download.pages?.size ?: 0).toString().length.coerceAtLeast(3)
         val filename = "%0${digitCount}d".format(Locale.ENGLISH, page.number)
+
         // Try to find the image file
         val imageFile = tmpDir.listFiles()?.firstOrNull {
             isDownloadedPageImage(it.name ?: return@firstOrNull false, filename)
@@ -615,7 +719,7 @@ class Downloader(
             // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
             .retryWhen { _, attempt ->
                 if (attempt < 3) {
-                    delay((2L shl attempt.toInt()) * 1000 + Random.nextLong(0, 1000))
+                    delay((2L shl attempt.toInt()).seconds)
                     true
                 } else {
                     false
@@ -632,6 +736,7 @@ class Downloader(
      * @param filename the filename of the image.
      */
     private fun copyImageFromCache(cacheFile: File, tmpDir: UniFile, filename: String): UniFile {
+        // Delete temp file if it exists
         tmpDir.findFile("$filename.tmp")?.delete()
         val tmpFile = tmpDir.createFile("$filename.tmp")!!
         cacheFile.inputStream().use { input ->
@@ -657,14 +762,8 @@ class Downloader(
         return ImageUtil.getExtensionFromMimeType(mime) { file.openInputStream() }
     }
 
-    private fun isDownloadedPageImage(fileName: String, pagePrefix: String): Boolean =
-        !fileName.endsWith(".tmp") && (
-            fileName.startsWith("$pagePrefix.") ||
-                fileName.startsWith("${pagePrefix}__001.")
-            )
-
     private fun splitTallImageIfNeeded(page: Page, tmpDir: UniFile) {
-        if (!downloadPreferences.splitTallImages().get()) return
+        if (!downloadPreferences.splitTallImages.get()) return
 
         try {
             val filenamePrefix = "%03d".format(Locale.ENGLISH, page.number)
@@ -711,6 +810,18 @@ class Downloader(
         }
         return downloadedImagesCount == downloadPageCount
     }
+
+    /**
+     * Checks if the file name matches a downloaded page image.
+     *
+     * @param fileName Name of the file to check
+     * @param pagePrefix Expected page prefix (e.g., "001")
+     */
+    private fun isDownloadedPageImage(fileName: String, pagePrefix: String): Boolean =
+        !fileName.endsWith(".tmp") && (
+            fileName.startsWith("$pagePrefix.") ||
+                fileName.startsWith("${pagePrefix}__001.")
+            )
 
     /**
      * Archive the chapter pages as a CBZ.
@@ -784,7 +895,7 @@ class Downloader(
         download: Download,
         chapterFile: UniFile,
     ): Boolean {
-        if (!downloadPreferences.saveChaptersAsCBZ().get()) return false
+        if (!downloadPreferences.saveChaptersAsCBZ.get()) return false
         val cloudSync = cloudSyncTargetOrNull() ?: return false
         val uploadFileName = chapterFile.name ?: return false
 
@@ -825,7 +936,8 @@ class Downloader(
     }
 
     private fun snapshotMetaInfoFile(mangaDir: UniFile, metaInfoFile: UniFile): UniFile? {
-        val snapshot = mangaDir.createFile("$META_INFO_FILE_NAME.upload.${UUID.randomUUID()}$TMP_DIR_SUFFIX") ?: return null
+        val snapshot =
+            mangaDir.createFile("$META_INFO_FILE_NAME.upload.${UUID.randomUUID()}$TMP_DIR_SUFFIX") ?: return null
         metaInfoFile.openInputStream().use { input ->
             snapshot.openOutputStream().use { output ->
                 input.copyTo(output)
@@ -868,7 +980,10 @@ class Downloader(
     private fun ensureCloudUploadWorkers() {
         if (cloudUploadJob?.isActive == true) return
 
-        val parallelUploads = downloadPreferences.parallelCloudUploadLimit().get().coerceIn(1, MAX_PARALLEL_CLOUD_UPLOADS)
+        val parallelUploads = downloadPreferences.parallelCloudUploadLimit().get().coerceIn(
+            1,
+            MAX_PARALLEL_CLOUD_UPLOADS,
+        )
         cloudUploadJob = scope.launch {
             repeat(parallelUploads) {
                 launchIO {
@@ -1123,7 +1238,7 @@ class Downloader(
                     scanlator = chapter.scanlator,
                     url = source.getChapterUrl(chapter.toSChapter()).trim(),
                     sourceOrder = chapter.sourceOrder,
-                    file = provider.chapterOutputName(chapter, downloadPreferences.saveChaptersAsCBZ().get()),
+                    file = provider.chapterOutputName(chapter, downloadPreferences.saveChaptersAsCBZ.get()),
                 )
             },
         )
@@ -1179,7 +1294,9 @@ class Downloader(
             source.client.newCall(GET(coverUrl, source.headers)).execute().use { response ->
                 if (!response.isSuccessful) return@runCatching null
                 val bytes = response.body.bytes()
-                val extension = ImageUtil.getExtensionFromMimeType(response.body.contentType()?.toString()) { bytes.inputStream() }
+                val extension = ImageUtil.getExtensionFromMimeType(response.body.contentType()?.toString()) {
+                    bytes.inputStream()
+                }
                 MetaInfoCoverAsset("cover.$extension") { bytes.inputStream() }
             }
         }.getOrElse { error ->
@@ -1196,12 +1313,15 @@ class Downloader(
     }
 
     private fun addAllToQueue(downloads: List<Download>) {
-        _queueState.update {
-            downloads.forEach { download ->
+        _queueState.update { queue ->
+            // Callers filter off the queue's thread, so a chapter may have been queued in the meantime
+            val queuedChapterIds = queue.mapTo(HashSet()) { it.chapter.id }
+            val toAdd = downloads.filter { it.chapter.id !in queuedChapterIds }
+            toAdd.forEach { download ->
                 download.status = Download.State.QUEUE
             }
-            store.addAll(downloads)
-            it + downloads
+            store.addAll(toAdd)
+            queue + toAdd
         }
     }
 
@@ -1236,12 +1356,12 @@ class Downloader(
         }
     }
 
-    fun removeFromQueue(chapters: List<Chapter>) {
+    private fun removeFromQueue(chapters: List<Chapter>) {
         val chapterIds = chapters.map { it.id }
         removeFromQueueIf { it.chapter.id in chapterIds }
     }
 
-    fun removeFromQueue(manga: Manga) {
+    suspend fun removeFromQueue(manga: Manga) = lock.withLock {
         removeFromQueueIf { it.manga.id == manga.id }
     }
 
@@ -1261,21 +1381,44 @@ class Downloader(
         }
     }
 
-    fun updateQueue(downloads: List<Download>) {
-        val wasRunning = isRunning
-
-        if (downloads.isEmpty()) {
-            clearQueue()
-            stop()
-            return
+    /**
+     * Replaces the queue with [transform] applied to the current queue. It runs under the lock, so downloads
+     * queued or removed meanwhile aren't lost to a stale copy of the queue.
+     */
+    suspend fun updateQueue(transform: (List<Download>) -> List<Download>) = editQueue {
+        // One update, since chapters are queued without the lock
+        _queueState.update { queue ->
+            val downloads = transform(queue).distinctBy { it.chapter.id }
+            val kept = downloads.mapTo(HashSet()) { it.chapter.id }
+            queue.forEach { download ->
+                if (download.chapter.id !in kept &&
+                    (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE)
+                ) {
+                    download.status = Download.State.NOT_DOWNLOADED
+                }
+            }
+            downloads.forEach { it.status = Download.State.QUEUE }
+            store.clear()
+            store.addAll(downloads)
+            downloads
         }
+    }
 
-        pause()
-        internalClearQueue()
-        addAllToQueue(downloads)
+    /**
+     * Removes [chapters] from the queue, keeping the state of the downloads that stay.
+     */
+    suspend fun dequeue(chapters: List<Chapter>) = editQueue {
+        removeFromQueue(chapters)
+    }
+
+    private suspend inline fun editQueue(edit: () -> Unit) = lock.withLock {
+        val wasRunning = isRunning
+        if (wasRunning) pauseLocked()
+
+        edit()
 
         if (wasRunning) {
-            start()
+            if (queueState.value.isEmpty()) stopLocked() else startLocked()
         }
     }
 

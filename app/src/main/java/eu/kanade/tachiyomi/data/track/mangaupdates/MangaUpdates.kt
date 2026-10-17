@@ -7,11 +7,7 @@ import eu.kanade.tachiyomi.data.track.BaseTracker
 import eu.kanade.tachiyomi.data.track.DeletableTracker
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUListItem
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MURating
-import eu.kanade.tachiyomi.data.track.mangaupdates.dto.copyTo
-import eu.kanade.tachiyomi.data.track.mangaupdates.dto.toTrackSearch
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.toImmutableList
 import tachiyomi.i18n.MR
 import tachiyomi.domain.track.model.Track as DomainTrack
 
@@ -34,12 +30,13 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
                     }
                 }
             }
-            .toImmutableList()
+
+        private const val SEARCH_ID_PREFIX = "id:"
     }
 
     private val interceptor by lazy { MangaUpdatesInterceptor(this) }
 
-    private val api by lazy { MangaUpdatesApi(interceptor, client) }
+    private val api by lazy { MangaUpdatesApi(client, interceptor) }
 
     override fun getLogo(): Int = R.drawable.brand_mangaupdates
 
@@ -62,7 +59,7 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
 
     override fun getCompletionStatus(): Long = COMPLETE_LIST
 
-    override fun getScoreList(): ImmutableList<String> = SCORE_LIST
+    override fun getScoreList(): List<String> = SCORE_LIST
 
     override fun indexToScore(index: Int): Double = if (index == 0) 0.0 else SCORE_LIST[index].toDouble()
 
@@ -84,7 +81,7 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
         return try {
             val (series, rating) = api.getSeriesListItem(track)
             track.copyFrom(series, rating)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             track.score = 0.0
             api.addSeriesToList(track, hasReadChapters)
             track
@@ -92,6 +89,17 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
     }
 
     override suspend fun search(query: String): List<TrackSearch> {
+        if (query.startsWith(SEARCH_ID_PREFIX)) {
+            return try {
+                val stringId = query.substringAfter(SEARCH_ID_PREFIX).trim()
+                val searchId = stringId.toLongOrNull() ?: stringId.toLong(36)
+
+                api.getSeriesDetails(searchId)?.let { listOf(it.toTrackSearch(id)) } ?: emptyList()
+            } catch (_: NumberFormatException) {
+                emptyList()
+            }
+        }
+
         return api.search(query)
             .map {
                 it.toTrackSearch(id)
@@ -109,9 +117,16 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
     }
 
     override suspend fun login(username: String, password: String) {
-        val authenticated = api.authenticate(username, password) ?: throw Throwable("Unable to login")
-        saveCredentials(authenticated.uid.toString(), authenticated.sessionToken)
+        val authenticated = api.authenticate(username, password)
         interceptor.newAuth(authenticated.sessionToken)
+        val currentUser = api.getCurrentUser()
+        saveDisplayUsername(currentUser.username)
+        saveCredentials(authenticated.uid.toString(), authenticated.sessionToken)
+    }
+
+    override suspend fun updateUserConfig() {
+        val currentUser = api.getCurrentUser()
+        saveDisplayUsername(currentUser.username)
     }
 
     fun restoreSession(): String? {

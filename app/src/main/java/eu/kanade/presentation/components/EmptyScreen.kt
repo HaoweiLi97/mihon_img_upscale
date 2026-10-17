@@ -1,13 +1,12 @@
 package eu.kanade.presentation.components
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.HelpOutline
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
-import kotlinx.collections.immutable.persistentListOf
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.automirroredrounded.Help
+import mihon.icons.materialsymbols.rounded.Refresh
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
@@ -31,15 +30,15 @@ private fun WithActionPreview() {
         Surface {
             EmptyScreen(
                 stringRes = MR.strings.empty_screen,
-                actions = persistentListOf(
+                actions = listOf(
                     EmptyScreenAction(
                         stringRes = MR.strings.action_retry,
-                        icon = Icons.Outlined.Refresh,
+                        icon = MaterialSymbols.Rounded.Refresh,
                         onClick = {},
                     ),
                     EmptyScreenAction(
                         stringRes = MR.strings.getting_started_guide,
-                        icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                        icon = MaterialSymbols.AutoMirroredRounded.Help,
                         onClick = {},
                     ),
                 ),

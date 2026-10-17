@@ -1,23 +1,25 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
 package eu.kanade.tachiyomi.util.waifu2x
 
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
+import okio.Buffer
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.launch
-import okio.Buffer
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 
@@ -28,12 +30,14 @@ object ImageEnhancementCache {
     private const val CACHE_DIR_NAME = "realcugan_cache"
     private const val PHOTO_NPU_INT8_CACHE_REVISION = 4
     private const val REAL_CUGAN_NPU_INT8_CACHE_REVISION = 1
+
     // Input decoding now preserves source resolution before enhancement.
     private const val ENHANCEMENT_INPUT_DECODE_REVISION = 1
     private const val REAL_CUGAN_TEXTURE_OCCUPANCY_REVISION = 3
     private const val MONOCHROME_INPUT_NORMALIZATION_REVISION = 3
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
+
     // A model change clears this directory while completed pages can still be
     // waiting in the background writer. Saving holds a shared lock for its
     // lifetime, so clear() cannot remove a file below an active writer. Cache
@@ -107,9 +111,15 @@ object ImageEnhancementCache {
                         val file = writeToCache(request)
                         if (file != null) {
                             _events.tryEmit(CacheEvent.Saved(request.cacheKey))
-                            android.util.Log.d("ImageEnhancementCache", "Saved page ${request.pageIndex}/${request.pageVariant} to ${file.absolutePath}")
+                            android.util.Log.d(
+                                "ImageEnhancementCache",
+                                "Saved page ${request.pageIndex}/${request.pageVariant} to ${file.absolutePath}",
+                            )
                         } else {
-                            android.util.Log.e("ImageEnhancementCache", "Failed to save page ${request.pageIndex}/${request.pageVariant}")
+                            android.util.Log.e(
+                                "ImageEnhancementCache",
+                                "Failed to save page ${request.pageIndex}/${request.pageVariant}",
+                            )
                         }
                     }
                 } finally {
@@ -157,7 +167,13 @@ object ImageEnhancementCache {
     /**
      * Get cached file if it exists
      */
-    fun getCachedImage(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = ""): File? {
+    fun getCachedImage(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        configHash: String,
+        pageVariant: String = "",
+    ): File? {
         val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant))
         return if (file.isFile) file else null
     }
@@ -229,18 +245,30 @@ object ImageEnhancementCache {
             android.util.Log.w("ImageEnhancementCache", "Discarded invalid enhanced image: ${file.name}")
         }
     }
-    
+
     /**
      * Check if a file is already cached (helper for UI checks)
      */
-    fun isCached(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = ""): Boolean {
+    fun isCached(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        configHash: String,
+        pageVariant: String = "",
+    ): Boolean {
         return getCachedImage(mangaId, chapterId, pageIndex, configHash, pageVariant) != null
     }
 
     /**
      * Remove a cached enhanced image and its temporary file for the same page/config.
      */
-    fun removeCachedImage(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = ""): Boolean {
+    fun removeCachedImage(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        configHash: String,
+        pageVariant: String = "",
+    ): Boolean {
         return cacheLock.write {
             try {
                 val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant))
@@ -249,7 +277,9 @@ object ImageEnhancementCache {
                 val removedTemp = !tempFile.exists() || tempFile.delete()
                 (removedFile && removedTemp).also { removed ->
                     if (removed) {
-                        _events.tryEmit(CacheEvent.Removed(cacheKey(mangaId, chapterId, pageIndex, configHash, pageVariant)))
+                        _events.tryEmit(
+                            CacheEvent.Removed(cacheKey(mangaId, chapterId, pageIndex, configHash, pageVariant)),
+                        )
                     }
                 }
             } catch (e: Exception) {
@@ -261,10 +291,13 @@ object ImageEnhancementCache {
 
     fun removeSkipMarker(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = ""): Boolean {
         return try {
-            val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant) + ".skip")
+            val file =
+                File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant) + ".skip")
             (!file.exists() || file.delete()).also { removed ->
                 if (removed) {
-                    _events.tryEmit(CacheEvent.Removed(cacheKey(mangaId, chapterId, pageIndex, configHash, pageVariant)))
+                    _events.tryEmit(
+                        CacheEvent.Removed(cacheKey(mangaId, chapterId, pageIndex, configHash, pageVariant)),
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -276,7 +309,14 @@ object ImageEnhancementCache {
     /**
      * Transfers ownership of [bitmap] to the cache pipeline, including when the request is rejected.
      */
-    suspend fun enqueueSaveToCache(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, bitmap: Bitmap, pageVariant: String = ""): Boolean {
+    suspend fun enqueueSaveToCache(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        configHash: String,
+        bitmap: Bitmap,
+        pageVariant: String = "",
+    ): Boolean {
         if (cacheDir == null || !isDisplayable(bitmap)) {
             if (!bitmap.isRecycled) bitmap.recycle()
             return false
@@ -320,7 +360,10 @@ object ImageEnhancementCache {
             }
             val bitmap = request.bitmap
             if (!isDisplayable(bitmap)) {
-                android.util.Log.e("ImageEnhancementCache", "Refusing to cache nearly transparent enhanced image for page ${request.pageIndex}")
+                android.util.Log.e(
+                    "ImageEnhancementCache",
+                    "Refusing to cache nearly transparent enhanced image for page ${request.pageIndex}",
+                )
                 return@read null
             }
 
@@ -390,9 +433,16 @@ object ImageEnhancementCache {
     /**
      * Mark a page as skipped (too large to process) in the cache
      */
-    fun saveSkippedToCache(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = "") {
+    fun saveSkippedToCache(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        configHash: String,
+        pageVariant: String = "",
+    ) {
         try {
-            val file = File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant) + ".skip")
+            val file =
+                File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant) + ".skip")
             if (!file.exists()) {
                 file.createNewFile()
             }
@@ -405,8 +455,17 @@ object ImageEnhancementCache {
     /**
      * Check if a page was marked as skipped in the cache
      */
-    fun isSkipped(mangaId: Long, chapterId: Long, pageIndex: Int, configHash: String, pageVariant: String = ""): Boolean {
-        return File(getChapterDir(mangaId, chapterId), getFilename(pageIndex, configHash, pageVariant) + ".skip").exists()
+    fun isSkipped(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        configHash: String,
+        pageVariant: String = "",
+    ): Boolean {
+        return File(
+            getChapterDir(mangaId, chapterId),
+            getFilename(pageIndex, configHash, pageVariant) + ".skip",
+        ).exists()
     }
 
     /**
@@ -436,7 +495,7 @@ object ImageEnhancementCache {
             _events.tryEmit(CacheEvent.Cleared)
         }
     }
-    
+
     /**
      * Delete all cache files
      */
@@ -483,8 +542,8 @@ object ImageEnhancementCache {
      * Generate a unique hash string based on current settings
      */
     fun getConfigHash(
-        noise: Int, 
-        scale: Int, 
+        noise: Int,
+        scale: Int,
         model: Int = 0,
         realEsrganStyle: Int = Waifu2x.REAL_ESRGAN_STYLE_ANIME,
         maxWidth: Int = 0,
@@ -530,7 +589,7 @@ object ImageEnhancementCache {
             else -> scale
         }
     }
-    
+
     /**
      * Clear all cache files for a specific chapter
      */
@@ -557,18 +616,18 @@ object ImageEnhancementCache {
 
         init(context)
         val dir = cacheDir ?: return
-        
+
         try {
             var size = dir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
             if (size > MAX_CACHE_SIZE) {
                 android.util.Log.d("ImageEnhancementCache", "Cache size ${size / 1024 / 1024}MB > 3GB, trimming...")
-                
+
                 // Get all files sorted by last modified (oldest first)
                 val files = dir.walkTopDown()
                     .filter { it.isFile }
                     .sortedBy { it.lastModified() }
                     .iterator()
-                
+
                 while (files.hasNext() && size > MAX_CACHE_SIZE * 0.9) { // Trim to 90%
                     val file = files.next()
                     val len = file.length()

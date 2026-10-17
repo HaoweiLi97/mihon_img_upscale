@@ -1,17 +1,27 @@
-import mihon.buildlogic.Config
-import mihon.buildlogic.getBuildTime
-import mihon.buildlogic.getCommitCount
-import mihon.buildlogic.getGitSha
+import com.android.build.api.variant.ApplicationVariant
+import com.android.build.api.variant.BuildConfigField
+import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsExtension
+import mihon.gradle.Config
+import mihon.gradle.getCurrentTime
+import mihon.gradle.getLatestCommitCount
+import mihon.gradle.getLatestCommitSha
+import mihon.gradle.getLatestCommitTime
+import mihon.gradle.tasks.ReplaceShortcutsPlaceholderTask
 import org.gradle.api.tasks.Sync
 import java.io.File
+import java.io.FileInputStream
 import java.util.Properties
 
 plugins {
-    id("mihon.android.application")
-    id("mihon.android.application.compose")
-    id("com.github.zellius.shortcut-helper")
-    kotlin("plugin.serialization")
+    alias(mihonx.plugins.android.application)
+    alias(mihonx.plugins.compose)
+    alias(mihonx.plugins.spotless)
+
+    alias(libs.plugins.metro)
     alias(libs.plugins.aboutLibraries)
+    alias(libs.plugins.androidx.baselineProfile)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.apollo)
 }
 
 if (Config.includeTelemetry) {
@@ -21,16 +31,16 @@ if (Config.includeTelemetry) {
     }
 }
 
-shortcutHelper.setFilePath("./shortcuts.xml")
+val keystorePropertiesFile = layout.settingsDirectory.file("keystore.properties").asFile
 
 val localProperties = Properties().apply {
-    val file = rootProject.file("local.properties")
+    val file = layout.settingsDirectory.file("local.properties").asFile
     if (file.exists()) {
         file.inputStream().use(::load)
     }
 }
 
-val bundledNcnnSdkDir = rootProject.file("third_party/ncnn-20260113-android-vulkan")
+val bundledNcnnSdkDir = layout.settingsDirectory.dir("third_party/ncnn-20260113-android-vulkan").asFile
 
 // AGP cannot shrink resources for an App Bundle when ABI split APKs are enabled.
 // Bundles already contain ABI-specific native libraries, so disable APK splits only for bundle tasks.
@@ -56,8 +66,8 @@ val qnnContextDir = providers.gradleProperty("qnnContextDir").orNull
     ?: localProperties.getProperty("qnn.context.dir")
     ?: System.getenv("QNN_CONTEXT_DIR")
 
-val qnnSdkRoot = qnnSdkDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
-val qnnContextRoot = qnnContextDir?.takeIf { it.isNotBlank() }?.let(rootProject::file)
+val qnnSdkRoot = qnnSdkDir?.takeIf { it.isNotBlank() }?.let { layout.settingsDirectory.file(it).asFile }
+val qnnContextRoot = qnnContextDir?.takeIf { it.isNotBlank() }?.let { layout.settingsDirectory.file(it).asFile }
 val generatedQnnAssetsDir = layout.buildDirectory.dir("generated/qnnAssets")
 val generatedQnnJniLibsDir = layout.buildDirectory.dir("generated/qnnJniLibs")
 val qnnContextTargets = listOf(
@@ -103,9 +113,11 @@ val qnnModelNames = listOf(
     "w2xex-photo-small-x2-int8",
 )
 val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
+    val targets = selectedQnnContextTargets
+    val models = qnnModelNames
     tasks.register<Sync>("stageQnnContexts") {
-        selectedQnnContextTargets.forEach { (htpArch, sourceSoc) ->
-            qnnModelNames.forEach { model ->
+        targets.forEach { (htpArch, sourceSoc) ->
+            models.forEach { model ->
                 val socFile = contextRoot.resolve("$model.$sourceSoc.bin")
                 val htpFile = contextRoot.resolve("$model.v$htpArch.bin")
                 val sourceFile = if (socFile.isFile) socFile else htpFile
@@ -118,11 +130,13 @@ val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
         into(generatedQnnAssetsDir)
 
         doFirst {
-            val missingFiles = selectedQnnContextTargets.flatMap { (htpArch, sourceSoc) ->
-                qnnModelNames.mapNotNull { model ->
+            val missingFiles = targets.flatMap { (htpArch, sourceSoc) ->
+                models.mapNotNull { model ->
                     val socFile = contextRoot.resolve("$model.$sourceSoc.bin")
                     val htpFile = contextRoot.resolve("$model.v$htpArch.bin")
-                    if (socFile.isFile || htpFile.isFile) null else {
+                    if (socFile.isFile || htpFile.isFile) {
+                        null
+                    } else {
                         "$model.$sourceSoc.bin (or $model.v$htpArch.bin)"
                     }
                 }
@@ -152,12 +166,10 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 39
-        versionName = "1.3.12"
+        versionCode = 40
+        versionName = "1.3.13"
+        buildConfigField("int", "UPSTREAM_VERSION_CODE", "38")
 
-        buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
-        buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
-        buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLastCommitTime = false)}\"")
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
@@ -176,19 +188,42 @@ android {
         }
     }
 
+    if (System.getenv("MIHON_GITHUB_RELEASE").toBoolean()) {
+        signingConfigs {
+            named("debug") {
+                storeFile = file(System.getenv("storeFile"))
+                storePassword = System.getenv("storePassword")
+                keyAlias = System.getenv("keyAlias")
+                keyPassword = System.getenv("keyPassword")
+            }
+        }
+    } else if (keystorePropertiesFile.exists()) {
+        val keystoreProperties = FileInputStream(keystorePropertiesFile).use { Properties().apply { load(it) } }
+
+        signingConfigs {
+            named("debug") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
-        val debug by getting {
+        val debug = getByName("debug") {
             applicationIdSuffix = ".dev"
-            versionNameSuffix = "-${getCommitCount()}"
             isPseudoLocalesEnabled = true
         }
-        val release by getting {
-            isMinifyEnabled = Config.enableCodeShrink
-            isShrinkResources = Config.enableCodeShrink
+        val release = getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+
+            signingConfig = debug.signingConfig
+
+            isProfileable = true
 
             proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
-
-            buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLastCommitTime = true)}\"")
         }
 
         val commonMatchingFallbacks = listOf(release.name)
@@ -200,40 +235,39 @@ android {
 
             matchingFallbacks.addAll(commonMatchingFallbacks)
         }
-        create("preview") {
+        create("nightly") {
             initWith(release)
 
             applicationIdSuffix = ".debug"
 
-            versionNameSuffix = debug.versionNameSuffix
-            signingConfig = debug.signingConfig
-
             matchingFallbacks.addAll(commonMatchingFallbacks)
-
-            buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLastCommitTime = false)}\"")
         }
         create("benchmark") {
             initWith(release)
 
-            isDebuggable = false
-            isProfileable = true
             versionNameSuffix = "-benchmark"
             applicationIdSuffix = ".benchmark"
 
-            signingConfig = debug.signingConfig
-
             matchingFallbacks.addAll(commonMatchingFallbacks)
+        }
+
+        if (Config.includeTelemetry) {
+            configureEach {
+                configure<CrashlyticsExtension> {
+                    mappingFileUploadEnabled = Config.uploadCrashlyticsMapping
+                }
+            }
         }
     }
 
     sourceSets {
-        getByName("preview").res.srcDirs("src/debug/res")
-        getByName("benchmark").res.srcDirs("src/debug/res")
+        getByName("nightly").res.directories.add("src/debug/res")
+        getByName("benchmark").res.directories.add("src/debug/res")
         if (stageQnnContexts != null) {
-            getByName("main").assets.srcDir(generatedQnnAssetsDir)
+            getByName("main").assets.directories.add(generatedQnnAssetsDir.get().asFile.path)
         }
         if (stageQnnDlcRuntime != null) {
-            getByName("main").jniLibs.srcDir(generatedQnnJniLibsDir)
+            getByName("main").jniLibs.directories.add(generatedQnnJniLibsDir.get().asFile.path)
         }
     }
 
@@ -292,10 +326,6 @@ android {
         viewBinding = true
         buildConfig = true
         aidl = true
-
-        // Disable some unused things
-        renderScript = false
-        shaders = false
     }
 
     externalNativeBuild {
@@ -348,15 +378,24 @@ kotlin {
     }
 }
 
+baselineProfile {
+    baselineProfileOutputDir = "baselineProfiles"
+    mergeIntoMain = true
+}
+
 dependencies {
-    // Packages the matching HTP Stub/Skel libraries for every supported Snapdragon generation.
     implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
-    androidTestImplementation(androidx.test.ext)
+    androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation("androidx.test:runner:1.7.0")
+    baselineProfile(projects.baselineProfile)
 
     implementation(projects.i18n)
+    implementation(projects.icons.customMaterialSymbols)
+    implementation(projects.icons.materialSymbols)
+    implementation(projects.icons.simpleIcons)
     implementation(projects.core.archive)
     implementation(projects.core.common)
+    implementation(projects.core.metro)
     implementation(projects.coreMetadata)
     implementation(projects.sourceApi)
     implementation(projects.sourceLocal)
@@ -367,91 +406,93 @@ dependencies {
     implementation(projects.telemetry)
 
     // Compose
-    implementation(compose.activity)
-    implementation(compose.foundation)
-    implementation(compose.material3.core)
-    implementation(compose.material.icons)
-    implementation(compose.animation)
-    implementation(compose.animation.graphics)
-    debugImplementation(compose.ui.tooling)
-    implementation(compose.ui.tooling.preview)
-    implementation(compose.ui.util)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.animation)
+    implementation(libs.androidx.compose.animationGraphics)
+    debugImplementation(libs.androidx.compose.uiTooling)
+    implementation(libs.androidx.compose.uiToolingPreview)
+    implementation(libs.androidx.compose.uiUtil)
+    implementation(libs.androidx.navigationEvent)
 
-    implementation(androidx.interpolator)
+    implementation(libs.androidx.interpolator)
 
-    implementation(androidx.paging.runtime)
-    implementation(androidx.paging.compose)
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
 
-    implementation(libs.bundles.sqlite)
+    implementation(libs.kotlin.reflect)
 
-    implementation(kotlinx.reflect)
-    implementation(kotlinx.immutables)
+    implementation(libs.bundles.kotlinx.coroutines)
 
-    implementation(platform(kotlinx.coroutines.bom))
-    implementation(kotlinx.bundles.coroutines)
+    implementation(libs.kotlinx.datetime)
 
     // AndroidX libraries
-    implementation(androidx.annotation)
-    implementation(androidx.appcompat)
-    implementation(androidx.biometricktx)
-    implementation(androidx.constraintlayout)
-    implementation(androidx.corektx)
-    implementation(androidx.splashscreen)
-    implementation(androidx.recyclerview)
-    implementation(androidx.viewpager)
-    implementation(androidx.profileinstaller)
+    implementation(libs.androidx.annotation)
+    implementation(libs.androidx.appCompat)
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.constraintLayout)
+    implementation(libs.androidx.core)
+    implementation(libs.androidx.coreSplashScreen)
+    implementation(libs.androidx.recyclerView)
+    implementation(libs.androidx.viewPager)
+    implementation(libs.androidx.profileInstaller)
 
-    implementation(androidx.bundles.lifecycle)
+    implementation(libs.bundles.androidx.lifecycle)
 
     // Job scheduling
-    implementation(androidx.workmanager)
+    implementation(libs.androidx.work)
 
     // RxJava
-    implementation(libs.rxjava)
+    implementation(libs.rxJava)
 
     // Networking
     implementation(libs.bundles.okhttp)
     implementation(libs.okio)
-    implementation(libs.conscrypt.android) // TLS 1.3 support for Android < 10
+    implementation(libs.conscrypt) // TLS 1.3 support for Android < 10
 
     // Data serialization (JSON, protobuf, xml)
-    implementation(kotlinx.bundles.serialization)
+    implementation(libs.bundles.serialization)
 
     // HTML parser
     implementation(libs.jsoup)
 
     // Disk
-    implementation(libs.disklrucache)
+    implementation(libs.diskLruCache)
     implementation(libs.unifile)
 
     // Preferences
-    implementation(libs.preferencektx)
+    implementation(libs.androidx.preference)
 
     // Dependency injection
     implementation(libs.injekt)
+    implementation(libs.metro.runtime)
+    implementation(libs.metrox.viewmodel)
+    implementation(libs.metrox.viewmodel.compose)
 
     // Image loading
-    implementation(platform(libs.coil.bom))
     implementation(libs.bundles.coil)
-    implementation(libs.subsamplingscaleimageview) {
+    implementation(libs.subsamplingScaleImageView) {
         exclude(module = "image-decoder")
     }
     implementation(libs.image.decoder)
 
+    implementation(libs.webgpuviewer)
+
     // UI libraries
     implementation(libs.material)
-    implementation(libs.flexible.adapter.core)
-    implementation(libs.photoview)
-    implementation(libs.directionalviewpager) {
+    implementation(libs.flexibleAdapter)
+    implementation(libs.photoView)
+    implementation(libs.directionalViewPager) {
         exclude(group = "androidx.viewpager", module = "viewpager")
     }
-    implementation(libs.richeditor.compose)
+    implementation(libs.composeRichEditor)
     implementation(libs.aboutLibraries.compose)
     implementation(libs.bundles.voyager)
-    implementation(libs.compose.materialmotion)
+    implementation(libs.composeMaterialMotion)
     implementation(libs.swipe)
-    implementation(libs.compose.webview)
-    implementation(libs.compose.grid)
+    implementation(libs.composeWebview)
+    implementation(libs.composeGrid)
     implementation(libs.reorderable)
     implementation(libs.bundles.markdown)
     implementation(libs.materialKolor)
@@ -465,27 +506,133 @@ dependencies {
     // String similarity
     implementation(libs.stringSimilarity)
 
+    // GraphQL generation
+    implementation(libs.apollo)
+    implementation(libs.apollo.adapters)
+
     // Tests
     testImplementation(libs.bundles.test)
     testRuntimeOnly(libs.junit.platform.launcher)
 
     // For detecting memory leaks; see https://square.github.io/leakcanary/
-    // debugImplementation(libs.leakcanary.android)
-    implementation(libs.leakcanary.plumber)
+    // debugImplementation(libs.leakCanary.android)
+    implementation(libs.leakCanary.plumber)
 
-    testImplementation(kotlinx.coroutines.test)
+    testImplementation(libs.kotlinx.coroutines.test)
+}
+
+apollo {
+    val schemaBasePath = "src/main/graphql/mihon/graphql"
+    service("anilist") {
+        packageName.set("mihon.graphql.anilist")
+        val srcDir = "$schemaBasePath/anilist"
+        srcDir(file(srcDir))
+
+        introspection {
+            endpointUrl.set("https://graphql.anilist.co")
+            schemaFile.set(file("$srcDir/anilist.graphqls"))
+        }
+
+        // ISO 3166-1 alpha-2 country code
+        mapScalarToKotlinString("CountryCode")
+    }
+
+    service("kitsu") {
+        packageName.set("mihon.graphql.kitsu")
+        val srcDir = "$schemaBasePath/kitsu"
+        srcDir(file(srcDir))
+        android.defaultConfig.versionCode
+
+        introspection {
+            // Kitsu doesn't like requests without a UA
+            headers.put(
+                "User-Agent",
+                "Mihon v${android.defaultConfig.versionName} (${android.defaultConfig.applicationId})",
+            )
+            endpointUrl.set("https://kitsu.app/api/graphql")
+            schemaFile.set(file("$srcDir/kitsu.graphqls"))
+        }
+
+        // A date, expressed as an ISO8601 string
+        mapScalarToKotlinString("Date")
+        // An ISO 8601-encoded datetime
+        mapScalar("ISO8601DateTime", "kotlin.time.Instant", "com.apollographql.adapter.core.KotlinInstantAdapter")
+        // A loose key-value map in GraphQL
+        mapScalar(
+            "Map",
+            "kotlin.collections.Map<String, Any?>",
+            "mihon.graphql.kitsu.adapter.KitsuMapAdapter",
+        )
+    }
+
+    service("shikimori") {
+        packageName.set("mihon.graphql.shikimori")
+        val srcDir = "$schemaBasePath/shikimori"
+        srcDir(file(srcDir))
+
+        introspection {
+            endpointUrl.set("https://shikimori.io/api/graphql")
+            schemaFile.set(file("$srcDir/shikimori.graphqls"))
+        }
+
+        // An ISO 8601-encoded date
+        mapScalarToKotlinString("ISO8601Date")
+    }
+
+    service("suwayomi") {
+        packageName.set("mihon.graphql.suwayomi")
+        val srcDir = "$schemaBasePath/suwayomi"
+        srcDir(file(srcDir))
+
+        introspection {
+            endpointUrl.set("http://localhost:4567/api/graphql")
+            schemaFile.set(file("$srcDir/suwayomi.graphqls"))
+        }
+    }
+}
+
+val latestCommitCount = getLatestCommitCount()
+val latestCommitSha = getLatestCommitSha()
+val latestCommitTime = getLatestCommitTime()
+val currentTime = getCurrentTime()
+
+fun ApplicationVariant.buildConfigField(type: String, name: String, value: Provider<String>) {
+    buildConfigFields?.put(name, value.map { BuildConfigField(type, it, null) })
 }
 
 androidComponents {
+    onVariants { variant ->
+        val isUnstableBuild = variant.buildType == "debug" || variant.buildType == "nightly"
+        val buildTime = if (isUnstableBuild) currentTime else latestCommitTime
+
+        variant.buildConfigField("String", "COMMIT_COUNT", latestCommitCount.map { "\"$it\"" })
+        variant.buildConfigField("String", "COMMIT_SHA", latestCommitSha.map { "\"$it\"" })
+        variant.buildConfigField("String", "BUILD_TIME", buildTime.map { "\"$it\"" })
+
+        if (isUnstableBuild) {
+            variant.outputs.forEach { output ->
+                val versionName = output.versionName.get()
+                output.versionName.set(latestCommitCount.map { "$versionName-$it" })
+            }
+        }
+    }
+
+    onVariants { variant ->
+        val resSource = variant.sources.res ?: return@onVariants
+
+        val variantName = variant.name.replaceFirstChar { it.uppercase() }
+        val replaceShortcutsPlaceholderTask = tasks.register<ReplaceShortcutsPlaceholderTask>(
+            "replace${variantName}ShortcutPlaceholder",
+        ) {
+            applicationId.set(variant.applicationId)
+            shortcutsFile.set(projectDir.resolve("src/main/shortcuts.xml"))
+        }
+        resSource.addGeneratedSourceDirectory(replaceShortcutsPlaceholderTask) { it.outputDir }
+    }
+
     onVariants(selector().withFlavor("default" to "standard")) {
         // Only excluding in standard flavor because this breaks
         // Layout Inspector's Compose tree
         it.packaging.resources.excludes.add("META-INF/*.version")
-    }
-}
-
-buildscript {
-    dependencies {
-        classpath(kotlinx.gradle)
     }
 }

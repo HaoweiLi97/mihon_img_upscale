@@ -8,10 +8,10 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.util.Log
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
-import tachiyomi.decoder.ImageDecoder
 import java.io.InputStream
 import kotlin.math.ceil
 import kotlin.math.roundToInt
+import eu.kanade.tachiyomi.util.image.EnhancementImageDecoder as ImageDecoder
 
 /** Prepares the square NHWC RGB input used by Qualcomm's Depth Anything V3 DLC. */
 internal object DepthImagePreprocessor {
@@ -153,11 +153,7 @@ internal object DepthImagePreprocessor {
         )?.let { return it }
 
         val decoder = try {
-            ImageDecoder.newInstance(
-                encoded.inputStream(),
-                false,
-                TachiyomiImageDecoder.displayProfile,
-            )
+            ImageDecoder.open(encoded.inputStream())
         } catch (_: Exception) {
             null
         } ?: error("The current page uses an unsupported or damaged image format")
@@ -209,8 +205,11 @@ internal object DepthImagePreprocessor {
         val tileCount = ceil(longSide.toFloat() / shortSide).toInt().coerceIn(2, MAX_DETAIL_TILES)
         val travel = longSide - shortSide
         return List(tileCount) { index ->
-            val longOffset = if (tileCount == 1) 0 else
+            val longOffset = if (tileCount == 1) {
+                0
+            } else {
                 (travel * index.toFloat() / (tileCount - 1)).roundToInt()
+            }
             val sourceLeft = if (source.width >= source.height) longOffset else 0
             val sourceTop = if (source.height > source.width) longOffset else 0
             val input = createModelInput(
