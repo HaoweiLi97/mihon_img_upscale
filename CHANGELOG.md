@@ -12,6 +12,8 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.13] - 2026-10-16
+
 ### Changed
 - Synchronize the complete upstream Mihon tree through `446f6df82c390ab760802c2fce3b677bce3f31c1` (2026-10-13), including the new chapter/manga schema, extension stores, reader, build tools and dependencies.
 - Adapt image enhancement, spatial rendering, category downloads and cloud backup records to the upstream APIs.
