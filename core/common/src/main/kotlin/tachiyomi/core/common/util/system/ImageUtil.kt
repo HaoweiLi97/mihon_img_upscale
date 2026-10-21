@@ -39,18 +39,8 @@ object ImageUtil {
     fun decodeBitmap(source: BufferedSource): Bitmap? = try {
         source.peek().inputStream().use { stream ->
             ImageDecoder.open(stream).use { decoder ->
-                decoder.decodeNext().use { frame ->
-                    val config = if (decoder.isHdr) Bitmap.Config.RGBA_F16 else Bitmap.Config.ARGB_8888
-                    createBitmap(frame.width, frame.height, config).also { bitmap ->
-                        try {
-                            frame.image.rewind()
-                            bitmap.copyPixelsFromBuffer(frame.image)
-                        } catch (error: Throwable) {
-                            bitmap.recycle()
-                            throw error
-                        }
-                    }
-                }
+                // Decode directly into the bitmap instead of keeping a second full RGBA frame.
+                decoder.decodeToBitmap()
             }
         }
     } catch (error: Exception) {

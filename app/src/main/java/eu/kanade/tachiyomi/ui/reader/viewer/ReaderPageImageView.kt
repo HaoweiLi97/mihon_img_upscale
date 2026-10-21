@@ -247,6 +247,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var pageView: View? = null
     private var currentLoadedUri: String? = null
     private var imageRevision = 0
+    private var hasDisplayedImage = false
+    private var pendingInitialEnhancement: (() -> Unit)? = null
     private var currentCachedFile: java.io.File? = null
     private var originalStreamFn: (() -> java.io.InputStream)? = null
     private var enhancedRecoveryCount = 0
@@ -336,8 +338,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     @CallSuper
     open fun onImageLoaded() {
+        hasDisplayedImage = true
         onImageLoaded?.invoke()
         background = pageBackground
+        notifyVisibleImageDisplayed()
 
         // Keep the processed preview fully covering the page until the replacement image is ready,
         // then switch instantly to avoid exposing SSIV's blank loading state.
@@ -350,6 +354,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
             enhancedBitmap?.recycle()
             enhancedBitmap = null
             isSettingProcessedImage = false
+        }
+    }
+
+    private fun notifyVisibleImageDisplayed() {
+        val revision = imageRevision
+        // onReady runs before drawing. Leave a complete frame for the original
+        // before GPU/NPU work or a cached replacement can occupy the renderer.
+        postOnAnimation {
+            postOnAnimation displayed@{
+                if (revision != imageRevision || !hasDisplayedImage) return@displayed
+                val enhance = pendingInitialEnhancement
+                pendingInitialEnhancement = null
+                enhance?.invoke()
+                if (isVisibleOnScreen()) {
+                    ImageEnhancer.onVisibleImageDisplayed(
+                        readerPage?.index ?: pageIndex,
+                        enhancementVariant(),
+                    )
+                }
+            }
         }
     }
 
@@ -853,8 +877,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
             currentGlobalPageIndex = pIdx
             ImageEnhancer.reprioritizeAround(pIdx, enhancementVariant())
         }
+        if (hasDisplayedImage) notifyVisibleImageDisplayed()
 
-        if (pIdx >= 0 && mId != -1L && cId != -1L) {
+        if (hasDisplayedImage && pIdx >= 0 && mId != -1L && cId != -1L) {
             // 1. Check cache status and update UI
             if (realCuganEnabled) {
                 ImageEnhancementCache.init(context)
@@ -975,6 +1000,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     fun setImage(drawable: Drawable, config: Config) {
         imageRevision++
+        hasDisplayedImage = false
+        pendingInitialEnhancement = null
         processingJob?.cancel()
         currentCachedFile = null
         enhancedRecoveryCount = 0
@@ -991,6 +1018,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config, streamFn: (() -> java.io.InputStream)? = null) {
         imageRevision++
+        hasDisplayedImage = false
+        pendingInitialEnhancement = null
         processingJob?.cancel()
         currentCachedFile = null
         enhancedRecoveryCount = 0
@@ -1012,6 +1041,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
         stripRequest?.dispose()
         stripRequest = null
         imageRevision++
+        hasDisplayedImage = false
+        pendingInitialEnhancement = null
         updateStatus(null)
         currentCachedFile = null
         originalStreamFn = null
@@ -1119,6 +1150,16 @@ open class ReaderPageImageView @JvmOverloads constructor(
         streamFn: (() -> java.io.InputStream)? = null,
         allowEnhancement: Boolean = true,
     ) = (pageView as? SubsamplingScaleImageView)?.apply {
+        pendingInitialEnhancement = if (allowEnhancement && realCuganEnabled && pageIndex >= 0 && mangaId != -1L) {
+            {
+                processImageHelper(
+                    streamFn = streamFn,
+                    originalData = (data as? BitmapDrawable)?.bitmap,
+                )
+            }
+        } else {
+            null
+        }
         setDoubleTapZoomDuration(config.zoomDuration.getSystemScaledDuration())
         setMinimumScaleType(config.minimumScaleType)
         setMinimumDpi(1) // Just so that very small image will be fit for initial load
@@ -1140,7 +1181,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         when (data) {
             is BitmapDrawable -> {
                 setImageWithCurrentCrop(ImageSource.bitmap(data.bitmap))
-                processImageHelper(originalData = data.bitmap)
             }
             is BufferedSource -> {
                 // Determine hardware config and load stream for SSIV display
@@ -1151,10 +1191,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 )
                 isVisible = true
 
-                // Enhancement Logic for Stream Sources
-                if (allowEnhancement && realCuganEnabled && pageIndex >= 0 && mangaId != -1L) {
-                    processImageHelper(streamFn = streamFn)
-                }
                 return@apply
             }
             else -> {

@@ -34,6 +34,7 @@ object ImageEnhancementCache {
     private const val ENHANCEMENT_INPUT_DECODE_REVISION = 1
     private const val REAL_CUGAN_TEXTURE_OCCUPANCY_REVISION = 3
     private const val MONOCHROME_INPUT_NORMALIZATION_REVISION = 3
+    private const val REAL_ESRGAN_PHOTO_NCNN_REVISION = 1
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
 
@@ -45,7 +46,9 @@ object ImageEnhancementCache {
     private var lastTrimTime = 0L
     private val cacheGeneration = AtomicInteger(0)
     private val pendingSaveKeys = ConcurrentHashMap<CacheKey, SaveRequest>()
-    private val saveQueue = Channel<SaveRequest>(capacity = 1, onUndeliveredElement = ::releaseSaveRequest)
+    // Large enhanced bitmaps must not pile up behind the encoder. Hand each one
+    // directly to the writer before allowing the next enhancement to advance.
+    private val saveQueue = Channel<SaveRequest>(capacity = Channel.RENDEZVOUS, onUndeliveredElement = ::releaseSaveRequest)
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     data class CacheKey(
@@ -593,6 +596,13 @@ object ImageEnhancementCache {
         val resolvedBackend = Waifu2x.resolveProcessingBackend(processingBackend, model, effectiveScale)
         val resolvedPrecision = Waifu2x.resolvePrecision(precision, resolvedBackend, model, effectiveScale)
         val modelRevision = buildString {
+            if (
+                model == Waifu2x.MODEL_REAL_ESRGAN_ANIME &&
+                realEsrganStyle == Waifu2x.REAL_ESRGAN_STYLE_PHOTO &&
+                resolvedBackend == Waifu2x.PROCESSING_BACKEND_VULKAN
+            ) {
+                append("_rp$REAL_ESRGAN_PHOTO_NCNN_REVISION")
+            }
             if (resolvedBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU) {
                 append("_qv${Waifu2x.QNN_CONTEXT_CACHE_VERSION}_nf1")
             }

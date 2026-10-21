@@ -12,6 +12,17 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.16] - 2026-10-21
+
+### Fixed
+- Display the original image before starting enhancement and restore both visible enhancement targets when opening a double-page spread.
+- Update the image decoder to avoid a native buffer crash during page loading.
+- Regenerate the Real-ESRGAN Photo NCNN model from the official weights and refresh its model and image caches.
+
+### Improved
+- Reduce temporary image buffers and crop copies, release discarded page decoders promptly, and limit large images waiting for cache encoding.
+- Keep the existing adjacent-page preload range and wait for replacement image tiles before removing the previous image.
+
 ## [v1.3.15] - 2026-10-21
 
 ### Added

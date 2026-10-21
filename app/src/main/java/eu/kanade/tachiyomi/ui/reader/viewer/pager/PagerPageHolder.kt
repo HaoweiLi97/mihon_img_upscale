@@ -113,6 +113,7 @@ class PagerPageHolder(
     private var extraEnhancementState: String? = null
     private var halfStatusJob: Job? = null
     private var pageSpreadRetryJob: Job? = null
+    private var hasReceivedSelection = false
 
     private val readerPreferences by lazy { Injekt.get<ReaderPreferences>() }
     private val leftStatusView by lazy { createHalfStatusView(Gravity.BOTTOM or Gravity.START) }
@@ -151,6 +152,8 @@ class PagerPageHolder(
         halfStatusJob = null
         pageSpreadRetryJob?.cancel()
         pageSpreadRetryJob = null
+        // Region decoders own native allocations that otherwise wait for finalization.
+        recycle()
     }
 
     private fun createHalfStatusView(gravity: Int): TextView {
@@ -856,8 +859,8 @@ class PagerPageHolder(
         isLTR: Boolean,
         background: Int,
     ): BufferedSource {
-        val fittedFirstBitmap = trimBitmapBorders(firstBitmap)
-        val fittedSecondBitmap = trimBitmapBorders(secondBitmap)
+        val firstContentRect = contentRect(firstBitmap)
+        val secondContentRect = contentRect(secondBitmap)
         val metrics = context.resources.displayMetrics
         val viewportWidth =
             when {
@@ -886,9 +889,10 @@ class PagerPageHolder(
             result.applyCanvas {
                 drawColor(background)
 
-                fun drawFitted(bitmap: Bitmap, cellLeft: Int, alignToCenter: Boolean) {
-                    val horizontalInset = if (bitmap.width > 8) 1 else 0
-                    val sourceRect = Rect(horizontalInset, 0, bitmap.width - horizontalInset, bitmap.height)
+                fun drawFitted(bitmap: Bitmap, content: Rect, cellLeft: Int, alignToCenter: Boolean) {
+                    // Crop while drawing instead of allocating another page-sized bitmap.
+                    val horizontalInset = if (content.width() > 8) 1 else 0
+                    val sourceRect = Rect(content).apply { inset(horizontalInset, 0) }
                     val scale = min(
                         cellWidth / sourceRect.width().toFloat(),
                         viewportHeight / sourceRect.height().toFloat(),
@@ -915,11 +919,11 @@ class PagerPageHolder(
                 val leftCellStart = 0
                 val rightCellStart = cellWidth + adjustedHingeGap
                 if (isLTR) {
-                    drawFitted(fittedFirstBitmap, leftCellStart, alignToCenter = true)
-                    drawFitted(fittedSecondBitmap, rightCellStart, alignToCenter = false)
+                    drawFitted(firstBitmap, firstContentRect, leftCellStart, alignToCenter = true)
+                    drawFitted(secondBitmap, secondContentRect, rightCellStart, alignToCenter = false)
                 } else {
-                    drawFitted(fittedSecondBitmap, leftCellStart, alignToCenter = true)
-                    drawFitted(fittedFirstBitmap, rightCellStart, alignToCenter = false)
+                    drawFitted(secondBitmap, secondContentRect, leftCellStart, alignToCenter = true)
+                    drawFitted(firstBitmap, firstContentRect, rightCellStart, alignToCenter = false)
                 }
             }
 
@@ -927,34 +931,15 @@ class PagerPageHolder(
             result.compress(Bitmap.CompressFormat.JPEG, 100, output.outputStream())
             return BookPageImageSource(output, imageBounds.toList())
         } finally {
-            if (fittedFirstBitmap !== firstBitmap) {
-                fittedFirstBitmap.recycle()
-            }
-            if (fittedSecondBitmap !== secondBitmap) {
-                fittedSecondBitmap.recycle()
-            }
             result.recycle()
         }
     }
 
-    private fun trimBitmapBorders(bitmap: Bitmap): Bitmap {
+    private fun contentRect(bitmap: Bitmap): Rect {
         if (!viewer.config.imageCropBorders || bitmap.width <= 2 || bitmap.height <= 2) {
-            return bitmap
+            return Rect(0, 0, bitmap.width, bitmap.height)
         }
-
-        val cropRect = detectContentRect(bitmap)
-        if (
-            cropRect.left <= 0 &&
-            cropRect.top <= 0 &&
-            cropRect.right >= bitmap.width &&
-            cropRect.bottom >= bitmap.height
-        ) {
-            return bitmap
-        }
-
-        val croppedWidth = (cropRect.right - cropRect.left).coerceAtLeast(1)
-        val croppedHeight = (cropRect.bottom - cropRect.top).coerceAtLeast(1)
-        return Bitmap.createBitmap(bitmap, cropRect.left, cropRect.top, croppedWidth, croppedHeight)
+        return detectContentRect(bitmap)
     }
 
     private fun detectContentRect(bitmap: Bitmap): Rect {
@@ -1101,11 +1086,18 @@ class PagerPageHolder(
     }
 
     override fun onImageLoaded() {
+        // The initial selection may arrive before ViewPager exposes this holder.
+        // Restore both enhancement targets before the first displayed frame releases the worker.
+        if (!hasReceivedSelection && viewer.isSelectedHolder(this)) {
+            android.util.Log.i("ImageEnhancer", "Restoring visible spread selection: ${page.index}/${extraPage?.index}")
+            onPageSelected(forward = true)
+        }
         super.onImageLoaded()
         progressIndicator?.hide()
     }
 
     override fun onPageSelected(forward: Boolean) {
+        hasReceivedSelection = true
         setTransitionTargetPage(page)
         super.onPageSelected(forward)
         ImageEnhancer.reprioritizeAround(

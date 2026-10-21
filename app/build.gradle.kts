@@ -154,8 +154,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 42
-        versionName = "1.3.15"
+        versionCode = 43
+        versionName = "1.3.16"
         buildConfigField("int", "UPSTREAM_VERSION_CODE", "38")
 
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")

@@ -288,6 +288,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                     isSameDisplayedPage(it.item.second as? ReaderPage, page)
             }
 
+    internal fun isSelectedHolder(holder: PagerPageHolder): Boolean =
+        adapter.joinedItems.getOrNull(pager.currentItem) == holder.item
+
     /**
      * Called when a new page (either a [ReaderPage] or [ChapterTransition]) is marked as active
      */
@@ -370,6 +373,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         val currentPageNumber = page.number
         val totalPageCount = pages.size
         currentReaderPage = page
+        // ViewPager can select the initial spread before its holder has been added.
+        // Keep preloading anchored to the selected page even when that callback is missed.
+        eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView.currentGlobalPageIndex = page.index
         logcat { "onReaderPageSelected: $currentPageNumber/$totalPageCount" }
         activity.onPageSelected(page, hasExtraPage, currentPageNumber, totalPageCount)
 

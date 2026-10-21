@@ -59,6 +59,10 @@ object ImageEnhancer {
     @Volatile
     private var initialTargetEnqueued = false
 
+    // Model initialization/inference must not compete with the reader's first
+    // original-image decode or replace it before its first frame is visible.
+    private var waitingForVisibleImage = false
+
     @Volatile
     private var activeMangaId = -1L
 
@@ -151,7 +155,9 @@ object ImageEnhancer {
 
                     // Poll under the same monitor as reprioritization/cancellation.
                     // Waiting for work must not hold that monitor or an IO thread.
-                    val req = synchronized(this@ImageEnhancer) { queue.poll() }
+                    val req = synchronized(this@ImageEnhancer) {
+                        if (waitingForVisibleImage) null else queue.poll()
+                    }
                     if (req == null) {
                         queueSignal.receive()
                         continue
@@ -195,7 +201,6 @@ object ImageEnhancer {
         enhanceLazy(context, mangaId, chapterId, pageIndex, highPriority, pageVariant) { data }
     }
 
-    @Synchronized
     fun enhanceLazy(
         context: Context,
         mangaId: Long,
@@ -205,6 +210,7 @@ object ImageEnhancer {
         pageVariant: String = "",
         dataProvider: () -> Any?,
     ) {
+        val requestGeneration = generation.get()
         initializeRuntime(context.applicationContext)
         val configHash = currentConfigHash()
         if (
@@ -215,10 +221,27 @@ object ImageEnhancer {
         }
         if (ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant, configHash)) return
 
+        enqueueRequest(context, mangaId, chapterId, pageIndex, highPriority, pageVariant, requestGeneration, dataProvider)
+    }
+
+    // Only in-memory queue state is protected here. Cache I/O must never hold
+    // the monitor used by the UI for page selection and progress queries.
+    @Synchronized
+    private fun enqueueRequest(
+        context: Context,
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        highPriority: Boolean,
+        pageVariant: String,
+        requestGeneration: Int,
+        dataProvider: () -> Any?,
+    ) {
+        if (requestGeneration != generation.get()) return
+
         val isInitialTargetRequest = !initialTargetEnqueued && pageIndex == targetPageIndex
         val effectiveHighPriority = highPriority || isInitialTargetRequest
         val requestKey = requestKey(mangaId, chapterId, pageIndex, pageVariant)
-        val requestGeneration = generation.get()
 
         val existingRequest = pendingRequests[requestKey]
         if (existingRequest != null) {
@@ -287,7 +310,16 @@ object ImageEnhancer {
         lastResetTime = System.currentTimeMillis()
         isFirstRequestAfterReset = true
         initialTargetEnqueued = false
+        waitingForVisibleImage = true
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Resetting state to page $initialPageIndex" }
+    }
+
+    @Synchronized
+    fun onVisibleImageDisplayed(pageIndex: Int, pageVariant: String = "") {
+        if (!waitingForVisibleImage || !isFocusedTarget(pageIndex, pageVariant)) return
+        waitingForVisibleImage = false
+        android.util.Log.i("ImageEnhancer", "First visible image displayed: $pageIndex/$pageVariant; releasing ${queue.size} queued requests")
+        queueSignal.trySend(Unit)
     }
 
     @Synchronized
@@ -435,6 +467,7 @@ object ImageEnhancer {
             // A reset must finish before this attempt can initialize a new model.
             resetJob?.join()
             if (req.generation != generation.get() || req.cancelled.get()) return
+            android.util.Log.i("ImageEnhancer", "Processing page ${req.pageIndex}/${req.pageVariant}, generation=${req.generation}")
             logcat(LogPriority.DEBUG) {
                 "ImageEnhancer: Processing page ${req.pageIndex}/${req.pageVariant} (priority=${req.priority})"
             }
