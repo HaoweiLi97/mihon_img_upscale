@@ -1,111 +1,113 @@
 # Mihon_img_upscale
 
-基于 [Mihon](https://github.com/mihonapp/mihon) 的漫画阅读器，集成 AI 图像增强、Vulkan GPU 加速、Qualcomm / MediaTek NPU 处理和书本翻页效果。
+English | [简体中文](README.zh-CN.md)
 
-[下载最新版](https://github.com/HaoweiLi97/mihon_img_upscale/releases/latest) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/HaoweiLi97/mihon_img_upscale/issues)
+A [Mihon](https://github.com/mihonapp/mihon) fork with AI image enhancement, Vulkan GPU acceleration, Qualcomm and MediaTek NPU backends, and book page turns.
+
+[Download the latest release](https://github.com/HaoweiLi97/mihon_img_upscale/releases/latest) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/HaoweiLi97/mihon_img_upscale/issues)
 
 <p align="center">
-  <img width="350" alt="Mihon AI 图像增强预览" src="https://github.com/user-attachments/assets/c5d68b57-d93d-4a6e-b426-b8624ebcc5e8">
+  <img width="350" alt="Mihon AI image enhancement preview" src="https://github.com/user-attachments/assets/c5d68b57-d93d-4a6e-b426-b8624ebcc5e8">
 </p>
 
-## 安装
+## Installation
 
-需要 **Android 8.0 或更高版本**。从本仓库的 [Releases](https://github.com/HaoweiLi97/mihon_img_upscale/releases) 下载安装包：
+Requires **Android 8.0 or newer**. Download an APK from this repository's [Releases](https://github.com/HaoweiLi97/mihon_img_upscale/releases):
 
-| 安装包 | 适用设备 |
+| Package | Devices |
 | :--- | :--- |
-| `app-arm64-v8a-release.apk` | 大多数现代手机和平板；使用 NPU 时请选择此版本 |
-| `app-armeabi-v7a-release.apk` | 旧款 32 位 ARM 设备 |
-| `app-x86-release.apk` | 32 位 x86 设备或模拟器 |
-| `app-x86_64-release.apk` | 64 位 x86 设备或模拟器 |
-| `app-universal-release.apk` | 包含所有架构，不确定时可选，体积较大 |
+| `app-arm64-v8a-release.apk` | Most modern phones and tablets; choose this package for NPU processing |
+| `app-armeabi-v7a-release.apk` | Older 32-bit ARM devices |
+| `app-x86-release.apk` | 32-bit x86 devices and emulators |
+| `app-x86_64-release.apk` | 64-bit x86 devices and emulators |
+| `app-universal-release.apk` | All architectures; larger download, suitable when unsure |
 
-本仓库的正式版沿用同一发布签名，可以覆盖升级。原版 Mihon 或其他分支使用不同签名，不能直接覆盖安装。
+Official releases from this repository use the same signing certificate and support in-place upgrades. Upstream Mihon and other forks use different certificates and cannot be replaced directly by this APK.
 
-## 图像增强
+## Image enhancement
 
-在阅读器设置中开启「图像增强」，选择处理后端、模型和放大倍数。可以分别设置处理前的分辨率上限、跳过增强的分辨率上限，以及预加载范围。
+Enable **Image enhancement** in the reader settings, then select a processing backend, model, and scale. Separate options control the input processing resolution, the resolution above which enhancement is skipped, and the preload range.
 
-- 优先处理当前可见页面，再处理附近的预加载页面。
-- 增强结果保存到本地缓存，避免重复计算；墨水滤镜配置也会区分缓存。
-- 显示排队、增强进度和处理完成状态。
-- 保留原图，在 NPU 准备或推理失败时继续显示原图。
+- Visible pages take priority over nearby preloaded pages.
+- Enhanced images are cached locally to avoid repeated processing; ink filter settings are included in cache identity.
+- Status labels show queued work, enhancement progress, and completion.
+- NPU preparation or inference failure keeps the original image available for reading.
 
-### 处理后端
+### Processing backends
 
-| 后端 | 说明 |
+| Backend | Details |
 | :--- | :--- |
-| **Vulkan GPU** | 支持下表中的完整模型列表，精度可选 FP16、FP32 或 BF16 |
-| **Qualcomm NPU** | 通过 QNN / HTP 运行 FP16 模型，当前打包运行时覆盖 HTP v69、v73、v75、v79、v81 |
-| **MediaTek NPU** | Android 12+ 的 ARM64 联发科设备，通过 LiteRT / NeuroPilot 运行 FP16 模型 |
+| **Vulkan GPU** | Supports the full model list below, with FP16, FP32, or BF16 precision |
+| **Qualcomm NPU** | Runs FP16 models through QNN / HTP; the packaged runtime covers HTP v69, v73, v75, v79, and v81 |
+| **MediaTek NPU** | Runs FP16 models through LiteRT / NeuroPilot on ARM64 MediaTek devices with Android 12 or newer |
 
-NPU 模型首次使用时在设备上准备，设置中会显示准备状态，并提供失败重试。准备后的模型缓存在应用私有目录，重启应用后可继续复用；清理增强图片缓存不会删除这些模型缓存。
+NPU models are prepared on the device on first use. Settings show preparation progress and offer a retry after failure. Prepared models persist in app-private storage across app restarts; clearing the enhanced-image cache does not remove them.
 
-NPU 选项只提供兼容的模型和倍数，当前不打包 INT8 / W8A16 模型。选择 NPU 后不会自动切换到 CPU 或 Vulkan；需要 GPU 处理时请手动选择 Vulkan。
+NPU mode offers compatible models and scales only. INT8 / W8A16 models are no longer packaged. Selecting an NPU backend does not automatically switch to CPU or Vulkan on failure; select Vulkan explicitly to use the GPU.
 
-联发科 NPU 路径尚未在对应硬件上完成实测，实际可用性取决于设备和系统驱动。Qualcomm 的架构支持也不代表所有设备、固件和模型组合均已验证。
+The MediaTek path has not yet been tested on MediaTek hardware; availability depends on the device and its system drivers. Qualcomm architecture coverage also does not imply that every device, firmware, and model combination has been verified.
 
-### 增强模型
+### Enhancement models
 
-下表为 Vulkan 后端的模型支持范围；NPU 可用范围见下一节。
+The following table describes Vulkan support. NPU support is listed separately below.
 
-| 模型 | 倍数 | 作者 / 项目 |
+| Model | Scale | Author / project |
 | :--- | :---: | :--- |
 | Real-CUGAN SE | 2x / 3x / 4x | [Bilibili AI Lab](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
 | Real-CUGAN Pro | 2x / 3x | [Bilibili AI Lab](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
 | Real-CUGAN Nose | 2x | [Bilibili AI Lab](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| Real-ESRGAN animevideov3 | 2x / 3x / 4x | [Xintao Wang 等](https://github.com/xinntao/Real-ESRGAN) |
-| Real-ESRGAN general-x4v3 Photo | 2x | [Xintao Wang 等](https://github.com/xinntao/Real-ESRGAN) |
+| Real-ESRGAN animevideov3 | 2x / 3x / 4x | [Xintao Wang et al.](https://github.com/xinntao/Real-ESRGAN) |
+| Real-ESRGAN general-x4v3 Photo | 2x | [Xintao Wang et al.](https://github.com/xinntao/Real-ESRGAN) |
 | Waifu2x / Waifu2x Fast | 2x | [nagadomi](https://github.com/nagadomi/waifu2x) |
-| W2xEX Universal Fast / Omni Mini V2 / Photo Small | 2x | AaronFeng753 · [模型文件](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
+| W2xEX Universal Fast / Omni Mini V2 / Photo Small | 2x | AaronFeng753 · [Model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
 | AnimeJaNai v2 UltraCompact | 2x | the-database · [OpenModelDB](https://openmodeldb.info/models/2x-AnimeJaNai-v2-UltraCompact) |
 | sudo UltraCompact | 2x | sudo rm -rf / --no-preserve-root#8353 · [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
 | SPAN NomosUni Photo | 2x | Philip Hofmann · [OpenModelDB](https://openmodeldb.info/models/2x-NomosUni-span-multijpg-ldl) |
 
-### NPU 模型范围
+### NPU models
 
-Qualcomm 和 MediaTek 后端均使用以下 15 个 FP16 模型变体：
+Both Qualcomm and MediaTek backends use these 15 FP16 model variants:
 
-| 模型 | 倍数 | 变体 |
+| Model | Scale | Variants |
 | :--- | :---: | :--- |
-| Real-ESRGAN animevideov3 | 2x | 标准 |
-| Real-ESRGAN general-x4v3 Photo | 2x | 标准 |
-| Real-CUGAN SE | 2x | 无降噪、降噪 1 / 2 / 3、保守模式 |
-| Real-CUGAN Pro | 2x / 3x | 无降噪、降噪 3、保守模式 |
-| W2xEX Photo Small | 2x | 标准 |
-| SPAN NomosUni Photo | 2x | 标准 |
+| Real-ESRGAN animevideov3 | 2x | Standard |
+| Real-ESRGAN general-x4v3 Photo | 2x | Standard |
+| Real-CUGAN SE | 2x | No denoise, denoise 1 / 2 / 3, conservative |
+| Real-CUGAN Pro | 2x / 3x | No denoise, denoise 3, conservative |
+| W2xEX Photo Small | 2x | Standard |
+| SPAN NomosUni Photo | 2x | Standard |
 
-## 阅读器功能
+## Reader features
 
-保留 Mihon 的书库、分类、追踪、备份、本地阅读和条漫阅读等功能，并提供书本翻页、图像增强、墨水滤镜和基于 Depth Anything V3 的空间图像功能。空间图像使用独立的深度模型与 Qualcomm 处理流程。
+Retains Mihon's library, categories, tracking, backups, local reading, and webtoon support, with additional book page turns, image enhancement, ink filters, and Depth Anything V3 spatial images. Spatial images use a separate depth model and Qualcomm processing pipeline.
 
-## 本地构建
+## Building locally
 
-项目使用 Gradle Wrapper。Android SDK 路径通过忽略提交的 `local.properties` 配置；ncnn 默认使用仓库中的 `third_party/ncnn-20260113-android-vulkan`。
+Use the Gradle Wrapper and configure your Android SDK in the ignored `local.properties` file. By default, ncnn is loaded from `third_party/ncnn-20260113-android-vulkan` in the repository.
 
 ```sh
-# 正式版
+# Release build
 ./gradlew assembleRelease
 
-# GitHub 发布配置，可按需关闭遥测
+# GitHub distribution settings, with optional telemetry disabled
 ./gradlew assembleRelease -Pdist=github -Pinclude-telemetry=false
 ```
 
-NPU 模型需要额外准备，模型二进制和本机 SDK 配置不提交到 Git：
+NPU builds require additional model preparation. Model binaries and local SDK configuration are not committed to Git:
 
-- **Qualcomm**：配置匹配的 QAIRT SDK 和 15 个 FP16 DLC；在设备上生成并缓存 context，详见 [QNN 模型流程](tools/qnn/README.md)。
-- **MediaTek**：导出并配置 15 个 FP16 TFLite 模型，详见 [联发科 NPU 构建与兼容性说明](docs/mediatek-npu.md)。
-- **对比工具**：[NPU context 准备与推理基准](tools/npu-context-benchmark/README.md)。
+- **Qualcomm:** configure the matching QAIRT SDK and 15 FP16 DLCs. Contexts are compiled and cached on the device. See the [QNN model pipeline](tools/qnn/README.md).
+- **MediaTek:** export and configure 15 FP16 TFLite models. See [MediaTek build and compatibility details](docs/mediatek-npu.md).
+- **Comparison tools:** [NPU context preparation and inference benchmark](tools/npu-context-benchmark/README.md).
 
-## 致谢与许可证
+## Credits and license
 
-感谢 Mihon、Tachiyomi、ncnn，以及各图像增强模型的作者和贡献者。模型及第三方组件遵循各自的许可证和署名要求。
+Thanks to Mihon, Tachiyomi, ncnn, the image enhancement model authors, and all contributors. Models and third-party components retain their respective licenses and attribution requirements.
 
-本项目基于 [Apache License 2.0](LICENSE) 发布，保留上游版权声明：
+This project is distributed under the [Apache License 2.0](LICENSE), retaining the upstream copyright notices:
 
 ```text
 Copyright © 2015 Javier Tomás
 Copyright © 2024 Mihon Open Source Project
 ```
 
-项目不提供漫画内容，与第三方内容提供者没有关联。
+The project hosts no manga content and is not affiliated with third-party content providers.
