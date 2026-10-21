@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
+import eu.kanade.tachiyomi.ui.reader.viewer.updateEnhancementStatus
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
@@ -553,20 +554,7 @@ class PagerPageHolder(
     }
 
     private fun currentEnhancementConfigHash(): String {
-        return ImageEnhancementCache.getConfigHash(
-            noise = readerPreferences.realCuganNoiseLevel().get(),
-            scale = readerPreferences.realCuganScale().get(),
-            model = readerPreferences.realCuganModel().get(),
-            realEsrganStyle = readerPreferences.realEsrganStyle().get(),
-            maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
-            maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
-            skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
-            skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
-            tileSize = readerPreferences.realCuganTileSize().get(),
-            precision = readerPreferences.realCuganPrecision().get(),
-            fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
-            processingBackend = readerPreferences.realCuganProcessingBackend().get(),
-        )
+        return ImageEnhancementCache.getConfigHash(readerPreferences)
     }
 
     private fun enhancementCacheKey(targetPage: ReaderPage): ImageEnhancementCache.CacheKey? {
@@ -785,11 +773,7 @@ class PagerPageHolder(
 
     private fun updateHalfStatusView(view: TextView, targetPage: ReaderPage?, cacheState: String?) {
         val label = enhancementStatusLabel(targetPage, cacheState)
-        view.text = label
-        view.isVisible = !label.isNullOrEmpty()
-        if (view.isVisible) {
-            view.bringToFront()
-        }
+        view.updateEnhancementStatus(label)
     }
 
     private fun enhancementStatusLabel(targetPage: ReaderPage?, cacheState: String?): String? {
@@ -1197,20 +1181,7 @@ class PagerPageHolder(
         targetPage.stream ?: return
 
         ImageEnhancementCache.init(context)
-        val configHash = ImageEnhancementCache.getConfigHash(
-            noise = readerPreferences.realCuganNoiseLevel().get(),
-            scale = readerPreferences.realCuganScale().get(),
-            model = readerPreferences.realCuganModel().get(),
-            realEsrganStyle = readerPreferences.realEsrganStyle().get(),
-            maxWidth = readerPreferences.realCuganMaxSizeWidth().get(),
-            maxHeight = readerPreferences.realCuganMaxSizeHeight().get(),
-            skipMaxWidth = readerPreferences.realCuganSkipMaxSizeWidth().get(),
-            skipMaxHeight = readerPreferences.realCuganSkipMaxSizeHeight().get(),
-            tileSize = readerPreferences.realCuganTileSize().get(),
-            precision = readerPreferences.realCuganPrecision().get(),
-            fp16Arithmetic = readerPreferences.realCuganFp16Arithmetic().get(),
-            processingBackend = readerPreferences.realCuganProcessingBackend().get(),
-        )
+        val configHash = ImageEnhancementCache.getConfigHash(readerPreferences)
 
         val pageVariant = enhancementVariantFor(targetPage)
         if (ImageEnhancementCache.isCached(mangaId, chapterId, targetPage.index, configHash, pageVariant)) {

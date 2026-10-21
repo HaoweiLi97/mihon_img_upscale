@@ -75,7 +75,11 @@ object ImageFilter {
         if (inkBumpIntensity > 0) {
             Log.d(TAG, "Applying Ink Bump Mapping...")
             val start = System.currentTimeMillis()
+            val previous = result
             result = applyInkBumpMapping(result, inkBumpIntensity / 100f)
+            if (previous !== result && previous !== bitmap && previous !== safeOrigin) {
+                previous.recycle()
+            }
             Log.d(TAG, "Ink Bump Mapping finished in ${System.currentTimeMillis() - start}ms")
         } else {
             Log.d(TAG, "Skipping Bump Mapping (intensity=0)")
@@ -148,6 +152,7 @@ object ImageFilter {
             result = blended
         }
 
+        if (safeOrigin !== bitmap && safeOrigin !== result) safeOrigin.recycle()
         return result
     }
 

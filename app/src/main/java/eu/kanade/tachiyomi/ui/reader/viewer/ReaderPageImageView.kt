@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.os.Looper
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.GestureDetector
@@ -95,6 +96,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.util.WeakHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 
 /**
@@ -129,6 +131,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
     protected fun addEnhancementStatusView(view: View) {
         enhancementStatusViews += view
         addView(view)
+    }
+
+    protected fun bringEnhancementStatusToFront() {
+        enhancementStatusViews.forEach { it.bringToFront() }
     }
 
     internal fun isEnhancementStatusView(view: View): Boolean = view in enhancementStatusViews
@@ -244,7 +250,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var currentCachedFile: java.io.File? = null
     private var originalStreamFn: (() -> java.io.InputStream)? = null
     private var enhancedRecoveryCount = 0
-    private var lastStatusText: String? = null
+    private val statusUpdateVersion = AtomicInteger()
 
     var enhancedImageSourceFactory: ((java.io.File) -> BufferedSource?)? = null
     var originalImageSourceFactory: (() -> BufferedSource?)? = null
@@ -255,10 +261,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var config: Config? = null
 
     private var processingJob: Job? = null
+    private var processingKey: EnhancementPollKey? = null
     private var enhancedBitmap: Bitmap? = null
     private var processedSwapView: SubsamplingScaleImageView? = null
     private var outgoingProcessedView: SubsamplingScaleImageView? = null
     private var processedSwapAnimator: ValueAnimator? = null
+
+    private data class EnhancementPollKey(
+        val revision: Int,
+        val mangaId: Long,
+        val chapterId: Long,
+        val pageIndex: Int,
+        val pageVariant: String,
+        val configHash: String,
+    )
 
     var onImageLoaded: (() -> Unit)? = null
     var onImageLoadError: ((Throwable?) -> Unit)? = null
@@ -302,20 +318,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun updateStatus(text: String?) {
-        lastStatusText = text
-        post {
-            if (suppressDefaultStatus) {
-                statusView.isVisible = false
-                return@post
+        val version = statusUpdateVersion.incrementAndGet()
+        val revision = imageRevision
+        val applyStatus = Runnable {
+            // An older poll may still be posted when a new status or binding arrives.
+            if (version == statusUpdateVersion.get() && revision == imageRevision) {
+                statusView.updateEnhancementStatus(text.takeIf { !suppressDefaultStatus && realCuganShowStatus })
             }
-            if (!realCuganShowStatus || text == null) {
-                statusView.isVisible = false
-                return@post
-            }
-            statusView.text = text
-            statusView.isVisible = true
-            statusView.bringToFront()
         }
+        if (Looper.myLooper() == Looper.getMainLooper()) applyStatus.run() else post(applyStatus)
     }
 
     /**
@@ -590,7 +601,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         }
 
                         bringToFront()
-                        statusView.bringToFront()
+                        bringEnhancementStatusToFront()
                         pageView = this@apply
                         val revealStart = processedTransitionStartFraction.coerceIn(0f, 1f)
                         val revealEnd = processedTransitionEndFraction.coerceIn(revealStart, 1f)
@@ -671,7 +682,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 enhancedOverlay.setImageBitmap(previewBitmap)
                 enhancedOverlay.alpha = 1f
                 enhancedOverlay.isVisible = true
-                statusView.bringToFront()
+                bringEnhancementStatusToFront()
                 enhancedBitmap = previewBitmap
                 isSettingProcessedImage = true
                 pageView?.alpha = 0f
@@ -693,20 +704,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         return enhancementVariantOverride ?: readerPage?.enhancementKeySuffix.orEmpty()
     }
 
-    private fun currentEnhancementConfigHash(): String = ImageEnhancementCache.getConfigHash(
-        noise = realCuganNoiseLevel,
-        scale = realCuganScale,
-        model = realCuganModel,
-        realEsrganStyle = preferences.realEsrganStyle().get(),
-        maxWidth = realCuganMaxSizeWidth,
-        maxHeight = realCuganMaxSizeHeight,
-        skipMaxWidth = realCuganSkipMaxSizeWidth,
-        skipMaxHeight = realCuganSkipMaxSizeHeight,
-        tileSize = tileSize,
-        precision = preferences.realCuganPrecision().get(),
-        fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
-        processingBackend = preferences.realCuganProcessingBackend().get(),
-    )
+    private fun currentEnhancementConfigHash(): String = ImageEnhancementCache.getConfigHash(preferences)
 
     private fun buildEnhancementDataProvider(
         streamFn: (() -> java.io.InputStream)? = null,
@@ -768,20 +766,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (pIdx < 0 || mId == -1L || cId == -1L) return
 
         ImageEnhancementCache.init(context)
-        val configHash = ImageEnhancementCache.getConfigHash(
-            noise = realCuganNoiseLevel,
-            scale = realCuganScale,
-            model = realCuganModel,
-            realEsrganStyle = preferences.realEsrganStyle().get(),
-            maxWidth = realCuganMaxSizeWidth,
-            maxHeight = realCuganMaxSizeHeight,
-            skipMaxWidth = realCuganSkipMaxSizeWidth,
-            skipMaxHeight = realCuganSkipMaxSizeHeight,
-            tileSize = tileSize,
-            precision = preferences.realCuganPrecision().get(),
-            fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
-            processingBackend = preferences.realCuganProcessingBackend().get(),
-        )
+        val configHash = ImageEnhancementCache.getConfigHash(preferences)
         val pageVariant = enhancementVariant()
 
         if (ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant) != null) return
@@ -873,20 +858,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             // 1. Check cache status and update UI
             if (realCuganEnabled) {
                 ImageEnhancementCache.init(context)
-                val configHash = ImageEnhancementCache.getConfigHash(
-                    noise = realCuganNoiseLevel,
-                    scale = realCuganScale,
-                    model = realCuganModel,
-                    realEsrganStyle = preferences.realEsrganStyle().get(),
-                    maxWidth = realCuganMaxSizeWidth,
-                    maxHeight = realCuganMaxSizeHeight,
-                    skipMaxWidth = realCuganSkipMaxSizeWidth,
-                    skipMaxHeight = realCuganSkipMaxSizeHeight,
-                    tileSize = tileSize,
-                    precision = preferences.realCuganPrecision().get(),
-                    fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
-                    processingBackend = preferences.realCuganProcessingBackend().get(),
-                )
+                val configHash = ImageEnhancementCache.getConfigHash(preferences)
                 val pageVariant = enhancementVariant()
 
                 val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
@@ -939,7 +911,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     updateStatus(context.stringResource(MR.strings.reader_status_raw))
                 } else {
                     // Not in cache, not skipped - ensure it's being processed with high priority
-                    updateStatus(context.stringResource(MR.strings.reader_status_processing))
+                    if (processingJob?.isActive != true) {
+                        updateStatus(context.stringResource(MR.strings.reader_status_processing))
+                    }
                     enqueueEnhancement(mId, cId, pIdx, highPriority = true)
 
                     // Start/restart polling if not already running
@@ -1038,6 +1012,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         stripRequest?.dispose()
         stripRequest = null
         imageRevision++
+        updateStatus(null)
         currentCachedFile = null
         originalStreamFn = null
         clearProcessedSwapView()
@@ -1122,6 +1097,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
         pageView = createSubsamplingPageView()
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
+        bringEnhancementStatusToFront()
     }
 
     private fun SubsamplingScaleImageView.setupZoom(config: Config?) {
@@ -1191,8 +1167,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         streamFn: (() -> java.io.InputStream)? = null,
         originalData: Any? = null,
     ) {
-        if (isSettingProcessedImage || !realCuganEnabled) {
-            updateStatus(if (realCuganEnabled) null else context.stringResource(MR.strings.reader_status_raw))
+        if (isSettingProcessedImage) return
+        if (!realCuganEnabled) {
+            updateStatus(context.stringResource(MR.strings.reader_status_raw))
             return
         }
 
@@ -1209,20 +1186,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
 
         ImageEnhancementCache.init(context)
-        val configHash = ImageEnhancementCache.getConfigHash(
-            noise = realCuganNoiseLevel,
-            scale = realCuganScale,
-            model = realCuganModel,
-            realEsrganStyle = preferences.realEsrganStyle().get(),
-            maxWidth = realCuganMaxSizeWidth,
-            maxHeight = realCuganMaxSizeHeight,
-            skipMaxWidth = realCuganSkipMaxSizeWidth,
-            skipMaxHeight = realCuganSkipMaxSizeHeight,
-            tileSize = tileSize,
-            precision = preferences.realCuganPrecision().get(),
-            fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
-            processingBackend = preferences.realCuganProcessingBackend().get(),
-        )
+        val configHash = ImageEnhancementCache.getConfigHash(preferences)
         val pageVariant = enhancementVariant()
 
         val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
@@ -1318,7 +1282,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         originalData: Any? = null,
         streamFn: (() -> java.io.InputStream)? = null,
     ) {
+        val key = EnhancementPollKey(imageRevision, mId, cId, pIdx, enhancementVariant(), configHash)
+        if (processingKey == key && processingJob?.isActive == true) return
         processingJob?.cancel()
+        processingKey = key
         processingJob = viewScope.launchIO {
             try {
                 val pageVariant = enhancementVariant()
@@ -1380,8 +1347,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                                 context.stringResource(MR.strings.reader_status_enhancing_progress, rawProgress),
                             )
                         } else {
-                            val dots = (rawProgress % 3).let { if (it < 0) -it else it } + 1
-                            updateStatus(context.stringResource(MR.strings.reader_status_enhancing) + ".".repeat(dots))
+                            updateStatus(context.stringResource(MR.strings.reader_status_enhancing))
                         }
                     } else if (ImageEnhancer.hasRequest(mId, cId, pIdx, pageVariant)) {
                         if (!wasEnhancing) {
@@ -1433,6 +1399,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
         pageView = WebtoonStripImageView(context)
         addView(pageView, MATCH_PARENT, WRAP_CONTENT)
+        bringEnhancementStatusToFront()
     }
 
     private fun setStripImage(data: BufferedSource, config: Config) {
@@ -1509,6 +1476,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setOnClickListener { this@ReaderPageImageView.onViewClicked() }
         }
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
+        bringEnhancementStatusToFront()
     }
 
     private fun setAnimatedImage(

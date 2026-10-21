@@ -19,5 +19,9 @@ local.properties
 *.dm
 *.apk
 
+# Python generated files
+__pycache__/
+*.py[cod]
+
 # macOS specific files
 .DS_Store

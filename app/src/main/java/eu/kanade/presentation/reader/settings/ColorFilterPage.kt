@@ -11,13 +11,16 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.alpha
@@ -26,7 +29,12 @@ import androidx.core.graphics.green
 import androidx.core.graphics.red
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.Companion.ColorFilterMode
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
+import eu.kanade.tachiyomi.util.mediatek.MediaTekNpu
+import eu.kanade.tachiyomi.util.npu.NpuModelStatus
+import eu.kanade.tachiyomi.util.qnn.QnnModelContexts
 import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
@@ -156,15 +164,33 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
         val realCuganScale by viewModel.preferences.realCuganScale().collectAsState()
         val processingBackend by viewModel.preferences.realCuganProcessingBackend().collectAsState()
         val npuDeviceAvailable = remember { Waifu2x.isQualcommNpuAvailable() }
-        val useQualcommNpu = processingBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU && npuDeviceAvailable
-
-        LaunchedEffect(npuDeviceAvailable, processingBackend) {
-            if (!npuDeviceAvailable && processingBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU) {
-                viewModel.preferences.realCuganProcessingBackend().set(Waifu2x.PROCESSING_BACKEND_VULKAN)
+        val mediaTekDeviceAvailable = remember { MediaTekNpu.isDeviceSupported() }
+        val useQualcommNpu = processingBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU
+        val useMediaTekNpu = processingBackend == Waifu2x.PROCESSING_BACKEND_MEDIATEK_NPU
+        val useNpu = useQualcommNpu || useMediaTekNpu
+        val context = LocalContext.current.applicationContext
+        val qnnModelName = if (useNpu) {
+            Waifu2x.qnnModelName(realCuganModel, realCuganScale, realCuganNoiseLevel, realEsrganStyle)
+        } else {
+            null
+        }
+        val qnnPreparationStates by QnnModelContexts.states.collectAsState()
+        val mediaTekPreparationStates by MediaTekNpu.states.collectAsState()
+        val preparationStates = if (useMediaTekNpu) mediaTekPreparationStates else qnnPreparationStates
+        var preparationRetry by remember { mutableStateOf(0) }
+        LaunchedEffect(processingBackend, qnnModelName, preparationRetry) {
+            val modelName = qnnModelName ?: return@LaunchedEffect
+            withContext(Dispatchers.IO) {
+                if (useMediaTekNpu) {
+                    MediaTekNpu.prepare(context, modelName, retry = preparationRetry > 0)
+                } else {
+                    QnnModelContexts.prepare(context, modelName, retry = preparationRetry > 0)
+                }
             }
         }
-        LaunchedEffect(useQualcommNpu, realCuganModel, realCuganScale) {
-            if (useQualcommNpu) {
+
+        LaunchedEffect(useNpu, realCuganModel, realCuganScale) {
+            if (useNpu) {
                 if (
                     realCuganModel != 0 &&
                     realCuganModel != 1 &&
@@ -204,10 +230,18 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
                 enabled = npuDeviceAvailable,
                 label = { Text(stringResource(MR.strings.reader_backend_qualcomm_npu)) },
             )
+            FilterChip(
+                selected = useMediaTekNpu,
+                onClick = {
+                    viewModel.preferences.realCuganProcessingBackend().set(Waifu2x.PROCESSING_BACKEND_MEDIATEK_NPU)
+                },
+                enabled = mediaTekDeviceAvailable,
+                label = { Text(stringResource(MR.strings.reader_backend_mediatek_npu)) },
+            )
         }
 
         SettingsChipRow(stringResource(MR.strings.reader_model)) {
-            val models = if (useQualcommNpu) {
+            val models = if (useNpu) {
                 listOf(
                     0 to "Real-CUGAN SE",
                     1 to "Real-CUGAN Pro",
@@ -237,6 +271,26 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
                     onClick = { viewModel.preferences.realCuganModel().set(modelId) },
                     label = { Text(name) },
                 )
+            }
+        }
+
+        if (qnnModelName != null) {
+            val status = preparationStates[qnnModelName]
+            Text(
+                text = stringResource(
+                    when (status) {
+                        is NpuModelStatus.Ready -> MR.strings.reader_npu_model_ready
+                        is NpuModelStatus.Failed -> MR.strings.reader_npu_model_failed
+                        else -> MR.strings.reader_npu_model_preparing
+                    },
+                ),
+                modifier = Modifier.padding(horizontal = 24.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (status is NpuModelStatus.Failed) {
+                TextButton(onClick = { preparationRetry++ }, modifier = Modifier.padding(horizontal = 12.dp)) {
+                    Text(stringResource(MR.strings.action_retry))
+                }
             }
         }
 
@@ -289,7 +343,7 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
 
         val fixedW2xExScale = Waifu2x.w2xExScaleFor(realCuganModel)
         if (
-            (useQualcommNpu && realCuganModel != 1) ||
+            (useNpu && realCuganModel != 1) ||
             realCuganModel == 3 || realCuganModel == 4 || realCuganModel == 5 ||
             (realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME && realEsrganStyle == Waifu2x.REAL_ESRGAN_STYLE_PHOTO) ||
             fixedW2xExScale == 2
@@ -350,7 +404,7 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
             }
         }
 
-        if (!useQualcommNpu) {
+        if (!useNpu) {
             SettingsChipRow(stringResource(MR.strings.reader_gpu_performance_mode)) {
                 val performanceMode by viewModel.preferences.realCuganPerformanceMode().collectAsState()
                 listOf(
@@ -379,22 +433,12 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
         }
 
         val precision by viewModel.preferences.realCuganPrecision().collectAsState()
-        val supportedPrecisions = if (useQualcommNpu) {
-            if (
-                realCuganModel == 0 ||
-                realCuganModel == 1 ||
-                realCuganModel == Waifu2x.MODEL_REAL_ESRGAN_ANIME ||
-                realCuganModel == Waifu2x.MODEL_W2XEX_PHOTO_SMALL ||
-                realCuganModel == Waifu2x.MODEL_SPAN_NOMOSUNI_PHOTO
-            ) {
-                listOf(0, 2)
-            } else {
-                listOf(0)
-            }
+        val supportedPrecisions = if (useNpu) {
+            listOf(0)
         } else {
-            listOf(0, 1, 2, 3)
+            listOf(0, 1, 3)
         }
-        LaunchedEffect(useQualcommNpu, realCuganModel, precision) {
+        LaunchedEffect(useNpu, realCuganModel, precision) {
             if (precision !in supportedPrecisions) {
                 viewModel.preferences.realCuganPrecision().set(supportedPrecisions.first())
             }
@@ -403,7 +447,6 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
             listOf(
                 0 to stringResource(MR.strings.reader_precision_fp16),
                 1 to stringResource(MR.strings.reader_precision_fp32),
-                2 to stringResource(MR.strings.reader_precision_int8),
                 3 to stringResource(MR.strings.reader_precision_bf16),
             ).filter { (value, _) -> value in supportedPrecisions }.map { (value, name) ->
                 FilterChip(
@@ -414,7 +457,7 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
             }
         }
 
-        if (!useQualcommNpu && precision == 0) {
+        if (!useNpu && precision == 0) {
             CheckboxItem(
                 label = stringResource(MR.strings.reader_fp16_arithmetic),
                 pref = viewModel.preferences.realCuganFp16Arithmetic(),

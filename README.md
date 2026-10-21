@@ -1,167 +1,111 @@
-
 # Mihon_img_upscale
 
-### Description
-A high-performance Mihon fork featuring integrated AI upscaling (Real-CUGAN, Real-ESRGAN, Waifu2x) with Vulkan and Qualcomm NPU processing to enhance low-resolution manga in real time.
+基于 [Mihon](https://github.com/mihonapp/mihon) 的漫画阅读器，集成 AI 图像增强、Vulkan GPU 加速、Qualcomm / MediaTek NPU 处理和书本翻页效果。
 
----
+[下载最新版](https://github.com/HaoweiLi97/mihon_img_upscale/releases/latest) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/HaoweiLi97/mihon_img_upscale/issues)
 
 <p align="center">
-  <img width="350" alt="Mihon AI Upscale Preview" src="https://github.com/user-attachments/assets/c5d68b57-d93d-4a6e-b426-b8624ebcc5e8">
-  <br>
-
+  <img width="350" alt="Mihon AI 图像增强预览" src="https://github.com/user-attachments/assets/c5d68b57-d93d-4a6e-b426-b8624ebcc5e8">
 </p>
 
----
+## 安装
 
-## Upscaling Models
+需要 **Android 8.0 或更高版本**。从本仓库的 [Releases](https://github.com/HaoweiLi97/mihon_img_upscale/releases) 下载安装包：
 
-| Model Name | Scale | Author | Project / Model |
-| :--- | :---: | :--- | :--- |
-| **Real-CUGAN SE** | 2x / 3x / 4x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-CUGAN Pro** | 2x / 3x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-CUGAN Nose** | 2x | Bilibili AI Lab | [Real-CUGAN](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
-| **Real-ESRGAN animevideov3** | 2x / 3x / 4x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
-| **Real-ESRGAN general-x4v3 (Photo)** | 2x | Xintao Wang et al. | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) |
-| **Waifu2x** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
-| **Waifu2x (Fast)** | 2x | nagadomi | [waifu2x](https://github.com/nagadomi/waifu2x) |
-| **W2xEX Universal Fast** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
-| **W2xEX Omni Mini V2** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
-| **W2xEX Photo Small** | 2x | AaronFeng753 | [W2xEX model files](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
-| **AnimeJaNai v2 UltraCompact** | 2x | the-database | [OpenModelDB](https://openmodeldb.info/models/2x-AnimeJaNai-v2-UltraCompact) |
-| **sudo UltraCompact** | 2x | sudo rm -rf / --no-preserve-root#8353 | [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
-| **SPAN NomosUni Photo** | 2x | Philip Hofmann | [OpenModelDB](https://openmodeldb.info/models/2x-NomosUni-span-multijpg-ldl) |
+| 安装包 | 适用设备 |
+| :--- | :--- |
+| `app-arm64-v8a-release.apk` | 大多数现代手机和平板；使用 NPU 时请选择此版本 |
+| `app-armeabi-v7a-release.apk` | 旧款 32 位 ARM 设备 |
+| `app-x86-release.apk` | 32 位 x86 设备或模拟器 |
+| `app-x86_64-release.apk` | 64 位 x86 设备或模拟器 |
+| `app-universal-release.apk` | 包含所有架构，不确定时可选，体积较大 |
 
-## Qualcomm NPU Acceleration
+本仓库的正式版沿用同一发布签名，可以覆盖升级。原版 Mihon 或其他分支使用不同签名，不能直接覆盖安装。
 
-Version 1.3.7 includes the optional Qualcomm QNN/HTP backend alongside the existing Vulkan
-backend. Vulkan and NPU are independent choices in the reader settings. Selecting NPU limits
-the model list to models with compatible offline contexts; unsupported devices keep the NPU
-option disabled and continue to use Vulkan.
+## 图像增强
 
-Version 1.3.7 also includes on-device spatial images powered by Depth Anything V3. The first run
-downloads the depth model and compiles a context for the detected HTP generation, with support
-for v69, v73, v75, v79, and v81 devices.
+在阅读器设置中开启「图像增强」，选择处理后端、模型和放大倍数。可以分别设置处理前的分辨率上限、跳过增强的分辨率上限，以及预加载范围。
 
-| Snapdragon platform | SoC | HTP architecture |
-| :--- | :---: | :---: |
-| Snapdragon 8+ Gen 1 | SM8475 | v69 |
-| Snapdragon 8 Gen 2 | SM8550 | v73 |
-| Snapdragon 8 Gen 3 | SM8650 | v75 |
-| Snapdragon 8 Elite | SM8750 | v79 |
-| Snapdragon 8 Elite Gen 5 | SM8850 | v81 |
+- 优先处理当前可见页面，再处理附近的预加载页面。
+- 增强结果保存到本地缓存，避免重复计算；墨水滤镜配置也会区分缓存。
+- 显示排队、增强进度和处理完成状态。
+- 保留原图，在 NPU 准备或推理失败时继续显示原图。
 
-### NPU Model Support
+### 处理后端
 
-| Model | Scale | Precision | Variants |
-| :--- | :---: | :---: | :--- |
-| Real-ESRGAN animevideov3 | 2x | FP16 / INT8 | Standard |
-| Real-ESRGAN general-x4v3 (Photo) | 2x | FP16 / W8A16 | Standard |
-| Real-CUGAN SE | 2x | FP16 / W8A16 | No denoise, denoise1x, denoise2x, denoise3x, conservative |
-| Real-CUGAN Pro | 2x / 3x | FP16 / W8A16 | No denoise, denoise3x, conservative |
-| W2xEX Photo Small | 2x | FP16 / W8A16 | Standard |
-| SPAN NomosUni Photo | 2x | FP16 / W8A16 | Standard |
+| 后端 | 说明 |
+| :--- | :--- |
+| **Vulkan GPU** | 支持下表中的完整模型列表，精度可选 FP16、FP32 或 BF16 |
+| **Qualcomm NPU** | 通过 QNN / HTP 运行 FP16 模型，当前打包运行时覆盖 HTP v69、v73、v75、v79、v81 |
+| **MediaTek NPU** | Android 12+ 的 ARM64 联发科设备，通过 LiteRT / NeuroPilot 运行 FP16 模型 |
 
-Real-CUGAN SE and Pro W8A16 contexts are generated for all five supported Snapdragon targets.
-Actual speed depends on image dimensions, model variant, thermal state, and device firmware.
+NPU 模型首次使用时在设备上准备，设置中会显示准备状态，并提供失败重试。准备后的模型缓存在应用私有目录，重启应用后可继续复用；清理增强图片缓存不会删除这些模型缓存。
 
-NPU-enabled local builds require Qualcomm AI Runtime and the generated offline contexts. The
-matching HTP Stub and Skel libraries are bundled from Qualcomm's official Maven runtime. See the
-[QNN model pipeline](tools/qnn/README.md) for conversion and build configuration. When the local
-SDK or contexts are not configured, the project still builds as a Vulkan-only version and disables
-the NPU option.
+NPU 选项只提供兼容的模型和倍数，当前不打包 INT8 / W8A16 模型。选择 NPU 后不会自动切换到 CPU 或 Vulkan；需要 GPU 处理时请手动选择 Vulkan。
 
----
+联发科 NPU 路径尚未在对应硬件上完成实测，实际可用性取决于设备和系统驱动。Qualcomm 的架构支持也不代表所有设备、固件和模型组合均已验证。
 
+### 增强模型
 
+下表为 Vulkan 后端的模型支持范围；NPU 可用范围见下一节。
 
-<div align="center">
+| 模型 | 倍数 | 作者 / 项目 |
+| :--- | :---: | :--- |
+| Real-CUGAN SE | 2x / 3x / 4x | [Bilibili AI Lab](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
+| Real-CUGAN Pro | 2x / 3x | [Bilibili AI Lab](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
+| Real-CUGAN Nose | 2x | [Bilibili AI Lab](https://github.com/bilibili/ailab/tree/main/Real-CUGAN) |
+| Real-ESRGAN animevideov3 | 2x / 3x / 4x | [Xintao Wang 等](https://github.com/xinntao/Real-ESRGAN) |
+| Real-ESRGAN general-x4v3 Photo | 2x | [Xintao Wang 等](https://github.com/xinntao/Real-ESRGAN) |
+| Waifu2x / Waifu2x Fast | 2x | [nagadomi](https://github.com/nagadomi/waifu2x) |
+| W2xEX Universal Fast / Omni Mini V2 / Photo Small | 2x | AaronFeng753 · [模型文件](https://huggingface.co/randomblock1/W2xEX-ESRGAN) |
+| AnimeJaNai v2 UltraCompact | 2x | the-database · [OpenModelDB](https://openmodeldb.info/models/2x-AnimeJaNai-v2-UltraCompact) |
+| sudo UltraCompact | 2x | sudo rm -rf / --no-preserve-root#8353 · [OpenModelDB](https://openmodeldb.info/models/2x-sudo-UltraCompact) |
+| SPAN NomosUni Photo | 2x | Philip Hofmann · [OpenModelDB](https://openmodeldb.info/models/2x-NomosUni-span-multijpg-ldl) |
 
-<a href="https://mihon.app">
-    <img src="./.github/assets/logo.png" alt="Mihon logo" title="Mihon logo" width="80"/>
-</a>
+### NPU 模型范围
 
-# Mihon [App](#)
+Qualcomm 和 MediaTek 后端均使用以下 15 个 FP16 模型变体：
 
+| 模型 | 倍数 | 变体 |
+| :--- | :---: | :--- |
+| Real-ESRGAN animevideov3 | 2x | 标准 |
+| Real-ESRGAN general-x4v3 Photo | 2x | 标准 |
+| Real-CUGAN SE | 2x | 无降噪、降噪 1 / 2 / 3、保守模式 |
+| Real-CUGAN Pro | 2x / 3x | 无降噪、降噪 3、保守模式 |
+| W2xEX Photo Small | 2x | 标准 |
+| SPAN NomosUni Photo | 2x | 标准 |
 
+## 阅读器功能
 
+保留 Mihon 的书库、分类、追踪、备份、本地阅读和条漫阅读等功能，并提供书本翻页、图像增强、墨水滤镜和基于 Depth Anything V3 的空间图像功能。空间图像使用独立的深度模型与 Qualcomm 处理流程。
 
+## 本地构建
 
-### Full-featured reader
-Discover and read manga, webtoons, comics, and more – easier than ever on your Android device.
+项目使用 Gradle Wrapper。Android SDK 路径通过忽略提交的 `local.properties` 配置；ncnn 默认使用仓库中的 `third_party/ncnn-20260113-android-vulkan`。
 
-[![Discord server](https://img.shields.io/discord/1195734228319617024.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/mihon)
-[![GitHub downloads](https://img.shields.io/github/downloads/mihonapp/mihon/total?label=downloads&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat)](https://mihon.app/download)
+```sh
+# 正式版
+./gradlew assembleRelease
 
-[![CI](https://img.shields.io/github/actions/workflow/status/mihonapp/mihon/build.yml?labelColor=27303D)](https://github.com/mihonapp/mihon/actions/workflows/build_push.yml)
-[![License: Apache-2.0](https://img.shields.io/github/license/mihonapp/mihon?labelColor=27303D&color=0877d2)](/LICENSE)
-[![Translation status](https://img.shields.io/weblate/progress/mihon?labelColor=27303D&color=946300)](https://hosted.weblate.org/engage/mihon/)
+# GitHub 发布配置，可按需关闭遥测
+./gradlew assembleRelease -Pdist=github -Pinclude-telemetry=false
+```
 
-## Download
+NPU 模型需要额外准备，模型二进制和本机 SDK 配置不提交到 Git：
 
-[![Mihon Stable](https://img.shields.io/github/release/mihonapp/mihon.svg?maxAge=3600&label=Stable&labelColor=06599d&color=043b69)](https://mihon.app/download)
-[![Mihon Beta](https://img.shields.io/github/v/release/mihonapp/mihon-preview.svg?maxAge=3600&label=Beta&labelColor=2c2c47&color=1c1c39)](https://mihon.app/download)
+- **Qualcomm**：配置匹配的 QAIRT SDK 和 15 个 FP16 DLC；在设备上生成并缓存 context，详见 [QNN 模型流程](tools/qnn/README.md)。
+- **MediaTek**：导出并配置 15 个 FP16 TFLite 模型，详见 [联发科 NPU 构建与兼容性说明](docs/mediatek-npu.md)。
+- **对比工具**：[NPU context 准备与推理基准](tools/npu-context-benchmark/README.md)。
 
-*Requires Android 8.0 or higher.*
+## 致谢与许可证
 
-## Features
+感谢 Mihon、Tachiyomi、ncnn，以及各图像增强模型的作者和贡献者。模型及第三方组件遵循各自的许可证和署名要求。
 
-<div align="left">
+本项目基于 [Apache License 2.0](LICENSE) 发布，保留上游版权声明：
 
-* Local reading of content.
-* A configurable reader with multiple viewers, reading directions and other settings.
-* Tracker support: [MangaBaka](https://mangabaka.org), [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.app/), [MangaUpdates](https://mangaupdates.com), [Shikimori](https://shikimori.one), [Bangumi](https://bgm.tv/), and [Hikka](https://hikka.io/) support.
-* Categories to organize your library.
-* Light and dark themes.
-* Schedule updating your library for new chapters.
-* Create backups locally to read offline or to your desired cloud service.
-* Plus much more...
-
-</div>
-
-## Contributing
-
-[Code of conduct](./CODE_OF_CONDUCT.md) · [Contributing guide](./CONTRIBUTING.md)
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
-
-Before reporting a new issue, take a look at the [FAQ](https://mihon.app/docs/faq/general), the [changelog](https://mihon.app/changelogs/) and the already opened [issues](https://github.com/mihonapp/mihon/issues); if you got any questions, join our [Discord server](https://discord.gg/mihon).
-
-
-### Repositories
-
-[![mihonapp/website - GitHub](https://github-stats-extended.vercel.app/api/pin/?username=mihonapp&repo=website&bg_color=161B22&text_color=c9d1d9&title_color=0877d2&icon_color=0877d2&border_radius=8&hide_border=true&description_lines_count=2)](https://github.com/mihonapp/website/)
-[![mihonapp/bitmap.kt - GitHub](https://github-stats-extended.vercel.app/api/pin/?username=mihonapp&repo=bitmap.kt&bg_color=161B22&text_color=c9d1d9&title_color=0877d2&icon_color=0877d2&border_radius=8&hide_border=true&description_lines_count=2)](https://github.com/mihonapp/bitmap.kt/)
-
-### Credits
-
-Thank you to all the people who have contributed!
-
-<a href="https://github.com/mihonapp/mihon/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=mihonapp/mihon" alt="Mihon app contributors" title="Mihon app contributors" width="800"/>
-</a>
-
-### Disclaimer
-
-The developer(s) of this application does not have any affiliation with the content providers available, and this application hosts zero content.
-
-### License
-
-<pre>、
+```text
 Copyright © 2015 Javier Tomás
 Copyright © 2024 Mihon Open Source Project
+```
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-</pre>
-
-</div>
+项目不提供漫画内容，与第三方内容提供者没有关联。

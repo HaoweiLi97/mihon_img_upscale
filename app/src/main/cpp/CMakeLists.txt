@@ -4,7 +4,6 @@ project(waifu2x-jni)
 set(CMAKE_CXX_STANDARD 17)
 
 set(QNN_SDK_DIR "${QNN_SDK_DIR}" CACHE PATH "Path to the Qualcomm AI Runtime SDK")
-set(QNN_HTP_ARCH "69" CACHE STRING "Hexagon HTP architecture version")
 
 # Allow Gradle or the environment to provide the ncnn Android SDK path.
 set(NCNN_SDK_DIR "${NCNN_SDK_DIR}" CACHE PATH "Path to the ncnn Android Vulkan SDK")
@@ -70,6 +69,8 @@ set(WAIFU2X_SOURCES
     waifu2x.cpp
     anime4k.cpp
     qnn_backend.cpp
+    qnn_context_bridge.cpp
+    litert_backend.cpp
     spatial_qnn_runtime.cpp
     depth_qnn_bridge.cpp
     waifu2x_jni.cpp
@@ -82,6 +83,7 @@ add_dependencies(waifu2x-jni waifu2x-fused-shaders)
 # Include directories
 target_include_directories(waifu2x-jni PRIVATE
     ${CMAKE_SOURCE_DIR}
+    "${CMAKE_SOURCE_DIR}/../../../../third_party/litert-c-2.2.0/include"
     ${GENERATED_SHADER_DIR}
 )
 

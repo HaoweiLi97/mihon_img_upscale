@@ -19,10 +19,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runInterruptible
 import logcat.LogPriority
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -33,7 +32,10 @@ import java.util.concurrent.atomic.AtomicInteger
 
 object ImageEnhancer {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val pendingRequests = ConcurrentHashMap<String, Int>()
+
+    // Values identify individual attempts: cancelling and retrying a page can happen
+    // within the same generation while the previous attempt is still unwinding.
+    private val pendingRequests = ConcurrentHashMap<String, EnhanceRequest>()
 
     // Priority Queue order:
     // 1. Current visible primary page
@@ -42,6 +44,7 @@ object ImageEnhancer {
     // 4. Normal preload requests
     // Then Distance from Target ASC, Seq ASC
     private val queue = PriorityBlockingQueue<EnhanceRequest>()
+    private val queueSignal = Channel<Unit>(Channel.CONFLATED)
     private val seqGenerator = AtomicInteger(0)
     private val generation = AtomicInteger(0)
     private val runtimeInitialized = AtomicBoolean(false)
@@ -80,6 +83,7 @@ object ImageEnhancer {
     // Current page the user is viewing. Used to prioritize requests closest to this page.
     @Volatile
     var targetPageIndex: Int = 0
+        private set
 
     @Volatile
     private var targetPageVariant: String = ""
@@ -90,7 +94,7 @@ object ImageEnhancer {
     @Volatile
     private var targetSecondaryPageVariant: String = ""
 
-    data class EnhanceRequest(
+    class EnhanceRequest(
         val context: Context,
         val mangaId: Long,
         val chapterId: Long,
@@ -145,11 +149,17 @@ object ImageEnhancer {
                         isFirstRequestAfterReset = false
                     }
 
-                    val req = runInterruptible { queue.take() }
+                    // Poll under the same monitor as reprioritization/cancellation.
+                    // Waiting for work must not hold that monitor or an IO thread.
+                    val req = synchronized(this@ImageEnhancer) { queue.poll() }
+                    if (req == null) {
+                        queueSignal.receive()
+                        continue
+                    }
                     if (req.generation == generation.get()) {
                         processRequest(req)
                     } else {
-                        pendingRequests.remove(req.key, req.generation)
+                        pendingRequests.remove(req.key, req)
                     }
                 } catch (e: Exception) {
                     if (e !is InterruptedException && e !is CancellationException) {
@@ -185,6 +195,7 @@ object ImageEnhancer {
         enhanceLazy(context, mangaId, chapterId, pageIndex, highPriority, pageVariant) { data }
     }
 
+    @Synchronized
     fun enhanceLazy(
         context: Context,
         mangaId: Long,
@@ -202,33 +213,27 @@ object ImageEnhancer {
         ) {
             return
         }
-        if (ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant)) return
+        if (ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant, configHash)) return
 
         val isInitialTargetRequest = !initialTargetEnqueued && pageIndex == targetPageIndex
         val effectiveHighPriority = highPriority || isInitialTargetRequest
         val requestKey = requestKey(mangaId, chapterId, pageIndex, pageVariant)
         val requestGeneration = generation.get()
 
-        val existingGeneration = pendingRequests[requestKey]
-        if (existingGeneration != null) {
+        val existingRequest = pendingRequests[requestKey]
+        if (existingRequest != null) {
             if (effectiveHighPriority) {
-                val existingRequest = queue.firstOrNull {
-                    it.key == requestKey && it.generation == existingGeneration
+                if (existingRequest.priority == 1) {
+                    preemptForVisibleRequest(pageIndex, pageVariant)
+                    return
                 }
-                if (existingRequest?.priority == 1) return
                 // Upgrade priority: Remove existing (likely Low) and re-add as High
-                val removed = queue.removeIf {
-                    it.mangaId == mangaId &&
-                        it.chapterId == chapterId &&
-                        it.pageIndex == pageIndex &&
-                        it.pageVariant == pageVariant &&
-                        it.generation == existingGeneration
-                }
+                val removed = queue.remove(existingRequest)
                 if (removed) {
                     logcat(LogPriority.DEBUG) {
                         "ImageEnhancer: Upgrading page $pageIndex/$pageVariant to High Priority"
                     }
-                    pendingRequests.remove(requestKey, existingGeneration)
+                    pendingRequests.remove(requestKey, existingRequest)
                     // Proceed to add below
                 } else {
                     // Already processing or failed to remove, skip
@@ -240,15 +245,13 @@ object ImageEnhancer {
             }
         }
 
-        if (pendingRequests.putIfAbsent(requestKey, requestGeneration) != null) return
-
         if (isInitialTargetRequest) {
             initialTargetEnqueued = true
         }
 
         val priorityLevel = if (effectiveHighPriority) 1 else 0
         val req = EnhanceRequest(
-            context,
+            context.applicationContext,
             mangaId,
             chapterId,
             pageIndex,
@@ -258,25 +261,20 @@ object ImageEnhancer {
             requestGeneration,
             seqGenerator.getAndIncrement(),
         )
+        pendingRequests[requestKey] = req
         queue.offer(req)
+        queueSignal.trySend(Unit)
 
         // A visible page may interrupt background work, but another preloaded page should not be
         // discarded just because the reader advanced within the preload window.
-        if (
-            effectiveHighPriority &&
-            activePageIndex >= 0 &&
-            (activePageIndex != pageIndex || activePageVariant != pageVariant) &&
-            !isFocusedTarget(activePageIndex, activePageVariant)
-        ) {
-            preemptActiveRequest(
-                reason = "visible page requested",
-                requeue = activePageIndex > targetPageIndex,
-            )
+        if (effectiveHighPriority) {
+            preemptForVisibleRequest(pageIndex, pageVariant)
         }
 
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Enqueued page $pageIndex/$pageVariant (priority=$priorityLevel)" }
     }
 
+    @Synchronized
     fun reset(initialPageIndex: Int = 0) {
         cancelAll(reason = "reset")
         queue.clear()
@@ -292,6 +290,7 @@ object ImageEnhancer {
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Resetting state to page $initialPageIndex" }
     }
 
+    @Synchronized
     fun cancelAll(reason: String = "cancelAll", resetNative: Boolean = true) {
         generation.incrementAndGet()
         queue.clear()
@@ -324,6 +323,7 @@ object ImageEnhancer {
         logcat(LogPriority.DEBUG) { "ImageEnhancer: Cancelled all enhancement work (reason=$reason)" }
     }
 
+    @Synchronized
     fun reprioritizeAround(
         pageIndex: Int,
         pageVariant: String = "",
@@ -350,11 +350,13 @@ object ImageEnhancer {
             ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant)
     }
 
+    @Synchronized
     fun isFocusedTarget(pageIndex: Int, pageVariant: String = ""): Boolean {
         return (pageIndex == targetPageIndex && pageVariant == targetPageVariant) ||
             (pageIndex == targetSecondaryPageIndex && pageVariant == targetSecondaryPageVariant)
     }
 
+    @Synchronized
     fun isActivelyProcessing(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = ""): Boolean {
         return activeMangaId == mangaId &&
             activeChapterId == chapterId &&
@@ -362,6 +364,7 @@ object ImageEnhancer {
             activePageVariant == pageVariant
     }
 
+    @Synchronized
     fun cancel(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = "") {
         val requestKey = requestKey(mangaId, chapterId, pageIndex, pageVariant)
         if (pendingRequests.remove(requestKey) != null) {
@@ -379,14 +382,18 @@ object ImageEnhancer {
             activePageIndex == pageIndex &&
             activePageVariant == pageVariant
         ) {
+            activeRequest?.requeueOnCancel?.set(false)
             preemptActiveRequest("page cancelled")
         }
     }
 
+    @Synchronized
     fun cancelRequestsLessThan(context: Context, mangaId: Long, chapterId: Long, thresholdPageIndex: Int) {
         queue.removeIf { req ->
-            if (req.mangaId == mangaId && req.chapterId == chapterId && req.pageIndex < thresholdPageIndex) {
-                pendingRequests.remove(req.key, req.generation)
+            if (req.mangaId == mangaId && req.chapterId == chapterId && req.pageIndex < thresholdPageIndex &&
+                !isFocusedTarget(req.pageIndex, req.pageVariant)
+            ) {
+                pendingRequests.remove(req.key, req)
                 logcat(LogPriority.DEBUG) {
                     "ImageEnhancer: Pruned page ${req.pageIndex}/${req.pageVariant} (reason: < $thresholdPageIndex)"
                 }
@@ -397,10 +404,13 @@ object ImageEnhancer {
         }
     }
 
+    @Synchronized
     fun cancelRequestsGreaterThan(context: Context, mangaId: Long, chapterId: Long, thresholdPageIndex: Int) {
         queue.removeIf { req ->
-            if (req.mangaId == mangaId && req.chapterId == chapterId && req.pageIndex > thresholdPageIndex) {
-                pendingRequests.remove(req.key, req.generation)
+            if (req.mangaId == mangaId && req.chapterId == chapterId && req.pageIndex > thresholdPageIndex &&
+                !isFocusedTarget(req.pageIndex, req.pageVariant)
+            ) {
+                pendingRequests.remove(req.key, req)
                 logcat(LogPriority.DEBUG) {
                     "ImageEnhancer: Pruned page ${req.pageIndex}/${req.pageVariant} (reason: > $thresholdPageIndex)"
                 }
@@ -413,12 +423,18 @@ object ImageEnhancer {
 
     private suspend fun processRequest(req: EnhanceRequest) {
         try {
-            if (req.generation != generation.get()) return
-            activeMangaId = req.mangaId
-            activeChapterId = req.chapterId
-            activePageIndex = req.pageIndex
-            activePageVariant = req.pageVariant
-            activeRequest = req
+            val resetJob = synchronized(this) {
+                if (req.generation != generation.get() || pendingRequests[req.key] !== req) return
+                activeMangaId = req.mangaId
+                activeChapterId = req.chapterId
+                activePageIndex = req.pageIndex
+                activePageVariant = req.pageVariant
+                activeRequest = req
+                nativeResetJob
+            }
+            // A reset must finish before this attempt can initialize a new model.
+            resetJob?.join()
+            if (req.generation != generation.get() || req.cancelled.get()) return
             logcat(LogPriority.DEBUG) {
                 "ImageEnhancer: Processing page ${req.pageIndex}/${req.pageVariant} (priority=${req.priority})"
             }
@@ -439,35 +455,40 @@ object ImageEnhancer {
 
             val disposable = SingletonImageLoader.get(req.context).enqueue(request)
             val job = disposable.job
-            activeJob = job
-            if (req.generation != generation.get() || req.cancelled.get()) {
-                Waifu2x.abortProcessing()
-                job.cancel(CancellationException("Image enhancement request became obsolete"))
+            synchronized(this) {
+                if (activeRequest === req) activeJob = job
+                if (req.generation != generation.get() || req.cancelled.get()) {
+                    Waifu2x.abortProcessing()
+                    job.cancel(CancellationException("Image enhancement request became obsolete"))
+                }
             }
             job.await()
         } finally {
-            val shouldRequeue = req.requeueOnCancel.get() && req.generation == generation.get()
-            activeMangaId = -1L
-            activeChapterId = -1L
-            activePageIndex = -1
-            activePageVariant = ""
-            activeJob = null
-            activeRequest = null
-            pendingRequests.remove(req.key, req.generation)
-
-            if (shouldRequeue) {
-                logcat(LogPriority.DEBUG) {
-                    "ImageEnhancer: Re-queueing preempted preload page ${req.pageIndex}/${req.pageVariant}"
+            synchronized(this) {
+                if (activeRequest === req) {
+                    activeMangaId = -1L
+                    activeChapterId = -1L
+                    activePageIndex = -1
+                    activePageVariant = ""
+                    activeJob = null
+                    activeRequest = null
                 }
-                enhanceLazy(
-                    context = req.context,
-                    mangaId = req.mangaId,
-                    chapterId = req.chapterId,
-                    pageIndex = req.pageIndex,
-                    highPriority = false,
-                    pageVariant = req.pageVariant,
-                    dataProvider = req.dataProvider,
-                )
+                pendingRequests.remove(req.key, req)
+
+                if (req.requeueOnCancel.get() && req.generation == generation.get()) {
+                    logcat(LogPriority.DEBUG) {
+                        "ImageEnhancer: Re-queueing preempted preload page ${req.pageIndex}/${req.pageVariant}"
+                    }
+                    enhanceLazy(
+                        context = req.context,
+                        mangaId = req.mangaId,
+                        chapterId = req.chapterId,
+                        pageIndex = req.pageIndex,
+                        highPriority = false,
+                        pageVariant = req.pageVariant,
+                        dataProvider = req.dataProvider,
+                    )
+                }
             }
         }
     }
@@ -519,25 +540,23 @@ object ImageEnhancer {
     }
 
     private fun currentConfigHash(): String {
-        return ImageEnhancementCache.getConfigHash(
-            noise = preferences.realCuganNoiseLevel().get(),
-            scale = preferences.realCuganScale().get(),
-            model = preferences.realCuganModel().get(),
-            realEsrganStyle = preferences.realEsrganStyle().get(),
-            maxWidth = preferences.realCuganMaxSizeWidth().get(),
-            maxHeight = preferences.realCuganMaxSizeHeight().get(),
-            skipMaxWidth = preferences.realCuganSkipMaxSizeWidth().get(),
-            skipMaxHeight = preferences.realCuganSkipMaxSizeHeight().get(),
-            tileSize = preferences.realCuganTileSize().get(),
-            precision = preferences.realCuganPrecision().get(),
-            fp16Arithmetic = preferences.realCuganFp16Arithmetic().get(),
-            processingBackend = preferences.realCuganProcessingBackend().get(),
-        )
+        return ImageEnhancementCache.getConfigHash(preferences)
     }
 
     private fun preemptActiveRequestIfBehindTarget() {
-        if (activePageIndex >= 0 && activePageIndex < targetPageIndex) {
+        if (activePageIndex >= 0 && activePageIndex < targetPageIndex &&
+            !isFocusedTarget(activePageIndex, activePageVariant)
+        ) {
             preemptActiveRequest("active page is behind visible target")
+        }
+    }
+
+    private fun preemptForVisibleRequest(pageIndex: Int, pageVariant: String) {
+        if (activePageIndex >= 0 &&
+            (activePageIndex != pageIndex || activePageVariant != pageVariant) &&
+            !isFocusedTarget(activePageIndex, activePageVariant)
+        ) {
+            preemptActiveRequest("visible page requested", requeue = activePageIndex > targetPageIndex)
         }
     }
 

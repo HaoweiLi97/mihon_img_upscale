@@ -12,6 +12,20 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.15] - 2026-10-21
+
+### Added
+- Add a MediaTek NPU enhancement option and persistent on-device model preparation.
+
+### Changed
+- Prepare Qualcomm NPU contexts on device from FP16 models and show model preparation status in reader settings.
+
+### Fixed
+- Keep enhancement queue cancellation, retries and visible-page priorities consistent.
+- Prevent cancelled cache writes from recycling images still in use or restoring cleared entries.
+- Refresh enhanced images when ink filter settings change and release temporary image resources.
+- Keep processing status text stable during polling and image replacement.
+
 ## [v1.3.14] - 2026-10-16
 
 ### Changed

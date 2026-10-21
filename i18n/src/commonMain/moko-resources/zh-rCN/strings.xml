@@ -1004,6 +1004,10 @@
     <string name="reader_processing_backend">处理路线</string>
     <string name="reader_backend_vulkan">Vulkan GPU</string>
     <string name="reader_backend_qualcomm_npu">Qualcomm NPU</string>
+    <string name="reader_backend_mediatek_npu">MediaTek NPU</string>
+    <string name="reader_npu_model_preparing">正在为 NPU 准备此模型，你可以继续阅读。</string>
+    <string name="reader_npu_model_ready">NPU 模型已就绪，已保存供后续使用。</string>
+    <string name="reader_npu_model_failed">此模型的 NPU 准备失败，将显示原图。</string>
     <string name="reader_model">模型</string>
     <string name="reader_model_style">模型风格</string>
     <string name="reader_denoise_level">降噪等级</string>

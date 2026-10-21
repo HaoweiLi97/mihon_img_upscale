@@ -4,10 +4,17 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -15,6 +22,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import eu.kanade.tachiyomi.util.image.EnhancementImageDecoder as ImageDecoder
 
 @RunWith(AndroidJUnit4::class)
@@ -100,6 +108,58 @@ class ImageEnhancementCacheTest {
         assertTrue(bitmap!!.width == 64 && bitmap.height == 96)
         bitmap.recycle()
         assertTrue(file.exists())
+    }
+
+    @Test
+    fun inkFilterSettingsProduceDistinctCacheEntries() {
+        val raw = ImageEnhancementCache.getConfigHash(noise = 3, scale = 2)
+        val ink = ImageEnhancementCache.getConfigHash(noise = 3, scale = 2, inkFilter = true, inkBleeding = 20)
+        val strongerInk = ImageEnhancementCache.getConfigHash(noise = 3, scale = 2, inkFilter = true, inkBleeding = 40)
+        assertNotEquals(raw, ink)
+        assertNotEquals(ink, strongerInk)
+    }
+
+    @Test
+    fun cancellingBlockedSaveReleasesItsBitmapAndClearingChapterRejectsQueuedSaves() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        ImageEnhancementCache.init(context)
+        val mangaId = 9_000_002L
+        val chapterId = System.nanoTime()
+        // Hold the disk writer before it can commit, making queue backpressure
+        // deterministic without timing-dependent large-image compression.
+        val lockField = ImageEnhancementCache::class.java.getDeclaredField("cacheLock").apply { isAccessible = true }
+        val lock = (lockField.get(ImageEnhancementCache) as ReentrantReadWriteLock).writeLock()
+        val bitmaps = List(3) { Bitmap.createBitmap(32, 48, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) } }
+        lock.lock()
+        try {
+            val first = launch(start = CoroutineStart.UNDISPATCHED) {
+                ImageEnhancementCache.enqueueSaveToCache(mangaId, chapterId, 0, "regression", bitmaps[0])
+            }
+            val second = launch(start = CoroutineStart.UNDISPATCHED) {
+                ImageEnhancementCache.enqueueSaveToCache(mangaId, chapterId, 1, "regression", bitmaps[1])
+            }
+            withTimeout(5000) {
+                first.join()
+                second.join()
+            }
+            val blocked = launch(start = CoroutineStart.UNDISPATCHED) {
+                ImageEnhancementCache.enqueueSaveToCache(mangaId, chapterId, 2, "regression", bitmaps[2])
+            }
+            assertFalse(blocked.isCompleted)
+            blocked.cancelAndJoin()
+            assertTrue(bitmaps[2].isRecycled)
+            assertFalse(ImageEnhancementCache.isSavePending(mangaId, chapterId, 2))
+        } finally {
+            ImageEnhancementCache.clearChapterCache(mangaId, chapterId)
+            lock.unlock()
+        }
+        withTimeout(5000) {
+            while (bitmaps.any { !it.isRecycled }) delay(10)
+        }
+        for (page in 0..2) {
+            assertNull(ImageEnhancementCache.getCachedImage(mangaId, chapterId, page, "regression"))
+        }
+        ImageEnhancementCache.clearChapterCache(mangaId, chapterId)
     }
 
     private fun writeImage(name: String, color: Int = Color.WHITE): File {

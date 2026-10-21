@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -229,6 +230,19 @@ class WebtoonConfig(
             .debounce(500)
             .onEach {
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache.clear(appContext)
+                imagePropertyChangedListener?.invoke()
+            }
+            .launchIn(scope)
+
+        merge<Any>(
+            readerPreferences.inkFilter().changes().drop(1),
+            readerPreferences.inkBleedingIntensity().changes().drop(1),
+            readerPreferences.inkBumpIntensity().changes().drop(1),
+            readerPreferences.inkOriginalIntensity().changes().drop(1),
+        )
+            .onEach { eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.cancelAll("ink filter changed") }
+            .debounce(500)
+            .onEach {
                 imagePropertyChangedListener?.invoke()
             }
             .launchIn(scope)

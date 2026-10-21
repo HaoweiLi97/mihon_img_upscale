@@ -10,6 +10,7 @@ import mihon.gradle.tasks.ReplaceShortcutsPlaceholderTask
 import org.gradle.api.tasks.Sync
 import java.io.File
 import java.io.FileInputStream
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -55,106 +56,93 @@ val qnnSdkDir = providers.gradleProperty("qnnSdkDir").orNull
     ?: localProperties.getProperty("qnn.sdk.dir")
     ?: System.getenv("QNN_SDK_ROOT")
 
-val qnnHtpArchs = (
-    providers.gradleProperty("qnnHtpArchs").orNull
-        ?: localProperties.getProperty("qnn.htp.archs")
-        ?: localProperties.getProperty("qnn.htp.arch")
-        ?: "69,73,75,79,81"
-    ).split(',').map(String::trim).filter(String::isNotEmpty).distinct()
-
-val qnnContextDir = providers.gradleProperty("qnnContextDir").orNull
-    ?: localProperties.getProperty("qnn.context.dir")
-    ?: System.getenv("QNN_CONTEXT_DIR")
+val qnnDlcDir = providers.gradleProperty("qnnDlcDir").orNull
+    ?: localProperties.getProperty("qnn.dlc.dir")
+    ?: System.getenv("QNN_DLC_DIR")
 
 val qnnSdkRoot = qnnSdkDir?.takeIf { it.isNotBlank() }?.let { layout.settingsDirectory.file(it).asFile }
-val qnnContextRoot = qnnContextDir?.takeIf { it.isNotBlank() }?.let { layout.settingsDirectory.file(it).asFile }
+val qnnDlcRoot = qnnDlcDir?.takeIf { it.isNotBlank() }?.let { layout.settingsDirectory.file(it).asFile }
 val generatedQnnAssetsDir = layout.buildDirectory.dir("generated/qnnAssets")
 val generatedQnnJniLibsDir = layout.buildDirectory.dir("generated/qnnJniLibs")
-val qnnContextTargets = listOf(
-    69 to "SM8475",
-    73 to "SM8550",
-    75 to "SM8650",
-    79 to "SM8750",
-    81 to "SM8850",
-)
-val selectedQnnContextTargets = qnnContextTargets.filter { (htpArch, _) ->
-    htpArch.toString() in qnnHtpArchs
-}
 val qnnModelNames = listOf(
     "realesrgan-animevideov3-x2",
-    "realesrgan-animevideov3-x2-int8",
     "realesrgan-general-x4v3-x2",
-    "realesrgan-general-x4v3-x2-int8",
     "realcugan-se-x2-no-denoise",
     "realcugan-se-x2-denoise1x",
     "realcugan-se-x2-denoise2x",
     "realcugan-se-x2-denoise3x",
     "realcugan-se-x2-conservative",
-    "realcugan-se-x2-no-denoise-int8",
-    "realcugan-se-x2-denoise1x-int8",
-    "realcugan-se-x2-denoise2x-int8",
-    "realcugan-se-x2-denoise3x-int8",
-    "realcugan-se-x2-conservative-int8",
     "realcugan-pro-x2-no-denoise",
     "realcugan-pro-x2-denoise3x",
     "realcugan-pro-x2-conservative",
-    "realcugan-pro-x2-no-denoise-int8",
-    "realcugan-pro-x2-denoise3x-int8",
-    "realcugan-pro-x2-conservative-int8",
     "realcugan-pro-x3-no-denoise",
     "realcugan-pro-x3-denoise3x",
     "realcugan-pro-x3-conservative",
-    "realcugan-pro-x3-no-denoise-int8",
-    "realcugan-pro-x3-denoise3x-int8",
-    "realcugan-pro-x3-conservative-int8",
     "span-nomosuni-x2",
-    "span-nomosuni-x2-int8",
     "w2xex-photo-small-x2",
-    "w2xex-photo-small-x2-int8",
 )
-val stageQnnContexts = qnnContextRoot?.let { contextRoot ->
-    val targets = selectedQnnContextTargets
+val stageQnnModels = qnnDlcRoot?.let { dlcRoot ->
     val models = qnnModelNames
-    tasks.register<Sync>("stageQnnContexts") {
-        targets.forEach { (htpArch, sourceSoc) ->
-            models.forEach { model ->
-                val socFile = contextRoot.resolve("$model.$sourceSoc.bin")
-                val htpFile = contextRoot.resolve("$model.v$htpArch.bin")
-                val sourceFile = if (socFile.isFile) socFile else htpFile
-                from(sourceFile) {
-                    rename { "$model.v$htpArch.bin" }
-                    into("qnn-contexts")
-                }
-            }
+    tasks.register<Sync>("stageQnnModels") {
+        models.forEach { model ->
+            from(dlcRoot.resolve("$model.dlc")) { into("qnn-models") }
         }
         into(generatedQnnAssetsDir)
-
         doFirst {
-            val missingFiles = targets.flatMap { (htpArch, sourceSoc) ->
-                models.mapNotNull { model ->
-                    val socFile = contextRoot.resolve("$model.$sourceSoc.bin")
-                    val htpFile = contextRoot.resolve("$model.v$htpArch.bin")
-                    if (socFile.isFile || htpFile.isFile) {
-                        null
-                    } else {
-                        "$model.$sourceSoc.bin (or $model.v$htpArch.bin)"
-                    }
-                }
-            }
+            val missingFiles = models.filterNot { dlcRoot.resolve("$it.dlc").isFile }
             check(missingFiles.isEmpty()) {
-                "QNN multi-HTP context directory is incomplete: ${missingFiles.joinToString()}"
+                "QNN FP16 DLC directory is incomplete: ${missingFiles.joinToString()}"
             }
+        }
+        doLast {
+            val entries = models.joinToString(",\n") { model ->
+                val digest = MessageDigest.getInstance("SHA-256")
+                    .digest(dlcRoot.resolve("$model.dlc").readBytes())
+                    .joinToString("") { "%02x".format(it) }
+                "  \"$model\": \"$digest\""
+            }
+            destinationDir.resolve("qnn-models/manifest.json").writeText("{\n$entries\n}\n")
         }
     }
 }
+val mediaTekTfliteDir = providers.gradleProperty("mediatekTfliteDir").orNull
+    ?: localProperties.getProperty("mediatek.tflite.dir")
+    ?: System.getenv("MEDIATEK_TFLITE_DIR")
+val generatedMediaTekAssetsDir = layout.buildDirectory.dir("generated/mediatekAssets")
+val stageMediaTekModels = mediaTekTfliteDir?.takeIf { it.isNotBlank() }?.let { path ->
+    val root = layout.settingsDirectory.file(path).asFile
+    val models = qnnModelNames
+    tasks.register<Sync>("stageMediaTekModels") {
+        models.forEach { model ->
+            from(root.resolve("$model.tflite")) { into("litert-models") }
+        }
+        into(generatedMediaTekAssetsDir)
+        doFirst {
+            val missing = models.filterNot { root.resolve("$it.tflite").isFile }
+            check(missing.isEmpty()) { "MediaTek FP16 models are incomplete: ${missing.joinToString()}" }
+        }
+        doLast {
+            val entries = models.joinToString(",\n") { model ->
+                val hash = MessageDigest.getInstance("SHA-256").digest(root.resolve("$model.tflite").readBytes())
+                    .joinToString("") { "%02x".format(it) }
+                "  \"$model\": \"$hash\""
+            }
+            destinationDir.resolve("litert-models/manifest.json").writeText("{\n$entries\n}\n")
+        }
+    }
+}
+
 val stageQnnDlcRuntime = qnnSdkRoot?.let { sdkRoot ->
-    val modelDlcLibrary = sdkRoot.resolve("lib/aarch64-android/libQnnModelDlc.so")
+    // libQnnHtpPrepare.so is supplied by the matching qnn-runtime AAR.
+    val libraries = listOf("libQnnModelDlc.so")
     tasks.register<Sync>("stageQnnDlcRuntime") {
-        from(modelDlcLibrary)
+        libraries.forEach { from(sdkRoot.resolve("lib/aarch64-android/$it")) }
         into(generatedQnnJniLibsDir.map { it.dir("arm64-v8a") })
         doFirst {
-            check(modelDlcLibrary.isFile) {
-                "QNN DLC runtime not found: ${modelDlcLibrary.absolutePath}"
+            libraries.forEach { library ->
+                check(sdkRoot.resolve("lib/aarch64-android/$library").isFile) {
+                    "QNN DLC runtime not found: $library"
+                }
             }
         }
     }
@@ -166,8 +154,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 41
-        versionName = "1.3.14"
+        versionCode = 42
+        versionName = "1.3.15"
         buildConfigField("int", "UPSTREAM_VERSION_CODE", "38")
 
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
@@ -182,7 +170,6 @@ android {
                 }
                 if (qnnSdkRoot != null) {
                     arguments += "-DQNN_SDK_DIR=${qnnSdkRoot.absolutePath}"
-                    arguments += "-DQNN_HTP_ARCH=${qnnHtpArchs.first()}"
                 }
             }
         }
@@ -263,7 +250,10 @@ android {
     sourceSets {
         getByName("nightly").res.directories.add("src/debug/res")
         getByName("benchmark").res.directories.add("src/debug/res")
-        if (stageQnnContexts != null) {
+        if (stageMediaTekModels != null) {
+            getByName("main").assets.directories.add(generatedMediaTekAssetsDir.get().asFile.path)
+        }
+        if (stageQnnModels != null) {
             getByName("main").assets.directories.add(generatedQnnAssetsDir.get().asFile.path)
         }
         if (stageQnnDlcRuntime != null) {
@@ -343,10 +333,16 @@ android {
     }
 }
 
-if (stageQnnContexts != null) {
+if (stageMediaTekModels != null) {
+    tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+        dependsOn(stageMediaTekModels)
+    }
+}
+
+if (stageQnnModels != null) {
     tasks.configureEach {
         if (name.startsWith("merge") && name.endsWith("Assets")) {
-            dependsOn(stageQnnContexts)
+            dependsOn(stageQnnModels)
         }
     }
 }
@@ -385,6 +381,8 @@ baselineProfile {
 
 dependencies {
     implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
+    implementation("com.google.ai.edge.litert:litert:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-npu-runtime-mediatek:2.3.0")
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation("androidx.test:runner:1.7.0")
     baselineProfile(projects.baselineProfile)

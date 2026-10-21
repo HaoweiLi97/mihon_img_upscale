@@ -8,6 +8,7 @@ import dev.icerock.moko.resources.StringResource
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
@@ -162,9 +163,12 @@ class ReaderPreferences(
 
     fun realCuganTileSize() = preferenceStore.getInt("pref_realcugan_tile_size", 128)
 
-    fun realCuganPrecision() = preferenceStore.getInt("pref_realcugan_precision", 0) // 0: FP16, 1: FP32, 2: INT8, 3: BF16
+    fun realCuganPrecision() = preferenceStore.getInt("pref_realcugan_precision", 0) // 0: FP16, 1: FP32, 3: BF16 (legacy 2 resolves to FP16)
 
-    fun realCuganProcessingBackend() = preferenceStore.getInt("pref_realcugan_processing_backend", 1) // 0: Vulkan, 1: Qualcomm NPU
+    fun realCuganProcessingBackend() = preferenceStore.getInt(
+        "pref_realcugan_processing_backend",
+        Waifu2x.defaultProcessingBackend(),
+    ) // 0: Vulkan, 1: Qualcomm, 2: MediaTek
 
     fun realCuganFp16Arithmetic() = preferenceStore.getBoolean("pref_realcugan_fp16_arithmetic", false)
 

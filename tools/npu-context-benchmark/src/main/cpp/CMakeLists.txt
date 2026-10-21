@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22)
+project(npu-context-benchmark)
+set(CMAKE_CXX_STANDARD 17)
+get_filename_component(RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../app/src/main/cpp" ABSOLUTE)
+add_library(npubench SHARED benchmark.cpp "${RUNTIME_DIR}/spatial_qnn_runtime.cpp")
+target_include_directories(npubench PRIVATE "${RUNTIME_DIR}" "${QNN_SDK_DIR}/include/QNN")
+target_compile_definitions(npubench PRIVATE MIHON_ENABLE_QNN=1)
+target_link_libraries(npubench PRIVATE android log dl)
