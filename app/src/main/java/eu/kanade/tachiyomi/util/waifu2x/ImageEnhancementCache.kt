@@ -34,7 +34,7 @@ object ImageEnhancementCache {
     private const val ENHANCEMENT_INPUT_DECODE_REVISION = 1
     private const val REAL_CUGAN_TEXTURE_OCCUPANCY_REVISION = 3
     private const val MONOCHROME_INPUT_NORMALIZATION_REVISION = 3
-    private const val REAL_ESRGAN_PHOTO_NCNN_REVISION = 1
+    private const val REAL_ESRGAN_PHOTO_NCNN_REVISION = 2
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
 

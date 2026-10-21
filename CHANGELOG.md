@@ -17,7 +17,8 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 ### Fixed
 - Display the original image before starting enhancement and restore both visible enhancement targets when opening a double-page spread.
 - Update the image decoder to avoid a native buffer crash during page loading.
-- Regenerate the Real-ESRGAN Photo NCNN model from the official weights and refresh its model and image caches.
+- Regenerate the Real-ESRGAN Photo NCNN model from the official weights, correct its resize parameters, and refresh its model and image caches.
+- Reject failed native inference instead of returning a black image for caching.
 
 ### Improved
 - Reduce temporary image buffers and crop copies, release discarded page decoders promptly, and limit large images waiting for cache encoding.

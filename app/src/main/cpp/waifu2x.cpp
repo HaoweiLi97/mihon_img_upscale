@@ -801,15 +801,21 @@ int Waifu2x::process(const ncnn::Mat &inimage, void *out_pixels, int out_stride,
           LOGE("Model has no inputs or outputs!");
           return -1;
         }
-        ex.input(net.input_indexes()[0], in_tile);
-        ex.extract(net.output_indexes()[net.output_indexes().size() - 1],
-                   out_tile);
+        const int input_result = ex.input(net.input_indexes()[0], in_tile);
+        const int extract_result = input_result == 0
+            ? ex.extract(net.output_indexes().back(), out_tile)
+            : input_result;
+        if (extract_result != 0) {
+          LOGE("Staged inference failed: input=%d extract=%d at %d,%d",
+               input_result, extract_result, xi, yi);
+          return -1;
+        }
       }
 
       if (out_tile.empty() || out_tile.c < 3) {
         LOGE("Inference tile failed or invalid channels (c=%d) at %d,%d",
              out_tile.c, xi, yi);
-        continue;
+        return -1;
       }
 
       // Debug logging for first tile to diagnose x3/x4 issues

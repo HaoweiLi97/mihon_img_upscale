@@ -71,7 +71,9 @@ def export(checkpoint: Path, destination: Path) -> None:
     if set(state) != expected_keys:
         raise ValueError("Checkpoint contains unexpected tensors")
     layer("PixelShuffle", "upscale", [previous], "upscaled", "0=4")
-    layer("Interp", "residual_upscale", ["residual"], "residual_x4", "0=1 1=4 2=4")
+    # NCNN text parameters are typed by their spelling. Integer "4" is read
+    # as integer bits, not float 4.0, and produces a zero-sized resize.
+    layer("Interp", "residual_upscale", ["residual"], "residual_x4", "0=1 1=4.0 2=4.0")
     layer("BinaryOp", "add_residual", ["upscaled", "residual_x4"], "output_x4", "0=0")
     layer("Interp", "output_resize", ["output_x4"], "output", "0=3 1=0.5 2=0.5")
     binary = weights.getvalue()
