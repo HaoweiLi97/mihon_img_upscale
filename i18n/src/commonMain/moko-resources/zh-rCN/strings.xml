@@ -1042,12 +1042,5 @@
     <string name="reader_status_enhancing_progress">增强中... %1$d%%</string>
     <string name="pref_book_page_turn">纸张翻页</string>
     <string name="pref_book_page_turn_summary">围绕书脊翻动书页，显示透视和阴影</string>
-    <string name="reader_npu_calibration_required">此模型需要在本机完成校准</string>
-    <string name="reader_npu_calibration_description">按需下载加密校准集，在本机完成校准和量化，可能需要数分钟。请保持此页面打开；完成后可离线使用。</string>
-    <string name="reader_npu_calibration_start">下载校准集并在本机校准</string>
-    <string name="reader_npu_calibration_downloading">正在下载加密校准集：%1$d%%</string>
-    <string name="reader_npu_calibration_running">正在本机校准：%1$d / %2$d</string>
-    <string name="reader_npu_calibration_reference">正在计算验证参考：%1$d / %2$d</string>
-    <string name="reader_npu_calibration_compiling">正在量化并为本机编译：%1$d / %2$d</string>
-    <string name="reader_npu_calibration_verifying">正在检查 NPU 输出：%1$d / %2$d</string>
+    <string name="reader_npu_model_requires_fp16">当前模型需要 FP16，但此设备不支持。请选择 Real-ESRGAN Anime 的 INT8 模式，或使用 Vulkan。</string>
 </resources>

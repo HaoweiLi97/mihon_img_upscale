@@ -13,13 +13,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -33,12 +31,9 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.Companion.ColorFi
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
 import eu.kanade.tachiyomi.util.mediatek.MediaTekNpu
 import eu.kanade.tachiyomi.util.npu.NpuModelStatus
-import eu.kanade.tachiyomi.util.qnn.QnnCalibrationPacks
 import eu.kanade.tachiyomi.util.qnn.QnnModelContexts
 import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.i18n.MR
@@ -170,8 +165,6 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
         val processingBackend by viewModel.preferences.realCuganProcessingBackend().collectAsState()
         val precision by viewModel.preferences.realCuganPrecision().collectAsState()
         val fp16Supported by QnnModelContexts.fp16Supported.collectAsState()
-        val calibrationScope = rememberCoroutineScope()
-        var calibrationJob by remember { mutableStateOf<Job?>(null) }
         val npuDeviceAvailable = remember { Waifu2x.isQualcommNpuAvailable() }
         val mediaTekDeviceAvailable = remember { MediaTekNpu.isDeviceSupported() }
         val useQualcommNpu = processingBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU
@@ -189,9 +182,6 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
         val preparationKey = qnnModelName?.let {
             if (useQualcommNpu) QnnModelContexts.stateKey(it, precision) else it
         }
-        DisposableEffect(processingBackend, qnnModelName, precision) {
-            onDispose { calibrationJob?.cancel() }
-        }
         var preparationRetry by remember { mutableStateOf(0) }
         LaunchedEffect(processingBackend, qnnModelName, precision, preparationRetry) {
             val modelName = qnnModelName ?: return@LaunchedEffect
@@ -200,8 +190,9 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
                     MediaTekNpu.prepare(context, modelName, retry = preparationRetry > 0)
                 } else {
                     val supported = QnnModelContexts.detectFp16Support(context)
-                    if (supported == false && precision != QnnModelContexts.PRECISION_W8A16) {
-                        viewModel.preferences.realCuganPrecision().set(QnnModelContexts.PRECISION_W8A16)
+                    if (precision !in QnnModelContexts.supportedPrecisions(modelName)) return@withContext
+                    if (supported == false && precision == 0 && QnnModelContexts.supportsW8a8(modelName)) {
+                        viewModel.preferences.realCuganPrecision().set(QnnModelContexts.PRECISION_W8A8)
                         return@withContext
                     }
                     QnnModelContexts.prepare(context, modelName, retry = preparationRetry > 0, precision = precision)
@@ -298,61 +289,20 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
             val status = preparationStates[preparationKey]
             Text(
                 text = when (status) {
-                    is NpuModelStatus.Downloading -> stringResource(
-                        MR.strings.reader_npu_calibration_downloading,
-                        (status.downloaded * 100 / status.total.coerceAtLeast(1)).toInt(),
-                    )
-                    is NpuModelStatus.Calibrating -> stringResource(
-                        when (status.stage) {
-                            0 -> MR.strings.reader_npu_calibration_running
-                            1 -> MR.strings.reader_npu_calibration_reference
-                            2 -> MR.strings.reader_npu_calibration_compiling
-                            else -> MR.strings.reader_npu_calibration_verifying
-                        },
-                        status.completed,
-                        status.total,
-                    )
-                    NpuModelStatus.CalibrationRequired -> stringResource(MR.strings.reader_npu_calibration_required)
                     is NpuModelStatus.Ready -> stringResource(MR.strings.reader_npu_model_ready)
-                    is NpuModelStatus.Failed -> stringResource(MR.strings.reader_npu_model_failed)
+                    is NpuModelStatus.Failed -> if (useQualcommNpu && fp16Supported == false &&
+                        !QnnModelContexts.supportsW8a8(qnnModelName)
+                    ) {
+                        stringResource(MR.strings.reader_npu_model_requires_fp16)
+                    } else {
+                        stringResource(MR.strings.reader_npu_model_failed)
+                    }
                     else -> stringResource(MR.strings.reader_npu_model_preparing)
                 },
                 modifier = Modifier.padding(horizontal = 24.dp),
                 style = MaterialTheme.typography.bodySmall,
             )
-            if (useQualcommNpu && precision == QnnModelContexts.PRECISION_W8A16 && status !is NpuModelStatus.Ready) {
-                Text(
-                    stringResource(MR.strings.reader_npu_calibration_description),
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row(modifier = Modifier.padding(horizontal = 12.dp)) {
-                    TextButton(
-                        enabled = calibrationJob?.isActive != true && QnnCalibrationPacks.isConfigured(),
-                        onClick = {
-                            calibrationJob = calibrationScope.launch {
-                                try {
-                                    QnnModelContexts.prepareCalibrated(context, qnnModelName)
-                                } finally {
-                                    calibrationJob = null
-                                }
-                            }
-                        },
-                    ) { Text(stringResource(MR.strings.reader_npu_calibration_start)) }
-                    if (calibrationJob?.isActive == true) {
-                        TextButton(onClick = {
-                            calibrationJob?.cancel()
-                        }) { Text(stringResource(MR.strings.action_cancel)) }
-                    }
-                }
-                if (status is NpuModelStatus.Failed) {
-                    Text(
-                        status.message,
-                        modifier = Modifier.padding(horizontal = 24.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            } else if (status is NpuModelStatus.Failed) {
+            if (status is NpuModelStatus.Failed) {
                 TextButton(onClick = { preparationRetry++ }, modifier = Modifier.padding(horizontal = 12.dp)) {
                     Text(stringResource(MR.strings.action_retry))
                 }
@@ -498,13 +448,21 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
         }
 
         val supportedPrecisions = when {
-            useQualcommNpu -> listOf(0, QnnModelContexts.PRECISION_W8A16)
+            useQualcommNpu -> QnnModelContexts.supportedPrecisions(qnnModelName)
             useMediaTekNpu -> listOf(0)
             else -> listOf(0, 1, 3)
         }
-        LaunchedEffect(useNpu, realCuganModel, precision) {
+        LaunchedEffect(processingBackend, qnnModelName, precision) {
             if (precision !in supportedPrecisions) {
-                viewModel.preferences.realCuganPrecision().set(supportedPrecisions.first())
+                viewModel.preferences.realCuganPrecision().set(
+                    Waifu2x.resolvePrecision(
+                        precision,
+                        processingBackend,
+                        realCuganModel,
+                        realCuganScale,
+                        realEsrganStyle,
+                    ),
+                )
             }
         }
         SettingsChipRow(stringResource(MR.strings.reader_precision)) {
@@ -512,7 +470,7 @@ internal fun ColumnScope.ColorFilterPage(viewModel: ReaderSettingsViewModel) {
                 0 to stringResource(MR.strings.reader_precision_fp16),
                 1 to stringResource(MR.strings.reader_precision_fp32),
                 3 to stringResource(MR.strings.reader_precision_bf16),
-                QnnModelContexts.PRECISION_W8A16 to "W8A16",
+                QnnModelContexts.PRECISION_W8A8 to "INT8 (W8A8)",
             ).filter { (value, _) -> value in supportedPrecisions }.map { (value, name) ->
                 FilterChip(
                     selected = precision == value,

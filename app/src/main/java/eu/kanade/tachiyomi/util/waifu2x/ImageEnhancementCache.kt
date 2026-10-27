@@ -594,7 +594,7 @@ object ImageEnhancementCache {
     ): String {
         val effectiveScale = getEffectiveScale(model, scale, realEsrganStyle)
         val resolvedBackend = Waifu2x.resolveProcessingBackend(processingBackend, model, effectiveScale)
-        val resolvedPrecision = Waifu2x.resolvePrecision(precision, resolvedBackend, model, effectiveScale)
+        val resolvedPrecision = Waifu2x.resolvePrecision(precision, resolvedBackend, model, effectiveScale, realEsrganStyle)
         val modelRevision = buildString {
             if (
                 model == Waifu2x.MODEL_REAL_ESRGAN_ANIME &&

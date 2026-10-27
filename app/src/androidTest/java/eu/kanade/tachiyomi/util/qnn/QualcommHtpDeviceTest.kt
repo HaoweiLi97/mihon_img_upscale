@@ -6,17 +6,20 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
 class QualcommHtpDeviceTest {
     @Test
-    fun detectsArchitectureAndPackagesUnpreparedFp16Models() {
+    fun detectsArchitectureAndPackagesUnpreparedModels() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val architecture = QualcommHtp.architecture()
 
@@ -25,13 +28,62 @@ class QualcommHtpDeviceTest {
             assertTrue(input.available() > 0)
         }
         assertTrue(context.assets.list("qnn-contexts").isNullOrEmpty())
-        assertFalse(context.assets.list("qnn-models").orEmpty().any { "int8" in it })
-        Log.i("QualcommHtpDeviceTest", "Detected HTP v$architecture; FP16 DLC bundled without offline contexts")
+        context.assets.open("qnn-models/realesrgan-animevideov3-x2-w8a8.dlc").close()
+        Log.i("QualcommHtpDeviceTest", "Detected HTP v$architecture; FP16/W8A8 DLCs bundled without offline contexts")
+    }
+
+    @Test
+    fun packagesOnlyApprovedW8a8ModelsWithoutCalibration() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val names = context.assets.list("qnn-models").orEmpty()
+        assertEquals(listOf("realesrgan-animevideov3-x2-w8a8.dlc"), names.filter { it.endsWith("-w8a8.dlc") })
+        val manifest =
+            JSONObject(context.assets.open("qnn-models/manifest.json").bufferedReader().use { it.readText() })
+        assertEquals(16, manifest.length())
+        assertTrue(manifest.has("realesrgan-animevideov3-x2-w8a8"))
+        assertTrue(context.assets.list("qnn-calibration").isNullOrEmpty())
+        ZipFile(context.applicationInfo.sourceDir).use { apk ->
+            assertFalse(apk.entries().asSequence().any { it.name.endsWith("/libQnnCpu.so") })
+        }
+    }
+
+    @Test
+    fun w8a8CompilesAndExecutesOnQualcommNpu() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeTrue("Physical Qualcomm HTP required", QualcommHtp.architecture(context) != null)
+        val input = Bitmap.createBitmap(32, 48, Bitmap.Config.ARGB_8888).apply {
+            for (y in 0 until height) {
+                for (x in 0 until width) setPixel(x, y, Color.rgb(x * 7, y * 5, (x + y) * 3))
+            }
+        }
+        try {
+            assertTrue(Waifu2x.initRealESRGAN(context, 2, precision = 2, processingBackend = 1))
+            assertTrue(Waifu2x.isQnnActive())
+            val output = Waifu2x.processRealESRGAN(input)
+            assertNotNull(output)
+            try {
+                assertEquals(64, output!!.width)
+                assertEquals(96, output.height)
+                val pixels = IntArray(output.width * output.height)
+                output.getPixels(pixels, 0, output.width, 0, 0, output.width, output.height)
+                assertTrue("INT8 model returned a constant image", pixels.toSet().size > 10)
+                val file = QnnModelContexts.contextFile(context, "realesrgan-animevideov3-x2", 2)
+                val modified = file.lastModified()
+                assertEquals(file, QnnModelContexts.prepare(context, "realesrgan-animevideov3-x2", precision = 2))
+                assertEquals(modified, file.lastModified())
+            } finally {
+                output?.recycle()
+            }
+        } finally {
+            input.recycle()
+            Waifu2x.resetRealCugan()
+        }
     }
 
     @Test
     fun initializesEnhancementAndReusesPersistedContext() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeTrue("Device has no FP16 support", QnnModelContexts.detectFp16Support(context) != false)
         val model = "realesrgan-animevideov3-x2"
         val file = QnnModelContexts.contextFile(context, model)
         val previousModified = file.lastModified()
@@ -57,6 +109,7 @@ class QualcommHtpDeviceTest {
     @Test
     fun corruptContextIsRebuiltAndUnknownModelsAreRejected() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeTrue("Device has no FP16 support", QnnModelContexts.detectFp16Support(context) != false)
         val model = "realesrgan-animevideov3-x2"
         val original = requireNotNull(QnnModelContexts.prepare(context, model))
         val bytes = original.length()
@@ -69,6 +122,7 @@ class QualcommHtpDeviceTest {
     @Test
     fun allFp16ModelsCompileAndExecute() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeTrue("Device has no FP16 support", QnnModelContexts.detectFp16Support(context) != false)
         val input = Bitmap.createBitmap(32, 48, Bitmap.Config.ARGB_8888).apply {
             for (y in 0 until height) {
                 for (x in 0 until width) {

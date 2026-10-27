@@ -253,7 +253,8 @@ object Waifu2x {
         val isPhotoStyle = style == REAL_ESRGAN_STYLE_PHOTO
         val outputScale = if (isPhotoStyle) 2 else scale
         val resolvedBackend = resolveProcessingBackend(processingBackend, MODEL_REAL_ESRGAN_ANIME, outputScale)
-        val resolvedPrecision = resolvePrecision(precision, resolvedBackend, MODEL_REAL_ESRGAN_ANIME, outputScale)
+        val resolvedPrecision =
+            resolvePrecision(precision, resolvedBackend, MODEL_REAL_ESRGAN_ANIME, outputScale, style)
         val config = RealEsrganConfig(style, outputScale, resolvedPrecision, fp16Arithmetic, resolvedBackend)
         // Force reinit if config changed
         if (lastRealEsrganConfig != config) {
@@ -1010,17 +1011,28 @@ object Waifu2x {
         requestedBackend.takeIf { it in PROCESSING_BACKEND_VULKAN..PROCESSING_BACKEND_MEDIATEK_NPU }
             ?: PROCESSING_BACKEND_VULKAN
 
-    fun resolvePrecision(requestedPrecision: Int, processingBackend: Int, model: Int, scale: Int): Int {
-        if (processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU &&
-            requestedPrecision == QnnModelContexts.PRECISION_W8A16
-        ) {
-            return QnnModelContexts.PRECISION_W8A16
+    fun resolvePrecision(
+        requestedPrecision: Int,
+        processingBackend: Int,
+        model: Int,
+        scale: Int,
+        realEsrganStyle: Int = REAL_ESRGAN_STYLE_ANIME,
+    ): Int {
+        if (processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
+            // Migrate the retired local W8A16 setting (4) only for an INT8-capable model.
+            return if ((requestedPrecision == QnnModelContexts.PRECISION_W8A8 || requestedPrecision == 4) &&
+                QnnModelContexts.supportsW8a8(qnnModelName(model, scale, 0, realEsrganStyle))
+            ) {
+                QnnModelContexts.PRECISION_W8A8
+            } else {
+                0
+            }
         }
         if (resolveProcessingBackend(processingBackend, model, scale) != PROCESSING_BACKEND_VULKAN) return 0
         return requestedPrecision.takeIf { it == 0 || it == 1 || it == 3 } ?: 0
     }
 
-    private fun ncnnPrecision(precision: Int): Int = if (precision == QnnModelContexts.PRECISION_W8A16) 0 else precision
+    private fun ncnnPrecision(precision: Int): Int = if (precision == QnnModelContexts.PRECISION_W8A8) 0 else precision
 
     private fun backendName(backend: Int): String = when (backend) {
         PROCESSING_BACKEND_QUALCOMM_NPU -> "Qualcomm NPU"

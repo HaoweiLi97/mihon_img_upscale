@@ -15,12 +15,15 @@ RUN apt-get update -qq \
 
 COPY convert_models.sh /usr/local/bin/convert-qnn-models
 COPY convert_dlc_models.sh /usr/local/bin/convert-qnn-dlc-models
+COPY convert_w8a8_dlc_models.sh /usr/local/bin/convert-qnn-w8a8-dlc-models
+COPY verify_w8a8_dlc.py /usr/local/bin/verify_w8a8_dlc.py
 COPY convert_int8_models.sh /usr/local/bin/convert-qnn-int8-models
 COPY compile_model_libs.sh /usr/local/bin/compile-qnn-model-libs
 COPY generate_contexts.sh /usr/local/bin/generate-qnn-contexts
 RUN chmod 755 \
     /usr/local/bin/convert-qnn-dlc-models \
     /usr/local/bin/convert-qnn-models \
+    /usr/local/bin/convert-qnn-w8a8-dlc-models \
     /usr/local/bin/convert-qnn-int8-models \
     /usr/local/bin/compile-qnn-model-libs \
     /usr/local/bin/generate-qnn-contexts

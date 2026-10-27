@@ -12,6 +12,13 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.17-beta.2] - 2026-10-27
+
+### Changed
+- Replace the experimental on-device W8A16 calibration flow with a bundled INT8 W8A8 DLC for Real-ESRGAN Anime 2x. Phones compile the selected model locally without downloading calibration samples.
+- Keep the other fourteen model variants FP16-only due to 8-bit activation precision risk; selecting Real-ESRGAN Photo removes the INT8 option.
+- Remove calibration datasets, keys, download/decryption code, CPU calibration runtime, and progress UI from the application. Retain runtime FP16 detection and disable unsupported FP16.
+
 ## [v1.3.17-beta.1] - 2026-10-27
 
 ### Added

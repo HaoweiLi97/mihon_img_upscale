@@ -11,7 +11,6 @@ import org.gradle.api.tasks.Sync
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
-import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -62,13 +61,14 @@ val qnnDlcDir = providers.gradleProperty("qnnDlcDir").orNull
     ?: System.getenv("QNN_DLC_DIR")
 
 val qnnSdkRoot = qnnSdkDir?.takeIf { it.isNotBlank() }?.let { layout.settingsDirectory.file(it).asFile }
-val qnnCalibrationKey = System.getenv("QNN_CALIBRATION_KEY")
-    ?: localProperties.getProperty("qnn.calibration.key.file")?.let { path ->
-        layout.settingsDirectory.file(path).asFile.readBytes().also {
-            check(it.size == 32) { "QNN calibration AES key must contain 32 bytes" }
-        }.let { Base64.getEncoder().encodeToString(it) }
-    }.orEmpty()
 val qnnDlcRoot = qnnDlcDir?.takeIf { it.isNotBlank() }?.let { layout.settingsDirectory.file(it).asFile }
+val qnnW8a8DlcDir = providers.gradleProperty("qnnW8a8DlcDir").orNull
+    ?: localProperties.getProperty("qnn.w8a8.dlc.dir")
+    ?: System.getenv("QNN_W8A8_DLC_DIR")
+val qnnW8a8DlcRoot = qnnW8a8DlcDir?.let { layout.settingsDirectory.file(it).asFile }
+    ?: qnnDlcRoot?.resolve("../dlc-w8a8")
+// Keep in sync with QnnModelContexts.supportsW8a8. Other models require wider activations.
+val qnnW8a8ModelNames = listOf("realesrgan-animevideov3-x2")
 val generatedQnnAssetsDir = layout.buildDirectory.dir("generated/qnnAssets")
 val generatedQnnJniLibsDir = layout.buildDirectory.dir("generated/qnnJniLibs")
 val qnnModelNames = listOf(
@@ -89,22 +89,25 @@ val qnnModelNames = listOf(
     "w2xex-photo-small-x2",
 )
 val stageQnnModels = qnnDlcRoot?.let { dlcRoot ->
-    val models = qnnModelNames
+    val modelFiles = qnnModelNames.associateWith { dlcRoot.resolve("$it.dlc") } +
+        qnnW8a8ModelNames.associate { model ->
+            "$model-w8a8" to requireNotNull(qnnW8a8DlcRoot).resolve("$model-w8a8.dlc")
+        }
     tasks.register<Sync>("stageQnnModels") {
-        models.forEach { model ->
-            from(dlcRoot.resolve("$model.dlc")) { into("qnn-models") }
+        modelFiles.forEach { (_, source) ->
+            from(source) { into("qnn-models") }
         }
         into(generatedQnnAssetsDir)
         doFirst {
-            val missingFiles = models.filterNot { dlcRoot.resolve("$it.dlc").isFile }
+            val missingFiles = modelFiles.filterValues { !it.isFile }.keys
             check(missingFiles.isEmpty()) {
-                "QNN FP16 DLC directory is incomplete: ${missingFiles.joinToString()}"
+                "QNN FP16/W8A8 DLC inputs are incomplete: ${missingFiles.joinToString()}"
             }
         }
         doLast {
-            val entries = models.joinToString(",\n") { model ->
+            val entries = modelFiles.entries.joinToString(",\n") { (model, source) ->
                 val digest = MessageDigest.getInstance("SHA-256")
-                    .digest(dlcRoot.resolve("$model.dlc").readBytes())
+                    .digest(source.readBytes())
                     .joinToString("") { "%02x".format(it) }
                 "  \"$model\": \"$digest\""
             }
@@ -141,7 +144,7 @@ val stageMediaTekModels = mediaTekTfliteDir?.takeIf { it.isNotBlank() }?.let { p
 
 val stageQnnDlcRuntime = qnnSdkRoot?.let { sdkRoot ->
     // libQnnHtpPrepare.so is supplied by the matching qnn-runtime AAR.
-    val libraries = listOf("libQnnModelDlc.so", "libQnnCpu.so")
+    val libraries = listOf("libQnnModelDlc.so")
     tasks.register<Sync>("stageQnnDlcRuntime") {
         libraries.forEach { from(sdkRoot.resolve("lib/aarch64-android/$it")) }
         into(generatedQnnJniLibsDir.map { it.dir("arm64-v8a") })
@@ -161,10 +164,9 @@ android {
     defaultConfig {
         applicationId = "app.mihon"
 
-        versionCode = 44
-        versionName = "1.3.17-beta.1"
+        versionCode = 45
+        versionName = "1.3.17-beta.2"
         buildConfigField("int", "UPSTREAM_VERSION_CODE", "38")
-        buildConfigField("String", "QNN_CALIBRATION_KEY", "\"$qnnCalibrationKey\"")
 
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")

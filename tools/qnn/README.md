@@ -1,158 +1,107 @@
-# Qualcomm QNN FP16 model pipeline
+# Qualcomm QNN model pipeline
 
-The app bundles **unprepared FP16 DLCs**, not precompiled per-SoC/HTP context binaries.
-Selecting an NPU model prepares just that model on the device. Subsequent use and app
-restarts reuse its serialized context from `noBackupFilesDir/qnn-contexts/`.
-Image-cache cleanup does not remove these contexts. Uninstalling or clearing app data does.
+The app bundles unprepared FP16 DLCs and one prequantized INT8 **W8A8** DLC.
+The phone compiles the selected DLC for its own HTP, then persists the context
+outside the image cache. No calibration samples, decryption key, calibration
+runtime or dataset download is included in the app.
 
-Models currently included (15 variants):
+## Precision choices
 
-- Real-ESRGAN animevideov3 2x and general-x4v3 Photo with 2x output
-- Real-CUGAN SE 2x: no-denoise, denoise1x, denoise2x, denoise3x, conservative
-- Real-CUGAN Pro 2x and 3x: no-denoise, denoise3x, conservative
-- W2xEX Photo Small 2x
-- SPAN NomosUni Photo 2x
+| Model | FP16 | INT8 W8A8 |
+| --- | --- | --- |
+| Real-ESRGAN Anime (animevideov3 2x) | Yes | Yes |
+| Real-ESRGAN Photo (general-x4v3, 2x output) | Yes | No |
+| Real-CUGAN SE 2x, all five variants | Yes | No |
+| Real-CUGAN Pro 2x/3x, all six variants | Yes | No |
+| SPAN NomosUni Photo 2x | Yes | No |
+| W2xEX Photo Small 2x | Yes | No |
 
-Qualcomm NPU inference offers FP16 and **locally calibrated W8A16**. Legacy INT8
-preferences still resolve to FP16; local W8A16 is a separate precision value (4).
-Vulkan retains the FP16, FP32 and BF16 choices.
+The existing quantization pipeline uses wider 16-bit activations for the fourteen
+FP16-only variants. These remain conservatively excluded from W8A8 due to precision
+risk; their models remain available in FP16. Only Anime exposes the INT8 option.
+Changing the Real-ESRGAN style to Photo removes INT8. Legacy local W8A16 preferences
+migrate to INT8 for Anime and FP16 for the other models. Vulkan and MediaTek precision
+choices are unchanged.
 
-## On-device W8A16 calibration
-
-Select Qualcomm NPU, then W8A16, and press **Download samples and calibrate locally**.
-Only the selected model's manga or photo calibration pack is downloaded. Release
-assets contain AES-256-GCM encrypted RGB8 samples, provenance and attribution;
-they contain no quantized models or target-specific context binaries.
-
-The app authenticates the encrypted archive, decrypts it in a private temporary
-workspace, and checks every sample's SHA-256. QNN CPU runs the bundled floating
-model with per-operation observers, collecting activation ranges. The app itself
-then quantizes convolution weights per output channel to signed INT8, activations
-to UINT16, and biases to INT32. Near-zero channels use bias-safe weight scales.
-No server performs calibration or quantization.
-
-The resulting integer graph is compiled on the current HTP. Eight disjoint held-out
-samples are compared against local float references before the context is committed;
-the minimum numerical guard is 30 dB PSNR. Validation samples do not fit encodings.
-A failed compile or check keeps enhancement unavailable instead of falling back to
-CPU/Vulkan or labelling a float model W8A16. This is a numerical guard, not a
-perceptual quality guarantee for all pages.
-
-Progress and cancellation cover downloading, calibration, reference calculation,
-compilation and verification. Keep the settings page open during preparation.
-Plaintext is removed after success, failure or cancellation; abandoned temporary
-directories from a killed process are cleaned on the next attempt. The authenticated
-encrypted pack and compiled context persist outside the image cache for offline use.
-Context identity includes the model hash, calibration-pack hash, algorithm version,
-QNN version, HTP architecture, OS build fingerprint and ABI.
-
-FP16 capability is probed using a minimal operation on the actual backend. A positive
-integer-only result requires the corresponding UINT16 operation to succeed; transient
-errors remain unknown. Unsupported FP16 is shown disabled in the precision row.
-There is no SoC-name allowlist in the calibration implementation.
-
-Generate the two encrypted calibration assets with `package_calibration.py` (Python
-dependencies: `numpy`, `cryptography`), using the existing `calibration-*-nhwc/` and
-disjoint `validation-*/` directories:
-
-```sh
-python tools/qnn/package_calibration.py \
-  --data-root /path/to/rebuild-20261016 \
-  --output-dir /path/to/release-assets \
-  --key-file /private/path/calibration-release-v1.key \
-  --catalog app/src/main/assets/qnn-calibration/catalog.json
-```
-
-Configure ignored `local.properties` with `qnn.calibration.key.file=/private/path/calibration-release-v1.key`,
-or set `QNN_CALIBRATION_KEY` to the key's Base64 value in the build environment.
-The 32-byte key must be preserved for subsequent builds and never uploaded as a
-release asset. The application necessarily contains a decrypting key, which can be
-recovered through reverse engineering; this is authenticated packaging, not DRM.
-
-`publish_calibration.py --directory /path/to/release-assets` creates a draft containing
-only the two ciphertexts and public catalog. Add `--publish` to publish the reviewed
-assets as a non-latest prerelease, so app update discovery does not select it.
-Regenerating assets changes their hashes; use a new version for already published packs.
+FP16 capability is probed on the actual QNN backend. Unsupported FP16 is greyed out.
+An integer-only device can select Anime with INT8; FP16-only models report that
+another model or Vulkan is required. Transient probe errors remain unknown rather
+than disabling FP16. There is no chipset-name blocklist.
 
 ## Build inputs
 
-Use QAIRT SDK **2.49.0.260730**, matching `com.qualcomm.qti:qnn-runtime:2.49.0`.
-Configure ignored repository `local.properties`:
+Use QAIRT **2.49.0.260730**, matching `com.qualcomm.qti:qnn-runtime:2.49.0`.
+Configure ignored `local.properties`:
 
 ```properties
 qnn.sdk.dir=/absolute/path/to/qairt/2.49.0.260730
 qnn.dlc.dir=/absolute/path/to/generated/dlc-fp16
+qnn.w8a8.dlc.dir=/absolute/path/to/generated/dlc-w8a8
 ```
 
-Gradle also accepts `-PqnnSdkDir=...`, `-PqnnDlcDir=...`, `QNN_SDK_ROOT`, and
-`QNN_DLC_DIR`. The previous `qnn.context.dir` and `qnn.htp.archs` inputs are unused.
-`stageQnnModels` verifies all 15 DLCs and generates a SHA-256 content manifest.
-No model binary is committed to Git.
+Gradle also accepts `-PqnnSdkDir`, `-PqnnDlcDir`, `-PqnnW8a8DlcDir`, or the
+`QNN_SDK_ROOT`, `QNN_DLC_DIR`, `QNN_W8A8_DLC_DIR` environment variables.
+The W8A8 directory defaults to `../dlc-w8a8` next to the FP16 directory.
+`stageQnnModels` requires all 15 FP16 DLCs and
+`realesrgan-animevideov3-x2-w8a8.dlc`, and creates their SHA-256 manifest.
+A missing INT8 DLC fails the build instead of substituting a floating-point model.
+Model binaries and developer calibration inputs remain outside Git.
 
-The official runtime AAR supplies HTP, HTP Prepare, System, and matching Stub/Skel
-libraries. Gradle additionally stages the SDK's `libQnnModelDlc.so` for DLC composition
-and `libQnnCpu.so` for on-device calibration.
-The compiler uses the same shared runtime as the spatial depth pipeline.
+The runtime AAR provides HTP, HTP Prepare, System and Stub/Skel libraries. Gradle
+also packages `libQnnModelDlc.so` for DLC composition. `libQnnCpu.so` is no longer
+packaged for calibration.
 
-## Export and convert
+## Developer conversion
 
-Export upstream model weights to fixed-shape ONNX using `export_models.py`,
-`export_w2xex_onnx.py`, and the existing SPAN exporter. ONNX inputs are NCHW RGB
-float tensors in [0,1], shape `1,3,256,256`; output is NCHW RGB, 2x or 3x.
-Real-CUGAN Pro is reconstructed from official NCNN `models-pro` files because
-equivalent upstream PyTorch weights are not published. See exporter `--help`.
-
-In the QAIRT Linux Python environment:
+Export fixed-shape ONNX using the existing exporters, then convert the FP16 DLCs:
 
 ```sh
-export QNN_SDK_ROOT=/absolute/path/to/qairt/2.49.0.260730
+export QNN_SDK_ROOT=/path/to/qairt/2.49.0.260730
 export PYTHONPATH="$QNN_SDK_ROOT/lib/python:$PYTHONPATH"
 export LD_LIBRARY_PATH="$QNN_SDK_ROOT/lib/x86_64-linux-clang:$LD_LIBRARY_PATH"
-ONNX_DIR=/absolute/path/to/onnx OUTPUT_DIR=/absolute/path/to/dlc-fp16 \
+ONNX_DIR=/path/to/onnx OUTPUT_DIR=/path/to/dlc-fp16 \
   sh tools/qnn/convert_dlc_models.sh
 ```
 
-The script converts all 15 models with `qairt-converter --float_bitwidth 16`,
-and explicitly converts input/output layouts from NCHW to NHWC. It does not
-quantize, calibrate, or generate an offline context. `QNN_MODELS` can select a
-subset for conversion, but a normal app build requires the full set.
-
-Alternatively, the existing Docker image includes `convert-qnn-dlc-models`:
+Prepare the W8A8 DLC on the developer machine using existing normalized float32
+RGB/NHWC 256x256 calibration crops:
 
 ```sh
-docker build --platform linux/amd64 -t mihon-qnn-tools:2.49.0 tools/qnn
-docker run --rm --platform linux/amd64 \
-  -v "$QNN_SDK_ROOT:/qnn:ro" -v "$ONNX_DIR:/models:ro" -v "$DLC_DIR:/output" \
-  -e ONNX_DIR=/models -e OUTPUT_DIR=/output \
-  mihon-qnn-tools:2.49.0 convert-qnn-dlc-models
+FP16_DLC_DIR=/path/to/dlc-fp16 OUTPUT_DIR=/path/to/dlc-w8a8 \
+MANGA_CALIBRATION_INPUT_LIST=/private/path/to/input-list.txt \
+  sh tools/qnn/convert_w8a8_dlc_models.sh
 ```
 
-Older conversion/quantization and offline-generation scripts remain developer utilities
-for comparisons. The app no longer consumes their context or INT8 outputs.
+This uses 8-bit weights and activations, 32-bit biases, per-channel convolution
+weight quantization and cross-layer equalization. It does not enable float
+fallback or preserve floating-point I/O. `QNN_MODELS` cannot enable risky models:
+the conversion script rejects names outside the same conservative allowlist.
+The DLC inspector then rejects floating-point or wider activation/weight tensors.
+Older `convert_int8_models.sh` outputs may use W8A16 and must not be renamed W8A8.
+The Docker tool image provides `convert-qnn-w8a8-dlc-models` as well.
+Calibration samples are developer-only build inputs and are never downloaded by
+this version of the application. Historical calibration releases are unused.
 
-## Persistence and recovery
+## Persistence and validation
 
-Cache identity includes model contents, QNN runtime and context-format versions,
-detected HTP architecture, Android build fingerprint, and ABI. Compatibility changes
-create a new identity. Contexts are committed via temporary files; a saved SHA-256
-detects interrupted or corrupted writes before reuse. Obsolete versions of a model
-are removed only after its replacement succeeds.
+Context identity includes model contents, precision, QNN/cache format versions,
+HTP architecture, Android build fingerprint and ABI. INT8 and FP16 have separate
+preparation states, model and image caches. Contexts are written through temporary
+files and verified against a saved SHA-256. Previous W8A16 contexts are not reused.
+Failures keep the original image; Vulkan is only used when explicitly selected.
 
-UI preparation and first inference share one preparation lock, preventing duplicate
-compilations. The UI shows preparing/ready/failed state and offers retry. Failure skips enhancement and keeps the original image. Vulkan is used only when
-explicitly selected. The compiled model is loaded
-to validate it before being marked ready.
+Runtime hardware detection supports packaged HTP v69, v73, v75, v79 and v81,
+subject to device drivers and QNN operator support. On-device compilation does
+not imply that every chipset can execute every model.
 
-## Supported hardware and validation
+`QnnPrecisionPolicyTest` checks all 14 exclusions, Anime vs Photo, retired
+preferences and image cache separation. `QualcommHtpDeviceTest` checks final APK
+packaging and provides physical-device FP16 and W8A8 compile/inference tests.
+CPU simulation and host HTP compilation cannot replace physical NPU validation.
 
-Architecture detection uses QNN device capabilities, not a list of flagship SoC names.
-The packaged FP16 runtime set currently supports HTP **v69, v73, v75, v79, v81**,
-subject to drivers, memory and operator support. On-device compilation removes
-per-target binary distribution; it does not add unsupported hardware to QNN.
+The initial Anime W8A8 DLC passed QNN CPU simulation on eight held-out manga crops
+against the original FP32 ONNX (PSNR 34.21–38.00 dB, MAE at most 0.01312). Host
+compilation passed for HTP v69/v73/v75/v79/v81, including the integer-only SM8735
+target. These are developer checks, not physical NPU inference results.
 
-`QualcommHtpDeviceTest` covers packaging, persistence, corruption recovery, legacy
-INT8 normalization, and compilation plus production inference for all 15 FP16 variants.
-The independent prototype and real-image reference comparison are in
-`tools/npu-context-benchmark/`.
-
-MediaTek requires a separate backend; see [MediaTek investigation](../../docs/mediatek-npu.md).
+MediaTek remains separate; see [MediaTek investigation](../../docs/mediatek-npu.md).
