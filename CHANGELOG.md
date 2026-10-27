@@ -12,6 +12,19 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.17-beta.1] - 2026-10-27
+
+### Added
+- Download encrypted manga or photo calibration samples on demand, then calibrate, quantize to W8A16, and compile models on the user's Qualcomm NPU device.
+- Validate locally compiled NPU output against independent reference samples before caching the model, with progress reporting and cancellation.
+
+### Changed
+- Detect FP16 support through the QNN runtime and disable the FP16 option when unsupported, without a chipset-specific blocklist.
+- Authenticate downloaded calibration packs, verify sample checksums, and remove temporary decrypted samples after use.
+
+### Other
+- Experimental beta: SDK compilation and Android calibration-pack tests pass; physical Qualcomm NPU inference remains to be verified.
+
 ## [v1.3.16] - 2026-10-21
 
 ### Fixed

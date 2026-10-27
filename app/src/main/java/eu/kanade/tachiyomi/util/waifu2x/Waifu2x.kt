@@ -175,6 +175,7 @@ object Waifu2x {
                     } else {
                         18
                     },
+                    resolvedPrecision,
                 )
             }
 
@@ -189,7 +190,7 @@ object Waifu2x {
                 effectiveNoiseLevel,
                 scale,
                 tileSleepMs,
-                currentConfig.precision,
+                ncnnPrecision(currentConfig.precision),
                 currentConfig.fp16Arithmetic,
                 isPro,
             )
@@ -224,6 +225,7 @@ object Waifu2x {
                     } else {
                         18
                     },
+                    resolvedPrecision,
                 )
         }
     }
@@ -269,6 +271,7 @@ object Waifu2x {
                 resolvedBackend,
                 qnnModelName(MODEL_REAL_ESRGAN_ANIME, outputScale, 0, style),
                 if (isPhotoStyle) 32 else 16,
+                resolvedPrecision,
             )
         }
 
@@ -287,7 +290,7 @@ object Waifu2x {
             modelDir,
             modelScale,
             outputScale,
-            config.precision,
+            ncnnPrecision(config.precision),
             config.fp16Arithmetic,
         )
         if (isRealEsrganInitialized) {
@@ -316,6 +319,7 @@ object Waifu2x {
                 resolvedBackend,
                 qnnModelName(MODEL_REAL_ESRGAN_ANIME, outputScale, 0, style),
                 if (isPhotoStyle) 32 else 16,
+                resolvedPrecision,
             )
     }
 
@@ -522,6 +526,7 @@ object Waifu2x {
                 resolvedBackend,
                 qnnModelName(model, effectiveScale, 0),
                 selectedModel.padding,
+                resolvedPrecision,
             )
         }
 
@@ -529,7 +534,7 @@ object Waifu2x {
             modelDir,
             modelStem,
             effectiveScale,
-            config.precision,
+            ncnnPrecision(config.precision),
             config.fp16Arithmetic,
             selectedModel.padding,
         )
@@ -552,7 +557,13 @@ object Waifu2x {
             )
         }
         isW2xExInitialized &&
-            initializeBackend(context, resolvedBackend, qnnModelName(model, effectiveScale, 0), selectedModel.padding)
+            initializeBackend(
+                context,
+                resolvedBackend,
+                qnnModelName(model, effectiveScale, 0),
+                selectedModel.padding,
+                resolvedPrecision,
+            )
     }
 
     // Reuse processRealCugan for all generic ncnn models
@@ -1000,9 +1011,16 @@ object Waifu2x {
             ?: PROCESSING_BACKEND_VULKAN
 
     fun resolvePrecision(requestedPrecision: Int, processingBackend: Int, model: Int, scale: Int): Int {
+        if (processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU &&
+            requestedPrecision == QnnModelContexts.PRECISION_W8A16
+        ) {
+            return QnnModelContexts.PRECISION_W8A16
+        }
         if (resolveProcessingBackend(processingBackend, model, scale) != PROCESSING_BACKEND_VULKAN) return 0
         return requestedPrecision.takeIf { it == 0 || it == 1 || it == 3 } ?: 0
     }
+
+    private fun ncnnPrecision(precision: Int): Int = if (precision == QnnModelContexts.PRECISION_W8A16) 0 else precision
 
     private fun backendName(backend: Int): String = when (backend) {
         PROCESSING_BACKEND_QUALCOMM_NPU -> "Qualcomm NPU"
@@ -1010,14 +1028,14 @@ object Waifu2x {
         else -> "Vulkan"
     }
 
-    private fun initializeBackend(context: Context, backend: Int, modelName: String?, padding: Int): Boolean {
+    private fun initializeBackend(context: Context, backend: Int, modelName: String?, padding: Int, precision: Int): Boolean {
         nativeSetProcessingBackend(3) // Block execution until the selected model is ready.
         val ready = runCatching {
             when (backend) {
                 PROCESSING_BACKEND_VULKAN -> true
                 PROCESSING_BACKEND_QUALCOMM_NPU ->
                     modelName != null &&
-                        initializeQnnIfAvailable(context, modelName, padding)
+                        initializeQnnIfAvailable(context, modelName, padding, precision)
                 PROCESSING_BACKEND_MEDIATEK_NPU -> modelName != null && MediaTekNpu.initialize(context, modelName)
                 else -> false
             }
@@ -1032,11 +1050,11 @@ object Waifu2x {
         false
     }
 
-    private fun initializeQnnIfAvailable(context: Context, modelName: String, padding: Int): Boolean {
+    private fun initializeQnnIfAvailable(context: Context, modelName: String, padding: Int, precision: Int): Boolean {
         if (!isQualcommNpuAvailable()) return false
         if (isQnnActive()) return true
         return runCatching {
-            val output = QnnModelContexts.prepare(context, modelName) ?: return false
+            val output = QnnModelContexts.prepare(context, modelName, precision = precision) ?: return false
             nativeInitQnn(output.absolutePath, context.applicationInfo.nativeLibraryDir, padding)
         }.onFailure {
             android.util.Log.w("Waifu2x", "Unable to initialize Qualcomm NPU; enhancement skipped", it)

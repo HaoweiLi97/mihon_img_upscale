@@ -1215,4 +1215,12 @@
     <string name="reader_status_enhancing_progress">ENHANCING... %1$d%%</string>
     <string name="pref_book_page_turn">Book page turn</string>
     <string name="pref_book_page_turn_summary">Turn pages around the spine with perspective and shadows</string>
+    <string name="reader_npu_calibration_required">This model needs calibration on this device</string>
+    <string name="reader_npu_calibration_description">Download the encrypted calibration samples when needed. Calibration and quantization run locally and may take several minutes. Keep this page open; subsequent use is offline.</string>
+    <string name="reader_npu_calibration_start">Download samples and calibrate locally</string>
+    <string name="reader_npu_calibration_downloading">Downloading encrypted calibration samples: %1$d%%</string>
+    <string name="reader_npu_calibration_running">Calibrating locally: %1$d / %2$d</string>
+    <string name="reader_npu_calibration_reference">Computing validation references: %1$d / %2$d</string>
+    <string name="reader_npu_calibration_compiling">Quantizing and compiling for this device: %1$d / %2$d</string>
+    <string name="reader_npu_calibration_verifying">Checking NPU output: %1$d / %2$d</string>
 </resources>

@@ -106,6 +106,11 @@
     public void destroy();
 }
 
+# Native calibration calls this interface by method name.
+-keepclassmembers class * implements eu.kanade.tachiyomi.util.qnn.QnnModelContexts$CalibrationProgress {
+    public boolean update(int, int, int);
+}
+
 # Book turn timing replaces the pager scroller, including in optimized builds.
 -keepclassmembers class androidx.viewpager.widget.** {
     android.widget.Scroller mScroller;

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "version": "v1",
+  "keyId": "935c4f36fd926d96",
+  "packs": {
+    "manga": {
+      "file": "qnn-calibration-manga-v1.aes",
+      "bytes": 9588203,
+      "sha256": "916ecdb57cfa82c68772b13c0431385c14d7c90b66d17175fd6898236b48226c",
+      "aad": "MIHQCAL1:manga:v1",
+      "calibrationSamples": 160,
+      "validationSamples": 8,
+      "url": "https://github.com/HaoweiLi97/mihon_img_upscale/releases/download/npu-calibration-v1/qnn-calibration-manga-v1.aes"
+    },
+    "photo": {
+      "file": "qnn-calibration-photo-v1.aes",
+      "bytes": 30695430,
+      "sha256": "451e234e519998add2a5baed9a60e22004fe34b36260466c3570a84734198f22",
+      "aad": "MIHQCAL1:photo:v1",
+      "calibrationSamples": 200,
+      "validationSamples": 8,
+      "url": "https://github.com/HaoweiLi97/mihon_img_upscale/releases/download/npu-calibration-v1/qnn-calibration-photo-v1.aes"
+    }
+  }
+}

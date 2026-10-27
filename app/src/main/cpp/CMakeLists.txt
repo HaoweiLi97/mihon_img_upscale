@@ -70,6 +70,7 @@ set(WAIFU2X_SOURCES
     anime4k.cpp
     qnn_backend.cpp
     qnn_context_bridge.cpp
+    qnn_ondevice_quantizer.cpp
     litert_backend.cpp
     spatial_qnn_runtime.cpp
     depth_qnn_bridge.cpp

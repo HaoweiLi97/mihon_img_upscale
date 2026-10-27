@@ -13,8 +13,66 @@ Models currently included (15 variants):
 - W2xEX Photo Small 2x
 - SPAN NomosUni Photo 2x
 
-NPU inference is FP16 only. INT8/W8A16 assets are not packaged; old INT8 preferences
-resolve to FP16. Vulkan retains the FP16, FP32 and BF16 choices.
+Qualcomm NPU inference offers FP16 and **locally calibrated W8A16**. Legacy INT8
+preferences still resolve to FP16; local W8A16 is a separate precision value (4).
+Vulkan retains the FP16, FP32 and BF16 choices.
+
+## On-device W8A16 calibration
+
+Select Qualcomm NPU, then W8A16, and press **Download samples and calibrate locally**.
+Only the selected model's manga or photo calibration pack is downloaded. Release
+assets contain AES-256-GCM encrypted RGB8 samples, provenance and attribution;
+they contain no quantized models or target-specific context binaries.
+
+The app authenticates the encrypted archive, decrypts it in a private temporary
+workspace, and checks every sample's SHA-256. QNN CPU runs the bundled floating
+model with per-operation observers, collecting activation ranges. The app itself
+then quantizes convolution weights per output channel to signed INT8, activations
+to UINT16, and biases to INT32. Near-zero channels use bias-safe weight scales.
+No server performs calibration or quantization.
+
+The resulting integer graph is compiled on the current HTP. Eight disjoint held-out
+samples are compared against local float references before the context is committed;
+the minimum numerical guard is 30 dB PSNR. Validation samples do not fit encodings.
+A failed compile or check keeps enhancement unavailable instead of falling back to
+CPU/Vulkan or labelling a float model W8A16. This is a numerical guard, not a
+perceptual quality guarantee for all pages.
+
+Progress and cancellation cover downloading, calibration, reference calculation,
+compilation and verification. Keep the settings page open during preparation.
+Plaintext is removed after success, failure or cancellation; abandoned temporary
+directories from a killed process are cleaned on the next attempt. The authenticated
+encrypted pack and compiled context persist outside the image cache for offline use.
+Context identity includes the model hash, calibration-pack hash, algorithm version,
+QNN version, HTP architecture, OS build fingerprint and ABI.
+
+FP16 capability is probed using a minimal operation on the actual backend. A positive
+integer-only result requires the corresponding UINT16 operation to succeed; transient
+errors remain unknown. Unsupported FP16 is shown disabled in the precision row.
+There is no SoC-name allowlist in the calibration implementation.
+
+Generate the two encrypted calibration assets with `package_calibration.py` (Python
+dependencies: `numpy`, `cryptography`), using the existing `calibration-*-nhwc/` and
+disjoint `validation-*/` directories:
+
+```sh
+python tools/qnn/package_calibration.py \
+  --data-root /path/to/rebuild-20261016 \
+  --output-dir /path/to/release-assets \
+  --key-file /private/path/calibration-release-v1.key \
+  --catalog app/src/main/assets/qnn-calibration/catalog.json
+```
+
+Configure ignored `local.properties` with `qnn.calibration.key.file=/private/path/calibration-release-v1.key`,
+or set `QNN_CALIBRATION_KEY` to the key's Base64 value in the build environment.
+The 32-byte key must be preserved for subsequent builds and never uploaded as a
+release asset. The application necessarily contains a decrypting key, which can be
+recovered through reverse engineering; this is authenticated packaging, not DRM.
+
+`publish_calibration.py --directory /path/to/release-assets` creates a draft containing
+only the two ciphertexts and public catalog. Add `--publish` to publish the reviewed
+assets as a non-latest prerelease, so app update discovery does not select it.
+Regenerating assets changes their hashes; use a new version for already published packs.
 
 ## Build inputs
 
@@ -32,7 +90,8 @@ Gradle also accepts `-PqnnSdkDir=...`, `-PqnnDlcDir=...`, `QNN_SDK_ROOT`, and
 No model binary is committed to Git.
 
 The official runtime AAR supplies HTP, HTP Prepare, System, and matching Stub/Skel
-libraries. Gradle additionally stages the SDK's `libQnnModelDlc.so` for DLC composition.
+libraries. Gradle additionally stages the SDK's `libQnnModelDlc.so` for DLC composition
+and `libQnnCpu.so` for on-device calibration.
 The compiler uses the same shared runtime as the spatial depth pipeline.
 
 ## Export and convert
