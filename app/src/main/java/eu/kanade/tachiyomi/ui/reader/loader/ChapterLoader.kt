@@ -20,6 +20,7 @@ import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import tachiyomi.source.local.LocalSource
 import tachiyomi.source.local.io.Format
+import tachiyomi.source.local.io.LocalBook
 
 /**
  * Loader used to retrieve the [PageLoader] for a given chapter.
@@ -39,7 +40,7 @@ class ChapterLoader(
      * Assigns the chapter's page loader and loads the its pages. Returns immediately if the chapter
      * is already loaded.
      */
-    suspend fun loadChapter(chapter: ReaderChapter) {
+    suspend fun loadChapter(chapter: ReaderChapter, initialPageIndex: Int? = null) {
         if (chapterIsReady(chapter)) {
             return
         }
@@ -48,6 +49,12 @@ class ChapterLoader(
         withContext(Dispatchers.IO) {
             logcat { "Loading pages for ${chapter.chapter.name}" }
             try {
+                // Online loaders start downloading as soon as their page list is available.
+                chapter.requestedPage = initialPageIndex ?: if (!chapter.chapter.read) {
+                    chapter.chapter.lastPageRead
+                } else {
+                    chapter.requestedPage
+                }
                 val loader = getPageLoader(chapter)
                 chapter.pageLoader = loader
 
@@ -58,11 +65,7 @@ class ChapterLoader(
                     throw Exception(context.stringResource(MR.strings.page_list_empty_error))
                 }
 
-                // If the chapter is partially read, set the starting page to the last the user read
-                // otherwise use the requested page.
-                if (!chapter.chapter.read) {
-                    chapter.requestedPage = chapter.chapter.lastPageRead
-                }
+                chapter.requestedPage = chapter.requestedPage.coerceIn(pages.indices)
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
             } catch (e: Throwable) {
@@ -101,7 +104,7 @@ class ChapterLoader(
             )
             source is LocalSource -> source.getFormat(chapter.chapter.toSChapter()).let { format ->
                 when (format) {
-                    is Format.Directory -> DirectoryPageLoader(format.file)
+                    is Format.Directory -> DirectoryPageLoader(format.file, LocalBook.isBook(dbChapter.url))
                     is Format.Archive -> ArchivePageLoader(format.file.archiveReader(context))
                     is Format.Epub -> EpubPageLoader(format.file.epubReader(context))
                 }

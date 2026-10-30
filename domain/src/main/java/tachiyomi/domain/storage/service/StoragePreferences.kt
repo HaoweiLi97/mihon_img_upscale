@@ -18,4 +18,14 @@ class StoragePreferences(
         Preference.appStateKey("storage_dir"),
         folderProvider.path(),
     )
+
+    // Empty uses the existing Mihon/local directory. This does not move downloads or backups.
+    val localComicDirectory: Preference<String> = preferenceStore.getString(
+        Preference.appStateKey("local_comic_directory"),
+        "",
+    )
+
+    val localBrowserThumbnails = preferenceStore.getBoolean("local_browser_thumbnails", true)
+    val localBrowserColumns = preferenceStore.getInt("local_browser_columns", 0)
+    val localBrowserSort = preferenceStore.getInt("local_browser_sort", 0)
 }

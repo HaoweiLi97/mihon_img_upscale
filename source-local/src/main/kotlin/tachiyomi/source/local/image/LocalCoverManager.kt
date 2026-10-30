@@ -9,7 +9,9 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import tachiyomi.core.common.storage.nameWithoutExtension
 import tachiyomi.core.common.util.system.ImageUtil
+import tachiyomi.source.local.io.LocalBook
 import tachiyomi.source.local.io.LocalSourceFileSystem
+import java.io.File
 import java.io.InputStream
 
 private const val DEFAULT_COVER_NAME = "cover.jpg"
@@ -19,9 +21,18 @@ private const val DEFAULT_COVER_NAME = "cover.jpg"
 class LocalCoverManager(
     private val context: Context,
     private val fileSystem: LocalSourceFileSystem,
+    private val thumbnails: LocalThumbnailLoader,
 ) {
 
     fun find(mangaUrl: String): UniFile? {
+        if (LocalBook.isBook(mangaUrl)) {
+            val thumbnail = fileSystem.resolveBook(mangaUrl)?.let(thumbnails::load) ?: return null
+            // Saved books must keep their covers even after the browser's thumbnail cache is evicted.
+            val covers = File(context.filesDir, "local-covers").apply { mkdirs() }
+            val cover = File(covers, thumbnail.name)
+            if (!cover.exists()) thumbnail.copyTo(cover)
+            return UniFile.fromFile(cover)
+        }
         return fileSystem.getFilesInMangaDirectory(mangaUrl)
             // Get all file whose names start with "cover"
             .filter { it.isFile && it.nameWithoutExtension.equals("cover", ignoreCase = true) }

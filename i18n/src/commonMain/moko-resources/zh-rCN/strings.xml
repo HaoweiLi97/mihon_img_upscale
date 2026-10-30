@@ -1,5 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="local_browser_settings">本地漫画设置</string>
+    <string name="local_browser_directory">漫画目录</string>
+    <string name="local_browser_default_directory">默认：Mihon 存储目录 / local</string>
+    <string name="local_browser_use_default">恢复默认目录</string>
+    <string name="local_browser_thumbnails">显示缩略图</string>
+    <string name="local_browser_thumbnails_summary">预览文件夹、图片、压缩包和图片型 EPUB，浏览时按需生成并缓存封面。</string>
+    <string name="local_browser_columns">宫格列数</string>
+    <string name="local_browser_auto">自动（适应屏幕宽度）</string>
+    <string name="local_browser_sort_name">名称（自然排序）</string>
+    <string name="local_browser_sort_newest">最近修改</string>
+    <string name="local_browser_formats">支持图片文件夹、ZIP/CBZ、RAR/CBR、7Z/CB7、TAR/CBT 和图片型 EPUB。当前阅读器不支持 PDF 和纯文字 EPUB。</string>
+    <string name="local_browser_hint">点击文件夹进入目录；点击图片，将同目录图片合为漫画并从该图片开始阅读；长按文件可查看详情并加入书架。切换目录不会移动文件。</string>
+    <string name="local_browser_refresh">刷新目录</string>
+    <string name="local_browser_root">根目录</string>
+    <string name="local_browser_search">搜索当前目录…</string>
+    <string name="local_browser_image_count">%1$d 张图片</string>
+    <string name="local_browser_read_images">作为漫画阅读</string>
+    <string name="local_browser_all_pages">全部页面</string>
+    <string name="local_browser_parent">返回上级</string>
+    <string name="local_browser_parent_hint">返回上一层目录</string>
+    <string name="local_browser_folder">文件夹</string>
+    <string name="local_browser_image">图片</string>
+    <string name="local_browser_empty">此目录中没有支持的漫画或图片。</string>
+    <string name="local_browser_no_results">没有匹配的文件或文件夹。</string>
+    <string name="local_browser_directory_error">无法访问此目录，目录可能已移动或访问权限已失效。请在设置中重新选择目录。</string>
+    <string name="local_browser_open_error">无法打开此漫画，请检查文件是否可读并包含支持的图片。</string>
     <string name="name">名称</string>
     <string name="categories">分类</string>
     <string name="manga">书架中的作品</string>

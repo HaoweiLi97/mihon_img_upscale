@@ -29,6 +29,9 @@ abstract class PageLoader {
      */
     open suspend fun loadPage(page: ReaderPage) {}
 
+    /** The viewer selected this page. Offscreen holders must not change download priority. */
+    open fun onPageSelected(page: ReaderPage) {}
+
     /**
      * Retries the given [page] in case it failed to load. This method only makes sense when an
      * online source is used.

@@ -368,7 +368,8 @@ class ReaderViewModel(
 
                 chapterList = loadChapterList()
                 eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer.reset(
-                    chapterList.first { chapterId == it.chapter.id }.chapter.lastPageRead,
+                    chapterPageIndex.takeIf { it >= 0 }
+                        ?: chapterList.first { chapterId == it.chapter.id }.chapter.lastPageRead,
                 )
                 loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
             } catch (e: Throwable) {
@@ -388,7 +389,10 @@ class ReaderViewModel(
         loader: ChapterLoader,
         chapter: ReaderChapter,
     ): ViewerChapters {
-        loader.loadChapter(chapter)
+        val initialPageIndex = chapterPageIndex.takeIf {
+            state.value.viewerChapters == null && chapter.chapter.id == initialChapterId && it >= 0
+        }
+        loader.loadChapter(chapter, initialPageIndex)
 
         val chapterPos = chapterList.indexOf(chapter)
         val newChapters = ViewerChapters(
@@ -559,6 +563,7 @@ class ReaderViewModel(
         displayCurrentPage: Int = page.number,
         displayTotalPages: Int? = null,
     ) {
+        page.chapter.pageLoader?.onPageSelected(page)
         mutableState.update {
             it.copy(
                 hasExtraPage = hasExtraPage,

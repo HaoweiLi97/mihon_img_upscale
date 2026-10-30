@@ -1,5 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="local_browser_settings">Local comic settings</string>
+    <string name="local_browser_directory">Comic directory</string>
+    <string name="local_browser_default_directory">Default: Mihon storage / local</string>
+    <string name="local_browser_use_default">Use default directory</string>
+    <string name="local_browser_thumbnails">Show thumbnails</string>
+    <string name="local_browser_thumbnails_summary">Preview folders, images, archives, and image-based EPUBs. Covers are cached as you browse.</string>
+    <string name="local_browser_columns">Grid columns</string>
+    <string name="local_browser_auto">Automatic (fit screen)</string>
+    <string name="local_browser_sort_name">Name (natural order)</string>
+    <string name="local_browser_sort_newest">Recently modified</string>
+    <string name="local_browser_formats">Supported: image folders, ZIP/CBZ, RAR/CBR, 7Z/CB7, TAR/CBT, and image-based EPUB. PDF and text-only EPUB are not supported by this reader.</string>
+    <string name="local_browser_hint">Tap a folder to browse. Tap an image to read all images in that folder, starting at that image. Long-press a file for details and to add it to your library. Changing this directory does not move files.</string>
+    <string name="local_browser_refresh">Refresh directory</string>
+    <string name="local_browser_root">Root directory</string>
+    <string name="local_browser_search">Search this directory…</string>
+    <string name="local_browser_image_count">%1$d images</string>
+    <string name="local_browser_read_images">Read as comic</string>
+    <string name="local_browser_all_pages">All pages</string>
+    <string name="local_browser_parent">Parent directory</string>
+    <string name="local_browser_parent_hint">Go up one level</string>
+    <string name="local_browser_folder">Folder</string>
+    <string name="local_browser_image">Image</string>
+    <string name="local_browser_empty">No supported comics or images in this directory.</string>
+    <string name="local_browser_no_results">No matching files or folders.</string>
+    <string name="local_browser_directory_error">Cannot access this directory. It may have moved, or its access permission may have expired. Select the directory again in settings.</string>
+    <string name="local_browser_open_error">Cannot open this comic. Check that the file is readable and contains supported images.</string>
     <string name="app_name" translatable="false">Mihon</string>
 
     <!-- Generic strings -->

@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.metro.runtime)
 
     implementation(libs.unifile)
+    implementation(libs.image.decoder)
     implementation(libs.bundles.serialization)
 
     implementation(libs.injekt)

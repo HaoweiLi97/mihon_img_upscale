@@ -138,10 +138,11 @@ class ReaderActivity : BaseActivity() {
     companion object {
         private const val UI_BUSY_COOLDOWN_MS = 1_000L
 
-        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, pageIndex: Int? = null): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
+                pageIndex?.let { putExtra("page_index", it) }
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }

@@ -9,31 +9,21 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
-import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.PriorityBlockingQueue
-import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.incrementAndFetch
-import kotlin.math.min
 
 /**
  * Loader used to load chapters from an online source.
@@ -45,12 +35,16 @@ internal class HttpPageLoader(
     private val appScope: CoroutineScope,
     private val canLoadAhead: () -> Boolean,
     private val preferences: ReaderPreferences = Injekt.get(),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : PageLoader() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val chunkProcessLock = Any()
     private var chunkProcessJob: Job? = null
     private val downloadJobs = ConcurrentHashMap<Int, Job>()
+
+    @Volatile
+    private var selectedPageIndex = 0
 
     override var isLocal: Boolean = false
 
@@ -75,14 +69,24 @@ internal class HttpPageLoader(
             }
         }
             .also {
-                it.loadByRollingChunked(0, 1, 1)
+                selectedPageIndex = chapter.requestedPage.coerceIn(0, it.lastIndex.coerceAtLeast(0))
+                it.loadByRollingChunked(selectedPageIndex, 1, 1)
             }
+    }
+
+    override fun onPageSelected(page: ReaderPage) {
+        val selected = chapter.pages?.getOrNull(page.index) ?: return
+        selectedPageIndex = selected.index
+        scope.launch { loadPage(selected) }
     }
 
     /**
      * Loads a page through the queue. Handles re-enqueueing pages if they were evicted from the cache.
      */
-    override suspend fun loadPage(page: ReaderPage) = withContext(Dispatchers.IO) {
+    override suspend fun loadPage(page: ReaderPage) = withContext(ioDispatcher) {
+        // ViewPager and Webtoon also create offscreen holders. Their subscriptions must not restart
+        // the download plan or cancel the image the user is still waiting to see.
+        if (page.index != selectedPageIndex) return@withContext
         val imageUrl = page.imageUrl
 
         // Check if the image has been deleted
@@ -101,7 +105,8 @@ internal class HttpPageLoader(
 
         val pages = page.chapter.pages.orEmpty()
         if (page.index !in pages.indices) return@withContext
-        pages.loadByRollingChunked(page.index, 3, 5) { chunks ->
+        // Finish the selected image before allowing adjacent downloads to compete for bandwidth.
+        pages.loadByRollingChunked(page.index, 1, 5) { chunks ->
             val continueLoading = chunks.take(2).flatten().map { it.index }.toSet()
             downloadJobs.keys.filter { it !in continueLoading }
                 .forEach { downloadJobs.remove(it)?.cancel() }
@@ -198,10 +203,11 @@ internal class HttpPageLoader(
         }
             .filter { it.index in window }
             .rollingChunked(chunkStartSize, chunkEndSize)
-            .also(onNewChunks)
 
-        // Every visible page holder calls loadPage, so this runs concurrently
+        // A new selection may arrive while an older plan is being built.
         synchronized(chunkProcessLock) {
+            if (index != selectedPageIndex) return
+            onNewChunks(chunks)
             chunkProcessJob?.cancel()
             chunkProcessJob = scope.launch {
                 for (chunk in chunks) {

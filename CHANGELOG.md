@@ -12,6 +12,18 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.17-beta.3] - 2026-10-30
+
+### Added
+- Add a local comic gallery with nested folder navigation, breadcrumbs, search, natural-name or modified-date sorting, and configurable grid columns.
+- Support a separate comic root directory, cached thumbnails for images, folders, archives and image-based EPUBs, and opening an image folder as one comic from the selected image.
+- Allow local gallery books to be added to the library with persistent covers and file identities that remain valid when changing the gallery root.
+
+### Fixed
+- Fix the crash when opening the local source caused by casting LocalSource to CatalogueSource.
+- Prevent offscreen reader pages from cancelling the visible page's network download or taking over its download plan. Finish the selected image before starting adjacent-page preloads.
+- Start resumed chapters and explicitly selected images at the requested page instead of downloading page zero first, and align enhancement priority with that page.
+
 ## [v1.3.17-beta.2] - 2026-10-27
 
 ### Changed

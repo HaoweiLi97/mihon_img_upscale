@@ -5,6 +5,7 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.source.local.image.LocalCoverManager
+import tachiyomi.source.local.io.LocalBook
 import tachiyomi.source.local.isLocal
 import java.io.InputStream
 import kotlin.time.Clock
@@ -24,7 +25,10 @@ suspend fun Manga.editCover(
     updateManga: UpdateManga,
     coverCache: CoverCache,
 ) {
-    if (isLocal()) {
+    if (isLocal() && LocalBook.isBook(url)) {
+        stream.use { coverCache.setCustomCoverToCache(this, it) }
+        updateManga.awaitUpdateCoverLastModified(id)
+    } else if (isLocal()) {
         coverManager.update(toSManga(), stream)
         updateManga.awaitUpdateCoverLastModified(id)
     } else if (favorite) {

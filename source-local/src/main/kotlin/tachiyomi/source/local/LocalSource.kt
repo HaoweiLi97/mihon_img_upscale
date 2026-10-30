@@ -47,6 +47,7 @@ import tachiyomi.source.local.filter.OrderBy
 import tachiyomi.source.local.image.LocalCoverManager
 import tachiyomi.source.local.io.Archive
 import tachiyomi.source.local.io.Format
+import tachiyomi.source.local.io.LocalBook
 import tachiyomi.source.local.io.LocalSourceFileSystem
 import tachiyomi.source.local.metadata.fillMetadata
 import uy.kohesive.injekt.injectLazy
@@ -164,6 +165,14 @@ class LocalSource(
 
     // Manga details related
     override suspend fun getMangaDetails(manga: SManga): SManga = withContext(Dispatchers.IO) {
+        if (LocalBook.isBook(manga.url)) {
+            val file = fileSystem.resolveBook(manga.url)
+                ?: error(context.stringResource(MR.strings.chapter_not_found))
+            manga.title = (if (file.isDirectory) file.name else file.nameWithoutExtension).orEmpty()
+            manga.thumbnail_url = coverManager.find(manga.url)?.uri?.toString()
+            manga.initialized = true
+            return@withContext manga
+        }
         coverManager.find(manga.url)?.let {
             manga.thumbnail_url = it.uri.toString()
         }
@@ -291,6 +300,19 @@ class LocalSource(
 
     // Chapters
     override suspend fun getChapterList(manga: SManga): List<SChapter> = withContext(Dispatchers.IO) {
+        if (LocalBook.isBook(manga.url)) {
+            val file = fileSystem.resolveBook(manga.url)
+                ?: error(context.stringResource(MR.strings.chapter_not_found))
+            require(file.isDirectory || LocalBook.isComic(file))
+            return@withContext listOf(
+                SChapter.create().apply {
+                    url = manga.url
+                    name = "${manga.title}: ${context.stringResource(MR.strings.local_browser_all_pages)}"
+                    chapter_number = 1f
+                    date_upload = file.lastModified()
+                },
+            )
+        }
         val chapters = fileSystem.getFilesInMangaDirectory(manga.url)
             // Only keep supported formats
             .filterNot { it.name.orEmpty().startsWith('.') }
@@ -348,6 +370,10 @@ class LocalSource(
 
     fun getFormat(chapter: SChapter): Format {
         try {
+            if (LocalBook.isBook(chapter.url)) {
+                return fileSystem.resolveBook(chapter.url)?.let(Format.Companion::valueOf)
+                    ?: error(context.stringResource(MR.strings.chapter_not_found))
+            }
             val (mangaDirName, chapterName) = chapter.url.split('/', limit = 2)
             return fileSystem.getBaseDirectory()
                 ?.findFile(mangaDirName)

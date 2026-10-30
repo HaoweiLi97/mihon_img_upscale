@@ -39,6 +39,12 @@ object SettingsBrowseScreen : SearchableSettings {
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.label_sources),
                 preferenceItems = listOf(
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.local_browser_settings),
+                        onClick = {
+                            navigator.push(eu.kanade.tachiyomi.ui.browse.source.local.LocalBrowserSettingsScreen())
+                        },
+                    ),
                     Preference.PreferenceItem.SwitchPreference(
                         preference = sourcePreferences.hideInLibraryItems,
                         title = stringResource(MR.strings.pref_hide_in_library_items),

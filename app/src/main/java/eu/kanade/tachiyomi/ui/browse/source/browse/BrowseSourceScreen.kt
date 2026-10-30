@@ -54,10 +54,10 @@ import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceViewModel.Listing
+import eu.kanade.tachiyomi.ui.browse.source.local.LocalBrowserScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -98,6 +98,11 @@ data class BrowseSourceScreen(
 
     @Composable
     override fun Content() {
+        if (sourceId == LocalSource.ID) {
+            // LocalSource implements Source directly and has its own filesystem browser.
+            LocalBrowserScreen().Content()
+            return
+        }
         val viewModel =
             assistedMetroViewModel<BrowseSourceViewModel, BrowseSourceViewModel.Factory> {
                 create(sourceId = sourceId, listingQuery = listingQuery)
@@ -257,7 +262,7 @@ data class BrowseSourceScreen(
                                     Text(text = stringResource(MR.strings.popular))
                                 },
                             )
-                            if ((viewModel.source as CatalogueSource).supportsLatest) {
+                            if (source.supportsLatest) {
                                 FilterChip(
                                     selected = state.listing == Listing.Latest,
                                     onClick = {
