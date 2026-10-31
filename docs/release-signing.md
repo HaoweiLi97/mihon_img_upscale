@@ -29,7 +29,7 @@ Normal local release builds read `keystore.properties` directly:
 
 For CI, the existing `MIHON_GITHUB_RELEASE=true` flow reads `storeFile`, `storePassword`, `keyAlias` and `keyPassword` from the CI environment. Configure those values through the CI secret store using this same release key.
 
-Verify every final APK with Android SDK `apksigner verify --print-certs`. Check its package ID, version and the certificate SHA-256 above before uploading. The current beta remains a GitHub prerelease and should not replace the latest stable release designation.
+Verify every final APK with Android SDK `apksigner verify --print-certs`. Check its package ID, version and the certificate SHA-256 above before uploading. Beta tags remain GitHub prereleases and must not replace the latest stable designation. Version 1.3.17 is the stable release concluding that beta cycle (versionCode 48), reuses this key, and can be designated latest.
 
 ## Migration from the previous package
 

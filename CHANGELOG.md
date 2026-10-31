@@ -12,6 +12,30 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.17] - 2026-10-31
+
+This stable release consolidates the final changes from the 1.3.17 beta cycle.
+
+### Added
+- Browse local comics in a gallery with nested folders, breadcrumbs, search, natural-name or modified-date sorting, and configurable grid columns.
+- Select an independent comic root and open image folders, archives and image-based EPUBs; add local books to the library with persistent covers and file identities.
+
+### Changed
+- Install as Mihon Upscale (`app.mihon.upscale`) with a dedicated signing identity and dark red launcher ring. Upgrade directly from beta.4; migrate older `app.mihon` installations using backup and restore.
+- Bundle an INT8 W8A8 model for Qualcomm NPU Real-ESRGAN Anime 2x. Other Qualcomm NPU model variants remain FP16-only, with runtime support detection. Remove the experimental calibration downloads and on-device calibration flow.
+
+### Fixed
+- Prefetch nearby online pages concurrently within a bounded window, preserve nearby downloads and enhancement during page turns, and prioritize the requested page when resuming or jumping.
+- Serialize cancelled and replacement downloads to prevent stale loading states and overlapping cache writes.
+- Distinguish model preparation, inference, saving and completion; display COMPLETED (已完成) after the enhanced result is saved and recover completion when its notification is missed.
+- Display original-image download progress correctly, including paired pages, and replace enhanced cache images without duplicate observers or stale results.
+- Keep enhanced Webtoon pages in the strip renderer, bound retained pager views and queued encoding allocations, and keep the original readable after enhancement preparation, inference or memory failures.
+- Fix opening the local source without treating it as an online catalogue source.
+
+### Other
+- Retain beta.4's package, signing key, icon and reader behavior; increase versionCode to 48 for in-place upgrades.
+- Validate with 161 app unit tests, 20 Android emulator regression tests, actual native 2x enhancement and completion recovery, plus signed-APK upgrade and startup checks. Physical Qualcomm NPU behavior is not covered by the emulator checks.
+
 ## [v1.3.17-beta.4] - 2026-10-31
 
 ### Changed

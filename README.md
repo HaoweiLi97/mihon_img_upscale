@@ -26,6 +26,8 @@ Starting with **1.3.17-beta.4**, this fork is installed as **Mihon Upscale** (`a
 
 The first installation under the new package is a separate app. Export a backup from your old app and restore it in Mihon Upscale to migrate your library and supported settings, then select the appropriate storage folders. Keep the old app until you have checked the restored data. Future Mihon Upscale releases will reuse the new signing certificate and support in-place upgrades.
 
+**Stable 1.3.17** consolidates the final beta changes. Install it directly over 1.3.17-beta.4: the package, signing key and data directory are unchanged.
+
 Release maintainers: [signing configuration and key backup](docs/release-signing.md).
 
 ## Image enhancement
@@ -34,7 +36,7 @@ Enable **Image enhancement** in the reader settings, then select a processing ba
 
 - Visible pages take priority over nearby preloaded pages.
 - Enhanced images are cached locally to avoid repeated processing; ink filter settings are included in cache identity.
-- Status labels show queued work, enhancement progress, and completion.
+- Status labels distinguish queued work, model preparation, enhancement progress, saving, and completion.
 - NPU preparation or inference failure keeps the original image available for reading.
 
 ### Processing backends
