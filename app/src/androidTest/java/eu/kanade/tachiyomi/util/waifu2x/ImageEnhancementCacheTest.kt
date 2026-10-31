@@ -129,26 +129,24 @@ class ImageEnhancementCacheTest {
         // deterministic without timing-dependent large-image compression.
         val lockField = ImageEnhancementCache::class.java.getDeclaredField("cacheLock").apply { isAccessible = true }
         val lock = (lockField.get(ImageEnhancementCache) as ReentrantReadWriteLock).writeLock()
-        val bitmaps = List(3) { Bitmap.createBitmap(32, 48, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) } }
+        val bitmaps = List(2) { Bitmap.createBitmap(32, 48, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) } }
         lock.lock()
         try {
             val first = launch(start = CoroutineStart.UNDISPATCHED) {
                 ImageEnhancementCache.enqueueSaveToCache(mangaId, chapterId, 0, "regression", bitmaps[0])
             }
-            val second = launch(start = CoroutineStart.UNDISPATCHED) {
-                ImageEnhancementCache.enqueueSaveToCache(mangaId, chapterId, 1, "regression", bitmaps[1])
-            }
             withTimeout(5000) {
                 first.join()
-                second.join()
             }
+            // The rendezvous queue has no waiting slot: the next send blocks while the
+            // first bitmap belongs to the writer. Cancelling it must release only its bitmap.
             val blocked = launch(start = CoroutineStart.UNDISPATCHED) {
-                ImageEnhancementCache.enqueueSaveToCache(mangaId, chapterId, 2, "regression", bitmaps[2])
+                ImageEnhancementCache.enqueueSaveToCache(mangaId, chapterId, 1, "regression", bitmaps[1])
             }
             assertFalse(blocked.isCompleted)
             blocked.cancelAndJoin()
-            assertTrue(bitmaps[2].isRecycled)
-            assertFalse(ImageEnhancementCache.isSavePending(mangaId, chapterId, 2))
+            assertTrue(bitmaps[1].isRecycled)
+            assertFalse(ImageEnhancementCache.isSavePending(mangaId, chapterId, 1))
         } finally {
             ImageEnhancementCache.clearChapterCache(mangaId, chapterId)
             lock.unlock()
@@ -156,7 +154,7 @@ class ImageEnhancementCacheTest {
         withTimeout(5000) {
             while (bitmaps.any { !it.isRecycled }) delay(10)
         }
-        for (page in 0..2) {
+        for (page in 0..1) {
             assertNull(ImageEnhancementCache.getCachedImage(mangaId, chapterId, page, "regression"))
         }
         ImageEnhancementCache.clearChapterCache(mangaId, chapterId)

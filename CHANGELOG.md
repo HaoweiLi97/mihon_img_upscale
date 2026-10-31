@@ -30,7 +30,7 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Limit retained pager views independently of the enhancement preload setting and avoid hardware bitmap allocation for background enhancement requests.
 
 ### Other
-- Pass all 158 app unit tests and compile Android regression tests. Physical Qualcomm NPU crash reproduction remains unverified without a connected device.
+- Pass all 158 app unit tests, 17 Android emulator regression tests, and an independent-package coexistence/startup check. Physical Qualcomm NPU crash reproduction remains unverified without a connected device.
 
 ## [v1.3.17-beta.3] - 2026-10-30
 
