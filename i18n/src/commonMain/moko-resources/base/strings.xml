@@ -26,7 +26,7 @@
     <string name="local_browser_no_results">No matching files or folders.</string>
     <string name="local_browser_directory_error">Cannot access this directory. It may have moved, or its access permission may have expired. Select the directory again in settings.</string>
     <string name="local_browser_open_error">Cannot open this comic. Check that the file is readable and contains supported images.</string>
-    <string name="app_name" translatable="false">Mihon</string>
+    <string name="app_name" translatable="false">Mihon Upscale</string>
 
     <!-- Generic strings -->
     <string name="on">On</string>

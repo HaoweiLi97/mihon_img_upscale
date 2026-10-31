@@ -22,7 +22,11 @@ Requires **Android 8.0 or newer**. Download an APK from this repository's [Relea
 | `app-x86_64-release.apk` | 64-bit x86 devices and emulators |
 | `app-universal-release.apk` | All architectures; larger download, suitable when unsure |
 
-Official releases from this repository use the same signing certificate and support in-place upgrades. Upstream Mihon and other forks use different certificates and cannot be replaced directly by this APK.
+Starting with **1.3.17-beta.4**, this fork is installed as **Mihon Upscale** (`app.mihon.upscale`) with its own release signing key. It can coexist with upstream Mihon and earlier versions of this fork that used `app.mihon`.
+
+The first installation under the new package is a separate app. Export a backup from your old app and restore it in Mihon Upscale to migrate your library and supported settings, then select the appropriate storage folders. Keep the old app until you have checked the restored data. Future Mihon Upscale releases will reuse the new signing certificate and support in-place upgrades.
+
+Release maintainers: [signing configuration and key backup](docs/release-signing.md).
 
 ## Image enhancement
 

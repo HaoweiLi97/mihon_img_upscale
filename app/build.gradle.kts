@@ -162,7 +162,7 @@ android {
     namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
-        applicationId = "app.mihon"
+        applicationId = "app.mihon.upscale"
 
         versionCode = 47
         versionName = "1.3.17-beta.4"

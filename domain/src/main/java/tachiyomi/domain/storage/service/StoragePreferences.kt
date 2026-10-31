@@ -19,7 +19,7 @@ class StoragePreferences(
         folderProvider.path(),
     )
 
-    // Empty uses the existing Mihon/local directory. This does not move downloads or backups.
+    // Empty uses local/ under the configured storage directory without moving downloads or backups.
     val localComicDirectory: Preference<String> = preferenceStore.getString(
         Preference.appStateKey("local_comic_directory"),
         "",

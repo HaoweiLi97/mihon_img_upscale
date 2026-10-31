@@ -14,6 +14,11 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [v1.3.17-beta.4] - 2026-10-31
 
+### Changed
+- Install this fork independently as Mihon Upscale (`app.mihon.upscale`) using a new dedicated release signing key, allowing it to coexist with upstream Mihon and earlier `app.mihon` builds.
+- Retain the original launcher icon's kana and pale background, using a red ring to distinguish this fork.
+- Use the distinct application name for the default external storage folder. Migrate existing libraries through backup and restore rather than replacing the old installation.
+
 ### Fixed
 - Serialize replacement downloads with cancelled attempts so rapid page changes and manual retries cannot overwrite the current page's loading state or overlap cache writes.
 - Keep adjacent-page prefetch behind the visible page when its download is retried.

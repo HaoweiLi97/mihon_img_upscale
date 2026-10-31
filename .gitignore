@@ -14,6 +14,10 @@ app/release/
 # Configuration files
 keystore.properties
 local.properties
+*.p12
+*.jks
+*.keystore
+*.signing.xml
 
 # Android specific ignores
 *.dm
