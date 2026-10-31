@@ -12,6 +12,21 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.17-beta.4] - 2026-10-31
+
+### Fixed
+- Serialize replacement downloads with cancelled attempts so rapid page changes and manual retries cannot overwrite the current page's loading state or overlap cache writes.
+- Keep adjacent-page prefetch behind the visible page when its download is retried.
+- Load enhanced cache replacements through one background observer, ignore duplicate replacements, and release completed cache subscriptions.
+- Keep enhanced Webtoon pages in the strip renderer instead of allocating a full-page preview that can exceed Canvas limits.
+- Retain the original image after enhancement initialization, inference or memory failures, and stop automatically resubmitting failed enhancement attempts.
+
+### Improved
+- Limit retained pager views independently of the enhancement preload setting and avoid hardware bitmap allocation for background enhancement requests.
+
+### Other
+- Pass all 158 app unit tests and compile Android regression tests. Physical Qualcomm NPU crash reproduction remains unverified without a connected device.
+
 ## [v1.3.17-beta.3] - 2026-10-30
 
 ### Added

@@ -674,6 +674,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     protected fun setProcessedSource(
         file: java.io.File,
         transformedSource: BufferedSource,
+        forceRefresh: Boolean = false,
     ) {
         val cachedConfig = file.name.substringAfter('_').removeSuffix(".webp")
         val currentConfig = currentEnhancementConfigHash()
@@ -682,11 +683,25 @@ open class ReaderPageImageView @JvmOverloads constructor(
             return
         }
         val uriString = file.toURI().toString()
+        if (!forceRefresh && currentLoadedUri == uriString) {
+            transformedSource.close()
+            return
+        }
         currentCachedFile = file
         updateStatus(context.stringResource(MR.strings.reader_status_processed))
 
         val activeView = pageView as? SubsamplingScaleImageView
-        if (activeView != null) {
+        if (isWebtoon && pageView is WebtoonStripImageView) {
+            // Keep Webtoon's bounded strip renderer for enhanced pages as well. A single
+            // full-resolution preview can exceed Canvas's bitmap limit and crash RenderThread.
+            setStripImage(
+                transformedSource,
+                config ?: run {
+                    transformedSource.close()
+                    return
+                },
+            )
+        } else if (activeView != null) {
             animateProcessedSwap(activeView, config) {
                 setImageWithCurrentCrop(
                     ImageSource.inputStream(transformedSource.inputStream()),
@@ -884,66 +899,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
             if (realCuganEnabled) {
                 ImageEnhancementCache.init(context)
                 val configHash = ImageEnhancementCache.getConfigHash(preferences)
-                val pageVariant = enhancementVariant()
 
-                val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
-                if (cachedFile != null) {
-                    // Already processed - update status and load enhanced image
-                    logcat(LogPriority.DEBUG) { "ReaderPageImageView: onPageSelected - Page $pIdx found in cache" }
-                    val uriString = cachedFile.toURI().toString()
-                    if (currentLoadedUri != uriString) {
-                        val revision = imageRevision
-                        // Load the enhanced image if not already loaded or if source changed
-                        viewScope.launchIO {
-                            val transformedSource = enhancedImageSourceFactory?.invoke(cachedFile)
-                            if (transformedSource != null) {
-                                withUIContext {
-                                    if (revision == imageRevision) {
-                                        setProcessedSource(cachedFile, transformedSource = transformedSource)
-                                    } else {
-                                        transformedSource.close()
-                                    }
-                                }
-                                return@launchIO
-                            }
-
-                            val source = ImageEnhancementCache.readCachedImage(cachedFile)
-
-                            if (source != null) {
-                                withUIContext {
-                                    if (revision == imageRevision) {
-                                        setProcessedSource(cachedFile, transformedSource = source)
-                                    } else {
-                                        source.close()
-                                    }
-                                }
-                            } else {
-                                healInvalidEnhancedCache(
-                                    mId,
-                                    cId,
-                                    pIdx,
-                                    configHash,
-                                    readerPage,
-                                    forceCurrentPage = true,
-                                )
-                                startEnhancementPolling(mId, cId, pIdx, configHash, readerPage)
-                            }
-                        }
-                    } else {
-                        updateStatus(context.stringResource(MR.strings.reader_status_processed))
-                    }
-                } else if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash, pageVariant)) {
-                    updateStatus(context.stringResource(MR.strings.reader_status_raw))
-                } else {
-                    // Not in cache, not skipped - ensure it's being processed with high priority
-                    if (processingJob?.isActive != true) {
-                        updateStatus(context.stringResource(MR.strings.reader_status_processing))
-                    }
-                    enqueueEnhancement(mId, cId, pIdx, highPriority = true)
-
-                    // Start/restart polling if not already running
-                    startEnhancementPolling(mId, cId, pIdx, configHash)
-                }
+                // Cache reads, validation and spread transforms run on IO through one observer.
+                // Selection and the first displayed frame can both arrive for the same binding.
+                startEnhancementPolling(mId, cId, pIdx, configHash)
             }
 
             // 2. Prune others
@@ -1225,37 +1184,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val configHash = ImageEnhancementCache.getConfigHash(preferences)
         val pageVariant = enhancementVariant()
 
-        val cachedFile = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
-        if (cachedFile != null) {
-            logcat(LogPriority.DEBUG) {
-                "ReaderPageImageView: Page $pIdx found in cache on first check: ${cachedFile.absolutePath}"
-            }
-            val transformedSource = enhancedImageSourceFactory?.invoke(cachedFile)
-            if (transformedSource != null) {
-                setProcessedSource(cachedFile, transformedSource = transformedSource)
-            } else {
-                val source = ImageEnhancementCache.readCachedImage(cachedFile)
-                if (source != null) {
-                    currentCachedFile = cachedFile
-                    setImageWithCurrentCrop(ImageSource.inputStream(source.inputStream()))
-                    currentLoadedUri = cachedFile.toURI().toString()
-                    isVisible = true
-                    updateStatus(context.stringResource(MR.strings.reader_status_processed))
-                } else {
-                    viewScope.launchIO {
-                        healInvalidEnhancedCache(
-                            mId = mId,
-                            cId = cId,
-                            pIdx = pIdx,
-                            configHash = configHash,
-                            triggerData = originalData,
-                            streamFn = streamFn,
-                            forceCurrentPage = pIdx == currentGlobalPageIndex,
-                        )
-                        startEnhancementPolling(mId, cId, pIdx, configHash, originalData, streamFn)
-                    }
-                }
-            }
+        // The observer also handles an already-cached result. Never decode or transform a cached
+        // page inside the UI frame callback, or reset the active image while it is being drawn.
+        if (ImageEnhancementCache.isCached(mId, cId, pIdx, configHash, pageVariant)) {
+            startEnhancementPolling(mId, cId, pIdx, configHash, originalData, streamFn)
             return
         }
 
@@ -1323,13 +1255,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
         processingJob?.cancel()
         processingKey = key
         processingJob = viewScope.launchIO {
+            val pageVariant = key.pageVariant
+            val cacheEvents = ImageEnhancementCache.events
+                .filter { it.affects(mId, cId, pIdx, configHash, pageVariant) }
+                .produceIn(this)
             try {
-                val pageVariant = enhancementVariant()
                 var wasEnhancing = false
                 var shouldCheckCache = true
-                val cacheEvents = ImageEnhancementCache.events
-                    .filter { it.affects(mId, cId, pIdx, configHash, pageVariant) }
-                    .produceIn(this)
                 // The queue may legitimately take longer than a minute for a Webtoon page
                 // split into several segments. Keep observing while this frame is attached;
                 // recycle()/detach cancels this job when it is no longer useful.
@@ -1342,13 +1274,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         }
                         val file = ImageEnhancementCache.getCachedImage(mId, cId, pIdx, configHash, pageVariant)
                         if (file != null) {
+                            val alreadyDisplayed = withUIContext {
+                                if (key.revision == imageRevision && currentLoadedUri == file.toURI().toString()) {
+                                    updateStatus(context.stringResource(MR.strings.reader_status_processed))
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            if (alreadyDisplayed) return@launchIO
                             logcat(LogPriority.DEBUG) {
                                 "ReaderPageImageView: Page $pIdx/$pageVariant found in cache after cache event: ${file.absolutePath}"
                             }
                             val transformedSource = enhancedImageSourceFactory?.invoke(file)
                             if (transformedSource != null) {
                                 withUIContext {
-                                    setProcessedSource(file, transformedSource = transformedSource)
+                                    if (key.revision == imageRevision) {
+                                        setProcessedSource(file, transformedSource = transformedSource)
+                                    } else {
+                                        transformedSource.close()
+                                    }
                                 }
                                 return@launchIO
                             }
@@ -1357,7 +1302,11 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
                             if (source != null) {
                                 withUIContext {
-                                    setProcessedSource(file, transformedSource = source)
+                                    if (key.revision == imageRevision) {
+                                        setProcessedSource(file, transformedSource = source)
+                                    } else {
+                                        source.close()
+                                    }
                                 }
                                 return@launchIO
                             } else {
@@ -1425,6 +1374,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 return@launchIO
             } catch (e: Exception) {
                 android.util.Log.e("ReaderPageImageView", "Error in polling for page $pIdx", e)
+            } catch (e: OutOfMemoryError) {
+                // Enhancement is optional; retain the original if a cached replacement is too large.
+                logcat(LogPriority.ERROR, e) { "ReaderPageImageView: Not enough memory for enhanced page $pIdx" }
+                updateStatus(context.stringResource(MR.strings.reader_status_raw))
+            } finally {
+                // SharedFlow never completes. Its producer must not keep a finished observer alive.
+                cacheEvents.cancel()
             }
         }
     }

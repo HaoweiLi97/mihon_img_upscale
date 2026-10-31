@@ -320,7 +320,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                         // --- End Resolution Limits / Prescale ---
 
                                         if (shouldSkipEnhancement) {
-                                            // Don't process, just use the original bitmap
+                                            markEnhancementSkipped()
                                         } else {
                                             currentCoroutineContext().ensureActive()
                                             val initialized = when (model) {
@@ -472,6 +472,14 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                                         result.recycle()
                                                     }
                                                 }
+                                            } else {
+                                                // A cancelled native call also returns null. Only remember a real
+                                                // initialization/inference failure, so polling cannot retry it forever.
+                                                currentCoroutineContext().ensureActive()
+                                                markEnhancementSkipped()
+                                                logcat(LogPriority.WARN) {
+                                                    "TachiyomiImageDecoder: Enhancement unavailable for page $pageIndex/$pageVariant; keeping original"
+                                                }
                                             }
                                         } // end else (shouldSkipEnhancement)
                                     } finally {
@@ -484,6 +492,7 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
+                                    markEnhancementSkipped()
                                     logcat(LogPriority.ERROR, e) {
                                         "TachiyomiImageDecoder: Failed to enhance image on-the-fly"
                                     }
@@ -505,10 +514,28 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "TachiyomiImageDecoder: Critical failure during decode" }
                 null
+            } catch (e: OutOfMemoryError) {
+                markEnhancementSkipped()
+                logcat(LogPriority.ERROR, e) {
+                    "TachiyomiImageDecoder: Not enough memory; keeping original reader image"
+                }
+                null
             } finally {
                 bitmap?.let { if (!it.isRecycled) it.recycle() }
             }
         }
+    }
+
+    private fun markEnhancementSkipped() {
+        if (!options.enhanced || options.mangaId == -1L || options.chapterId == -1L || options.pageIndex < 0) return
+        val preferences = Injekt.get<ReaderPreferences>()
+        ImageEnhancementCache.saveSkippedToCache(
+            options.mangaId,
+            options.chapterId,
+            options.pageIndex,
+            ImageEnhancementCache.getConfigHash(preferences),
+            options.pageVariant,
+        )
     }
 
     private fun decodeCachedEnhancedImage(): Bitmap? {

@@ -46,9 +46,11 @@ object ImageEnhancementCache {
     private var lastTrimTime = 0L
     private val cacheGeneration = AtomicInteger(0)
     private val pendingSaveKeys = ConcurrentHashMap<CacheKey, SaveRequest>()
+
     // Large enhanced bitmaps must not pile up behind the encoder. Hand each one
     // directly to the writer before allowing the next enhancement to advance.
-    private val saveQueue = Channel<SaveRequest>(capacity = Channel.RENDEZVOUS, onUndeliveredElement = ::releaseSaveRequest)
+    private val saveQueue =
+        Channel<SaveRequest>(capacity = Channel.RENDEZVOUS, onUndeliveredElement = ::releaseSaveRequest)
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     data class CacheKey(
@@ -125,6 +127,20 @@ object ImageEnhancementCache {
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("ImageEnhancementCache", "Cache writer failed for page ${request.pageIndex}", e)
+                } catch (e: OutOfMemoryError) {
+                    // Keep draining the rendezvous channel after a failed optional encode.
+                    android.util.Log.e(
+                        "ImageEnhancementCache",
+                        "Not enough memory to cache page ${request.pageIndex}",
+                        e,
+                    )
+                    saveSkippedToCache(
+                        request.mangaId,
+                        request.chapterId,
+                        request.pageIndex,
+                        request.configHash,
+                        request.pageVariant,
+                    )
                 } finally {
                     releaseSaveRequest(request)
                 }
@@ -594,7 +610,13 @@ object ImageEnhancementCache {
     ): String {
         val effectiveScale = getEffectiveScale(model, scale, realEsrganStyle)
         val resolvedBackend = Waifu2x.resolveProcessingBackend(processingBackend, model, effectiveScale)
-        val resolvedPrecision = Waifu2x.resolvePrecision(precision, resolvedBackend, model, effectiveScale, realEsrganStyle)
+        val resolvedPrecision = Waifu2x.resolvePrecision(
+            precision,
+            resolvedBackend,
+            model,
+            effectiveScale,
+            realEsrganStyle,
+        )
         val modelRevision = buildString {
             if (
                 model == Waifu2x.MODEL_REAL_ESRGAN_ANIME &&

@@ -2,12 +2,15 @@ package eu.kanade.tachiyomi.util.waifu2x
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -107,6 +110,22 @@ class ImageEnhancerQueueTest {
         }
         await(attempted)
         drain()
+    }
+
+    @Test
+    fun anOutOfMemorySourceKeepsTheWorkerAliveAndStopsAutomaticRetries() {
+        val attempted = CountDownLatch(1)
+        enqueue(0) {
+            attempted.countDown()
+            throw OutOfMemoryError("Synthetic enhancement allocation failure")
+        }
+        await(attempted)
+        drain()
+        val preferences = Injekt.get<ReaderPreferences>()
+        assertTrue(
+            "A failed optional enhancement must not be re-enqueued by polling",
+            ImageEnhancementCache.isSkipped(mangaId, chapterId, 0, ImageEnhancementCache.getConfigHash(preferences)),
+        )
     }
 
     private fun gate() = CountDownLatch(1).also { gates += it }

@@ -25,8 +25,8 @@ import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
-import eu.kanade.tachiyomi.ui.reader.viewer.updateEnhancementStatus
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.updateEnhancementStatus
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.isNightMode
@@ -670,7 +670,7 @@ class PagerPageHolder(
         } ?: return
         withUIContext {
             setTransitionTargetPage(secondaryPage)
-            setProcessedSource(rendered.first, transformedSource = rendered.second)
+            setProcessedSource(rendered.first, transformedSource = rendered.second, forceRefresh = true)
         }
     }
 
@@ -698,7 +698,19 @@ class PagerPageHolder(
                         page.status == Page.State.Ready &&
                         targetPage.status == Page.State.Ready
                     ) {
-                        smoothRefreshCombinedDisplay()
+                        try {
+                            smoothRefreshCombinedDisplay()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logcat(LogPriority.WARN, e) {
+                                "PagerPageHolder: Keeping current spread after enhancement refresh failed"
+                            }
+                        } catch (e: OutOfMemoryError) {
+                            logcat(LogPriority.ERROR, e) {
+                                "PagerPageHolder: Not enough memory to refresh enhanced spread"
+                            }
+                        }
                     }
                 }
             }

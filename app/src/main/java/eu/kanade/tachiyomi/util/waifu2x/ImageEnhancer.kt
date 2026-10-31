@@ -6,6 +6,7 @@ import android.content.Context
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import coil3.request.allowHardware
 import eu.kanade.tachiyomi.data.coil.chapterId
 import eu.kanade.tachiyomi.data.coil.customDecoder
 import eu.kanade.tachiyomi.data.coil.enhanced
@@ -171,6 +172,9 @@ object ImageEnhancer {
                     if (e !is InterruptedException && e !is CancellationException) {
                         logcat(LogPriority.ERROR, e) { "ImageEnhancer: Worker loop error" }
                     }
+                } catch (e: OutOfMemoryError) {
+                    // An optional enhancement must not kill the process or permanently stop the queue.
+                    logcat(LogPriority.ERROR, e) { "ImageEnhancer: Not enough memory for enhancement" }
                 }
             }
         }
@@ -221,7 +225,16 @@ object ImageEnhancer {
         }
         if (ImageEnhancementCache.isSavePending(mangaId, chapterId, pageIndex, pageVariant, configHash)) return
 
-        enqueueRequest(context, mangaId, chapterId, pageIndex, highPriority, pageVariant, requestGeneration, dataProvider)
+        enqueueRequest(
+            context,
+            mangaId,
+            chapterId,
+            pageIndex,
+            highPriority,
+            pageVariant,
+            requestGeneration,
+            dataProvider,
+        )
     }
 
     // Only in-memory queue state is protected here. Cache I/O must never hold
@@ -318,7 +331,10 @@ object ImageEnhancer {
     fun onVisibleImageDisplayed(pageIndex: Int, pageVariant: String = "") {
         if (!waitingForVisibleImage || !isFocusedTarget(pageIndex, pageVariant)) return
         waitingForVisibleImage = false
-        android.util.Log.i("ImageEnhancer", "First visible image displayed: $pageIndex/$pageVariant; releasing ${queue.size} queued requests")
+        android.util.Log.i(
+            "ImageEnhancer",
+            "First visible image displayed: $pageIndex/$pageVariant; releasing ${queue.size} queued requests",
+        )
         queueSignal.trySend(Unit)
     }
 
@@ -467,7 +483,10 @@ object ImageEnhancer {
             // A reset must finish before this attempt can initialize a new model.
             resetJob?.join()
             if (req.generation != generation.get() || req.cancelled.get()) return
-            android.util.Log.i("ImageEnhancer", "Processing page ${req.pageIndex}/${req.pageVariant}, generation=${req.generation}")
+            android.util.Log.i(
+                "ImageEnhancer",
+                "Processing page ${req.pageIndex}/${req.pageVariant}, generation=${req.generation}",
+            )
             logcat(LogPriority.DEBUG) {
                 "ImageEnhancer: Processing page ${req.pageIndex}/${req.pageVariant} (priority=${req.priority})"
             }
@@ -477,6 +496,7 @@ object ImageEnhancer {
             if (req.cancelled.get()) return
             val request = ImageRequest.Builder(req.context)
                 .data(data)
+                .allowHardware(false)
                 .memoryCachePolicy(CachePolicy.DISABLED)
                 .customDecoder(true)
                 .enhanced(true)
@@ -496,6 +516,17 @@ object ImageEnhancer {
                 }
             }
             job.await()
+        } catch (e: OutOfMemoryError) {
+            if (req.generation == generation.get() && !req.cancelled.get()) {
+                ImageEnhancementCache.saveSkippedToCache(
+                    req.mangaId,
+                    req.chapterId,
+                    req.pageIndex,
+                    currentConfigHash(),
+                    req.pageVariant,
+                )
+            }
+            logcat(LogPriority.ERROR, e) { "ImageEnhancer: Keeping original after enhancement ran out of memory" }
         } finally {
             synchronized(this) {
                 if (activeRequest === req) {

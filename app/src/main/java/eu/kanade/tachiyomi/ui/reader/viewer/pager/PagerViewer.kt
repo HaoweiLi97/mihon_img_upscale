@@ -114,9 +114,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.isVisible = false // Don't layout the pager yet
         pager.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         pager.isFocusable = false
-        val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
-        pager.offscreenPageLimit =
-            if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
+        // Enhancement requests retain stream factories, while holders retain decoded images.
+        // A larger enhancement queue must not allocate that many full views on both sides.
+        pager.offscreenPageLimit = 2
         pager.bookTurnPage = {
             pager.children.filterIsInstance<PagerPageHolder>().firstOrNull { it.bookPageTurn?.current == true }
         }
@@ -569,9 +569,6 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      */
     private fun refreshAdapter() {
         val currentItem = pager.currentItem
-        val preferences: eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences by uy.kohesive.injekt.injectLazy()
-        pager.offscreenPageLimit =
-            if (preferences.realCuganEnabled().get()) preferences.realCuganPreloadSize().get() else 2
         adapter.refresh()
         pager.adapter = adapter
         pager.setCurrentItem(currentItem, false)

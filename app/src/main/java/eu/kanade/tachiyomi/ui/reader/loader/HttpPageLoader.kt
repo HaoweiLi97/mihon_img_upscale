@@ -18,6 +18,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -42,6 +44,8 @@ internal class HttpPageLoader(
     private val chunkProcessLock = Any()
     private var chunkProcessJob: Job? = null
     private val downloadJobs = ConcurrentHashMap<Int, Job>()
+    private val downloadJobsLock = Any()
+    private val pageLoadLocks = ConcurrentHashMap<Int, Mutex>()
 
     @Volatile
     private var selectedPageIndex = 0
@@ -108,8 +112,9 @@ internal class HttpPageLoader(
         // Finish the selected image before allowing adjacent downloads to compete for bandwidth.
         pages.loadByRollingChunked(page.index, 1, 5) { chunks ->
             val continueLoading = chunks.take(2).flatten().map { it.index }.toSet()
-            downloadJobs.keys.filter { it !in continueLoading }
-                .forEach { downloadJobs.remove(it)?.cancel() }
+            synchronized(downloadJobsLock) {
+                downloadJobs.filterKeys { it !in continueLoading }.values.forEach { it.cancel() }
+            }
         }
     }
 
@@ -117,13 +122,7 @@ internal class HttpPageLoader(
      * Retries a page. This method is only called from user interaction on the viewer.
      */
     override fun retryPage(page: ReaderPage) {
-        if (page.status is Page.State.Error) {
-            page.status = Page.State.Queue
-        }
-
-        val pageIndex = page.index
-        downloadJobs.remove(pageIndex)?.cancel()
-        scope.launch { internalLoadPage(page, force = true) }.trackAsDownloadJob(pageIndex)
+        launchLoadOnce(page, force = true)
     }
 
     override fun recycle() {
@@ -148,36 +147,33 @@ internal class HttpPageLoader(
     }
 
     /**
-     * Keeps [this] in [downloadJobs] under [pageIndex] until it completes. The entry is only removed if it still
-     * points at this job, so a newer job for the same page isn't evicted by an older one finishing.
-     */
-    private fun Job.trackAsDownloadJob(pageIndex: Int) = also { job ->
-        downloadJobs[pageIndex] = job
-        job.invokeOnCompletion { downloadJobs.remove(pageIndex, job) }
-    }
-
-    /**
      * Starts loading [page] unless it's already loaded or a load is already in flight for it. Claiming the slot and
      * starting the job has to be atomic, otherwise two chunk chains can both launch the same page.
      */
-    private fun launchLoadOnce(page: ReaderPage): Job? {
+    private fun launchLoadOnce(page: ReaderPage, force: Boolean = false): Job? = synchronized(downloadJobsLock) {
         val pageIndex = page.index
         // A page another chain is already loading still counts towards this chunk, otherwise the chain moves on
         // and starts the next chunk while it's in flight
-        downloadJobs[pageIndex]?.takeIf { it.isActive }?.let { return it }
-        if (page.status !is Page.State.Queue && page.status !is Page.State.Error) return null
-
-        val job = scope.launch(start = CoroutineStart.LAZY) { internalLoadPage(page) }
-        val running = downloadJobs.putIfAbsent(pageIndex, job)
-        if (running != null) {
-            job.cancel()
-            // Hand back the in flight job so the chunk still waits for this page and the chunk size keeps bounding
-            // how many downloads run at once
-            return running
+        val previous = downloadJobs[pageIndex]
+        if (!force && previous != null && !previous.isCompleted && !previous.isCancelled) {
+            return@synchronized previous
         }
-        job.invokeOnCompletion { downloadJobs.remove(pageIndex, job) }
+        if (!force && (page.status == Page.State.Ready || page.status is Page.State.Error)) return@synchronized null
+        if (force) previous?.cancel()
+
+        // Cancellation does not wait for a source/response writer to unwind. Do not let a replacement
+        // edit the same cache entry, or publish Ready, until the old attempt has reset its state.
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            pageLoadLocks.getOrPut(pageIndex) { Mutex() }.withLock {
+                internalLoadPage(page, force)
+            }
+        }
+        downloadJobs[pageIndex] = job
+        job.invokeOnCompletion {
+            synchronized(downloadJobsLock) { downloadJobs.remove(pageIndex, job) }
+        }
         job.start()
-        return job
+        job
     }
 
     private fun List<ReaderPage>.loadByRollingChunked(
@@ -213,6 +209,13 @@ internal class HttpPageLoader(
                 for (chunk in chunks) {
                     val jobs = chunk.mapNotNull { page -> launchLoadOnce(page) }
                     jobs.joinAll()
+                    // A manual retry can replace a job while this chain is awaiting it. Keep the
+                    // visible chunk ahead of prefetch until its replacement has finished too.
+                    while (true) {
+                        val replacements = chunk.mapNotNull { downloadJobs[it.index] }
+                        if (replacements.isEmpty()) break
+                        replacements.joinAll()
+                    }
                 }
             }
         }

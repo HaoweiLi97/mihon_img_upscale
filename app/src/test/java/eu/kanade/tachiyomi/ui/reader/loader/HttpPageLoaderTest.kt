@@ -10,9 +10,11 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -103,11 +105,73 @@ class HttpPageLoaderTest {
         }
     }
 
+    @Test
+    fun `returning to a cancelling page waits for its writer before starting a replacement`() = runTest {
+        val fixture = Fixture()
+        val oldWriterFinished = CompletableDeferred<Unit>()
+        fixture.cancellationGates[0] = oldWriterFinished
+        val loader = fixture.loader(StandardTestDispatcher(testScheduler), backgroundScope)
+        try {
+            val pages = loader.getPages()
+            fixture.chapter.state = ReaderChapter.State.Loaded(pages)
+            runCurrent()
+            loader.onPageSelected(pages[9])
+            runCurrent()
+            loader.onPageSelected(pages[0])
+            runCurrent()
+            assertEquals(listOf(0, 9), fixture.started, "Old cache writer must finish before reopening its entry")
+
+            // Cancelling a replacement that is itself waiting must not lose ownership of the first writer.
+            loader.onPageSelected(pages[9])
+            runCurrent()
+            loader.onPageSelected(pages[0])
+            runCurrent()
+            assertEquals(1, fixture.started.count { it == 0 })
+
+            oldWriterFinished.complete(Unit)
+            runCurrent()
+            assertEquals(2, fixture.started.count { it == 0 })
+            assertEquals(Page.State.DownloadImage, pages[0].status)
+            fixture.downloads[0].complete(Unit)
+            runCurrent()
+            assertEquals(Page.State.Ready, pages[0].status, "Old cancellation must not reset the replacement to Queue")
+        } finally {
+            oldWriterFinished.complete(Unit)
+            loader.recycle()
+            runCurrent()
+        }
+    }
+
+    @Test
+    fun `manual retry cannot overlap an existing download`() = runTest {
+        val fixture = Fixture()
+        val oldWriterFinished = CompletableDeferred<Unit>()
+        fixture.cancellationGates[0] = oldWriterFinished
+        val loader = fixture.loader(StandardTestDispatcher(testScheduler), backgroundScope)
+        try {
+            val pages = loader.getPages()
+            fixture.chapter.state = ReaderChapter.State.Loaded(pages)
+            runCurrent()
+            loader.retryPage(pages[0])
+            runCurrent()
+            assertEquals(listOf(0), fixture.started)
+            oldWriterFinished.complete(Unit)
+            runCurrent()
+            assertEquals(listOf(0, 0), fixture.started)
+            assertEquals(Page.State.DownloadImage, pages[0].status)
+        } finally {
+            oldWriterFinished.complete(Unit)
+            loader.recycle()
+            runCurrent()
+        }
+    }
+
     private class Fixture {
         val chapter = ReaderChapter(Chapter.create().copy(id = 1, mangaId = 1))
         val started = mutableListOf<Int>()
         val cancelled = mutableListOf<Int>()
         val downloads = List(12) { CompletableDeferred<Unit>() }
+        val cancellationGates = mutableMapOf<Int, CompletableDeferred<Unit>>()
         private val source = mockk<HttpSource>()
         private val cache = mockk<ChapterCache>(relaxed = true)
         private val preferences = ReaderPreferences(InMemoryPreferenceStore())
@@ -124,7 +188,10 @@ class HttpPageLoaderTest {
                     downloads[index].await()
                     mockk(relaxed = true)
                 } finally {
-                    if (!downloads[index].isCompleted) cancelled += index
+                    if (!downloads[index].isCompleted) {
+                        cancelled += index
+                        cancellationGates[index]?.let { gate -> withContext(NonCancellable) { gate.await() } }
+                    }
                 }
             }
         }
