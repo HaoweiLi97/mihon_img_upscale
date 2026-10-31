@@ -1266,6 +1266,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 // split into several segments. Keep observing while this frame is attached;
                 // recycle()/detach cancels this job when it is no longer useful.
                 while (isActive) {
+                    val checkedCache = shouldCheckCache
                     if (shouldCheckCache) {
                         shouldCheckCache = false
                         if (ImageEnhancementCache.isSkipped(mId, cId, pIdx, configHash, pageVariant)) {
@@ -1326,14 +1327,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     // Check progress status
                     if (ImageEnhancer.isActivelyProcessing(mId, cId, pIdx, pageVariant)) {
                         wasEnhancing = true
-                        val rawProgress = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgressPercent()
-                        if (rawProgress in 0..100) {
-                            updateStatus(
-                                context.stringResource(MR.strings.reader_status_enhancing_progress, rawProgress),
-                            )
-                        } else {
-                            updateStatus(context.stringResource(MR.strings.reader_status_enhancing))
-                        }
+                        updateStatus(context.activeEnhancementLabel(mId, cId, pIdx, pageVariant))
                     } else if (ImageEnhancer.hasRequest(mId, cId, pIdx, pageVariant)) {
                         if (!wasEnhancing) {
                             updateStatus(context.stringResource(MR.strings.reader_status_queued))
@@ -1341,6 +1335,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
                             updateStatus(context.stringResource(MR.strings.reader_status_finishing))
                         }
                     } else {
+                        // Completion notifications can be lost at a timeout boundary. Check the
+                        // committed result before requeueing work or falling back to a RAW label.
+                        if (!checkedCache) {
+                            shouldCheckCache = true
+                            continue
+                        }
                         // Not in queue, not cached - might need to re-enqueue
                         val current = currentGlobalPageIndex
                         val shouldHeal = pIdx >= current && pIdx <= current + preloadSize
@@ -1368,7 +1368,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
                         cacheEvents.receive()
                     }
                     shouldCheckCache = event is ImageEnhancementCache.CacheEvent.Saved ||
-                        event is ImageEnhancementCache.CacheEvent.Skipped
+                        event is ImageEnhancementCache.CacheEvent.Skipped ||
+                        !ImageEnhancer.hasRequest(mId, cId, pIdx, pageVariant)
                 }
             } catch (_: CancellationException) {
                 return@launchIO

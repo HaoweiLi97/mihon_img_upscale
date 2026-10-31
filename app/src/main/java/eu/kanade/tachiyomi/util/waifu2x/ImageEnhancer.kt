@@ -32,6 +32,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 object ImageEnhancer {
+    enum class ProcessingPhase { PREPARING, ENHANCING, SAVING }
+
+    @Volatile private var activePhase = ProcessingPhase.PREPARING
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // Values identify individual attempts: cancelling and retrying a page can happen
@@ -413,6 +416,28 @@ object ImageEnhancer {
     }
 
     @Synchronized
+    fun processingPhase(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = ""): ProcessingPhase? {
+        return activePhase.takeIf {
+            activeRequest?.cancelled?.get() == false && isActivelyProcessing(mangaId, chapterId, pageIndex, pageVariant)
+        }
+    }
+
+    @Synchronized
+    fun updateProcessingPhase(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        pageVariant: String,
+        phase: ProcessingPhase,
+    ) {
+        if (activeRequest?.cancelled?.get() == false &&
+            isActivelyProcessing(mangaId, chapterId, pageIndex, pageVariant)
+        ) {
+            activePhase = phase
+        }
+    }
+
+    @Synchronized
     fun cancel(mangaId: Long, chapterId: Long, pageIndex: Int, pageVariant: String = "") {
         val requestKey = requestKey(mangaId, chapterId, pageIndex, pageVariant)
         if (pendingRequests.remove(requestKey) != null) {
@@ -478,6 +503,7 @@ object ImageEnhancer {
                 activePageIndex = req.pageIndex
                 activePageVariant = req.pageVariant
                 activeRequest = req
+                activePhase = ProcessingPhase.PREPARING
                 nativeResetJob
             }
             // A reset must finish before this attempt can initialize a new model.
@@ -608,7 +634,8 @@ object ImageEnhancer {
     }
 
     private fun preemptActiveRequestIfBehindTarget() {
-        if (activePageIndex >= 0 && activePageIndex < targetPageIndex &&
+        // Let nearby work finish and populate the cache during ordinary page turns.
+        if (activePageIndex >= 0 && activePageIndex < targetPageIndex - 2 &&
             !isFocusedTarget(activePageIndex, activePageVariant)
         ) {
             preemptActiveRequest("active page is behind visible target")
@@ -618,7 +645,8 @@ object ImageEnhancer {
     private fun preemptForVisibleRequest(pageIndex: Int, pageVariant: String) {
         if (activePageIndex >= 0 &&
             (activePageIndex != pageIndex || activePageVariant != pageVariant) &&
-            !isFocusedTarget(activePageIndex, activePageVariant)
+            !isFocusedTarget(activePageIndex, activePageVariant) &&
+            kotlin.math.abs(activePageIndex - pageIndex) > 2
         ) {
             preemptActiveRequest("visible page requested", requeue = activePageIndex > targetPageIndex)
         }

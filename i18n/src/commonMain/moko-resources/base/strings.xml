@@ -1233,7 +1233,8 @@
     <string name="reader_none">None</string>
     <string name="reader_conservative">Conservative</string>
     <string name="reader_status_raw">RAW</string>
-    <string name="reader_status_processed">PROCESSED</string>
+    <string name="reader_status_processed">COMPLETED</string>
+    <string name="reader_status_preparing">PREPARING MODEL...</string>
     <string name="reader_status_processing">PROCESSING</string>
     <string name="reader_status_queued">QUEUED</string>
     <string name="reader_status_finishing">FINISHING...</string>

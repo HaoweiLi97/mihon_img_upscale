@@ -1060,7 +1060,8 @@
     <string name="reader_none">无</string>
     <string name="reader_conservative">保守</string>
     <string name="reader_status_raw">原图</string>
-    <string name="reader_status_processed">已处理</string>
+    <string name="reader_status_processed">已完成</string>
+    <string name="reader_status_preparing">准备增强模型中...</string>
     <string name="reader_status_processing">处理中</string>
     <string name="reader_status_queued">排队中</string>
     <string name="reader_status_finishing">即将完成...</string>

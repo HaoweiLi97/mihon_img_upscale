@@ -21,7 +21,10 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ### Fixed
 - Serialize replacement downloads with cancelled attempts so rapid page changes and manual retries cannot overwrite the current page's loading state or overlap cache writes.
-- Keep adjacent-page prefetch behind the visible page when its download is retried.
+- Prefetch nearby pages concurrently with the visible page in a bounded rolling window, allowing completed downloads to advance without waiting on a slow neighbour. Keep nearby loads alive across ordinary page turns.
+- Let nearby enhancement work finish during page turns instead of repeatedly aborting inference and resetting progress.
+- Distinguish model preparation, inference and cache saving; show completed enhancement as COMPLETED (已完成). Recover completion from the cache if its notification is missed.
+- Report actual original-image download progress, including paired pages, and mark ready images as fully downloaded.
 - Load enhanced cache replacements through one background observer, ignore duplicate replacements, and release completed cache subscriptions.
 - Keep enhanced Webtoon pages in the strip renderer instead of allocating a full-page preview that can exceed Canvas limits.
 - Retain the original image after enhancement initialization, inference or memory failures, and stop automatically resubmitting failed enhancement attempts.
@@ -30,7 +33,7 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Limit retained pager views independently of the enhancement preload setting and avoid hardware bitmap allocation for background enhancement requests.
 
 ### Other
-- Pass all 158 app unit tests, 17 Android emulator regression tests, and an independent-package coexistence/startup check. Physical Qualcomm NPU crash reproduction remains unverified without a connected device.
+- Pass all 161 app unit tests, 20 Android emulator regression tests (including actual native 2x enhancement, completion display and recovery without a cache notification), and an independent-package coexistence/startup check. Physical Qualcomm NPU crash reproduction remains unverified without a connected device.
 
 ## [v1.3.17-beta.3] - 2026-10-30
 

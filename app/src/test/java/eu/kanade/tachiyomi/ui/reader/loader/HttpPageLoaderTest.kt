@@ -25,21 +25,21 @@ import tachiyomi.domain.chapter.model.Chapter
 @OptIn(ExperimentalCoroutinesApi::class)
 class HttpPageLoaderTest {
     @Test
-    fun `offscreen holders cannot cancel the first visible download or start ahead of it`() = runTest {
+    fun `offscreen holders cannot cancel visible downloads or change adjacent prefetch priority`() = runTest {
         val fixture = Fixture()
         val loader = fixture.loader(StandardTestDispatcher(testScheduler), backgroundScope)
         try {
             val pages = loader.getPages()
             fixture.chapter.state = ReaderChapter.State.Loaded(pages)
             runCurrent()
-            assertEquals(listOf(0), fixture.started)
+            assertEquals(listOf(0, 1, 2), fixture.started)
 
             // ViewPager creates the next two holders before the first image finishes downloading.
             loader.loadPage(pages[1])
             loader.loadPage(pages[2])
             runCurrent()
             assertFalse(0 in fixture.cancelled, "An offscreen holder cancelled the visible image")
-            assertEquals(listOf(0), fixture.started)
+            assertEquals(listOf(0, 1, 2), fixture.started)
         } finally {
             loader.recycle()
             runCurrent()
@@ -53,7 +53,7 @@ class HttpPageLoaderTest {
         try {
             loader.getPages()
             runCurrent()
-            assertEquals(listOf(6), fixture.started)
+            assertEquals(listOf(6, 7, 5), fixture.started)
         } finally {
             loader.recycle()
             runCurrent()
@@ -73,7 +73,7 @@ class HttpPageLoaderTest {
             loader.loadPage(pages[2])
             runCurrent()
 
-            assertEquals(listOf(0, 9), fixture.started)
+            assertEquals(listOf(0, 1, 2, 9, 10, 8), fixture.started)
             assertTrue(0 in fixture.cancelled)
             assertEquals(Page.State.Queue, pages[0].status)
             assertEquals(Page.State.DownloadImage, pages[9].status)
@@ -84,7 +84,7 @@ class HttpPageLoaderTest {
     }
 
     @Test
-    fun `adjacent pages preload after the visible image finishes without downloading it twice`() = runTest {
+    fun `adjacent pages preload while the visible image downloads without downloading it twice`() = runTest {
         val fixture = Fixture()
         val loader = fixture.loader(StandardTestDispatcher(testScheduler), backgroundScope)
         try {
@@ -93,7 +93,7 @@ class HttpPageLoaderTest {
             loader.onPageSelected(pages[0])
             loader.loadPage(pages[0])
             runCurrent()
-            assertEquals(listOf(0), fixture.started)
+            assertEquals(listOf(0, 1, 2), fixture.started)
 
             fixture.downloads[0].complete(Unit)
             runCurrent()
@@ -119,7 +119,13 @@ class HttpPageLoaderTest {
             runCurrent()
             loader.onPageSelected(pages[0])
             runCurrent()
-            assertEquals(listOf(0, 9), fixture.started, "Old cache writer must finish before reopening its entry")
+            assertEquals(
+                1,
+                fixture.started.count {
+                    it == 0
+                },
+                "Old cache writer must finish before reopening its entry",
+            )
 
             // Cancelling a replacement that is itself waiting must not lose ownership of the first writer.
             loader.onPageSelected(pages[9])
@@ -154,13 +160,66 @@ class HttpPageLoaderTest {
             runCurrent()
             loader.retryPage(pages[0])
             runCurrent()
-            assertEquals(listOf(0), fixture.started)
+            assertEquals(1, fixture.started.count { it == 0 })
             oldWriterFinished.complete(Unit)
             runCurrent()
-            assertEquals(listOf(0, 0), fixture.started)
+            assertEquals(2, fixture.started.count { it == 0 })
             assertEquals(Page.State.DownloadImage, pages[0].status)
         } finally {
             oldWriterFinished.complete(Unit)
+            loader.recycle()
+            runCurrent()
+        }
+    }
+
+    @Test
+    fun `a slow first image cannot block continuous adjacent prefetch`() = runTest {
+        val fixture = Fixture()
+        val loader = fixture.loader(StandardTestDispatcher(testScheduler), backgroundScope)
+        try {
+            val pages = loader.getPages()
+            fixture.chapter.state = ReaderChapter.State.Loaded(pages)
+            runCurrent()
+            fixture.downloads[1].complete(Unit)
+            runCurrent()
+            assertEquals(Page.State.DownloadImage, pages[0].status)
+            assertEquals(Page.State.Ready, pages[1].status)
+            assertTrue(3 in fixture.started)
+            assertFalse(0 in fixture.cancelled)
+        } finally {
+            loader.recycle()
+            runCurrent()
+        }
+    }
+
+    @Test
+    fun `a slow adjacent page cannot block the next free prefetch slot`() = runTest {
+        val fixture = Fixture()
+        val loader = fixture.loader(StandardTestDispatcher(testScheduler), backgroundScope)
+        try {
+            loader.getPages()
+            runCurrent()
+            fixture.downloads[0].complete(Unit)
+            fixture.downloads[2].complete(Unit)
+            runCurrent()
+            assertTrue(3 in fixture.started)
+            assertFalse(fixture.downloads[1].isCompleted)
+        } finally {
+            loader.recycle()
+            runCurrent()
+        }
+    }
+
+    @Test
+    fun `prefetch stays within a rolling window`() = runTest {
+        val fixture = Fixture()
+        fixture.downloads.forEach { it.complete(Unit) }
+        val loader = fixture.loader(StandardTestDispatcher(testScheduler), backgroundScope)
+        try {
+            loader.getPages()
+            runCurrent()
+            assertEquals((0..8).toSet(), fixture.started.toSet())
+        } finally {
             loader.recycle()
             runCurrent()
         }

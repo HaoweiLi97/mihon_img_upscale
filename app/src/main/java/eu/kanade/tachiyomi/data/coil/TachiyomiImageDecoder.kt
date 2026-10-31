@@ -16,6 +16,7 @@ import coil3.request.bitmapConfig
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.image.ImageFilter
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
+import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -386,6 +387,14 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                                 }
                                             }
                                             val processed = if (initialized) {
+                                                currentCoroutineContext().ensureActive()
+                                                ImageEnhancer.updateProcessingPhase(
+                                                    mangaId,
+                                                    chapterId,
+                                                    pageIndex,
+                                                    pageVariant,
+                                                    ImageEnhancer.ProcessingPhase.ENHANCING,
+                                                )
                                                 when (model) {
                                                     0, 1 -> Waifu2x.processRealCugan(enhancementInput, pageIndex)
                                                     Waifu2x.MODEL_REAL_ESRGAN_ANIME -> Waifu2x.processRealESRGAN(
@@ -443,6 +452,13 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                                     if (ImageEnhancementCache.isDisplayable(result)) {
                                                         // enqueueSaveToCache owns the bitmap once invoked, even if suspended or rejected.
                                                         ownsResult = false
+                                                        ImageEnhancer.updateProcessingPhase(
+                                                            mangaId,
+                                                            chapterId,
+                                                            pageIndex,
+                                                            pageVariant,
+                                                            ImageEnhancer.ProcessingPhase.SAVING,
+                                                        )
                                                         val queued = ImageEnhancementCache.enqueueSaveToCache(
                                                             mangaId,
                                                             chapterId,

@@ -26,6 +26,8 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.activeEnhancementLabel
+import eu.kanade.tachiyomi.ui.reader.viewer.downloadProgressFlow
 import eu.kanade.tachiyomi.ui.reader.viewer.updateEnhancementStatus
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
@@ -217,12 +219,14 @@ class PagerPageHolder(
                 when {
                     s1 is Page.State.Error -> setError(s1.error)
                     s2 is Page.State.Error -> setError(s2.error)
-                    s1 == Page.State.Queue || s2 == Page.State.Queue -> setQueued()
-                    s1 == Page.State.LoadPage || s2 == Page.State.LoadPage -> setLoading()
                     s1 == Page.State.DownloadImage || s2 == Page.State.DownloadImage -> {
                         setDownloading()
-                        // TODO: Implement progress combining if needed
+                        page.downloadProgressFlow(extraPage).collectLatest { progress ->
+                            progressIndicator?.setProgress(progress)
+                        }
                     }
+                    s1 == Page.State.Queue || s2 == Page.State.Queue -> setQueued()
+                    s1 == Page.State.LoadPage || s2 == Page.State.LoadPage -> setLoading()
                     s1 == Page.State.Ready && s2 == Page.State.Ready -> setImage()
                 }
             }
@@ -260,7 +264,7 @@ class PagerPageHolder(
      * Called when the page is ready.
      */
     private suspend fun setImage() {
-        progressIndicator?.setProgress(0)
+        progressIndicator?.setProgress(100)
         refreshEnhancementTargets()
         awaitCombinedPageLayoutIfNeeded()
 
@@ -768,6 +772,28 @@ class PagerPageHolder(
                     leftStatusView.isVisible = false
                     rightStatusView.isVisible = false
                 } else {
+                    // A cache event can race subscription or timeout cancellation. Once work has
+                    // ended, the cache itself is authoritative for the completion label.
+                    if (leftState != "cached" && leftKey != null &&
+                        !ImageEnhancer.hasRequest(
+                            leftKey.mangaId,
+                            leftKey.chapterId,
+                            leftKey.pageIndex,
+                            leftKey.pageVariant,
+                        )
+                    ) {
+                        leftState = leftPage?.let { withIOContext { currentEnhancementState(it) } }
+                    }
+                    if (rightState != "cached" && rightKey != null &&
+                        !ImageEnhancer.hasRequest(
+                            rightKey.mangaId,
+                            rightKey.chapterId,
+                            rightKey.pageIndex,
+                            rightKey.pageVariant,
+                        )
+                    ) {
+                        rightState = rightPage?.let { withIOContext { currentEnhancementState(it) } }
+                    }
                     updateHalfStatusView(leftStatusView, leftPage, leftState)
                     updateHalfStatusView(rightStatusView, rightPage, rightState)
                 }
@@ -805,12 +831,7 @@ class PagerPageHolder(
             cacheState == "skipped" ->
                 context.stringResource(MR.strings.reader_status_raw)
             ImageEnhancer.isActivelyProcessing(mangaId, chapterId, targetPage.index, pageVariant) -> {
-                val rawProgress = eu.kanade.tachiyomi.util.waifu2x.Waifu2x.getProgressPercent()
-                if (rawProgress in 0..100) {
-                    context.stringResource(MR.strings.reader_status_enhancing_progress, rawProgress)
-                } else {
-                    context.stringResource(MR.strings.reader_status_enhancing)
-                }
+                context.activeEnhancementLabel(mangaId, chapterId, targetPage.index, pageVariant)
             }
             ImageEnhancer.hasRequest(mangaId, chapterId, targetPage.index, pageVariant) ->
                 context.stringResource(MR.strings.reader_status_queued)

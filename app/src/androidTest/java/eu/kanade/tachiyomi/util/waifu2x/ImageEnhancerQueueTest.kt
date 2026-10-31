@@ -130,6 +130,26 @@ class ImageEnhancerQueueTest {
 
     private fun gate() = CountDownLatch(1).also { gates += it }
 
+    @Test
+    fun anAdjacentPageTurnDoesNotAbortTheEnhancementAlreadyInProgress() {
+        val started = CountDownLatch(1)
+        val blocked = gate()
+        enqueue(0) {
+            started.countDown()
+            await(blocked)
+        }
+        await(started)
+        ImageEnhancer.reprioritizeAround(1)
+        enqueue(1, highPriority = true)
+        assertEquals(
+            "A normal page turn must let nearby enhancement finish instead of resetting progress",
+            ImageEnhancer.ProcessingPhase.PREPARING,
+            ImageEnhancer.processingPhase(mangaId, chapterId, 0),
+        )
+        blocked.countDown()
+        drain()
+    }
+
     private fun enqueue(page: Int, highPriority: Boolean = false, action: () -> Unit = {}) {
         ImageEnhancer.enhanceLazy(context, mangaId, chapterId, page, highPriority) {
             action()
