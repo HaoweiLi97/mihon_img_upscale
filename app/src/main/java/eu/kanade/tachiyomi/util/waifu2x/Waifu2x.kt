@@ -1019,9 +1019,15 @@ object Waifu2x {
         realEsrganStyle: Int = REAL_ESRGAN_STYLE_ANIME,
     ): Int {
         if (processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
-            // Migrate the retired local W8A16 setting (4) only for an INT8-capable model.
-            return if ((requestedPrecision == QnnModelContexts.PRECISION_W8A8 || requestedPrecision == 4) &&
-                QnnModelContexts.supportsW8a8(qnnModelName(model, scale, 0, realEsrganStyle))
+            val modelName = qnnModelName(model, scale, 0, realEsrganStyle)
+            // Migrate the retired local W8A16 setting (4) or fall back from unsupported FP16 for an INT8-capable model.
+            return if (
+                (
+                    requestedPrecision == QnnModelContexts.PRECISION_W8A8 ||
+                        requestedPrecision == 4 ||
+                        QnnModelContexts.fp16Supported.value == false
+                    ) &&
+                QnnModelContexts.supportsW8a8(modelName)
             ) {
                 QnnModelContexts.PRECISION_W8A8
             } else {
@@ -1066,7 +1072,16 @@ object Waifu2x {
         if (!isQualcommNpuAvailable()) return false
         if (isQnnActive()) return true
         return runCatching {
-            val output = QnnModelContexts.prepare(context, modelName, precision = precision) ?: return false
+            val effectivePrecision = if (
+                precision == 0 &&
+                QnnModelContexts.supportsW8a8(modelName) &&
+                QnnModelContexts.detectFp16Support(context) == false
+            ) {
+                QnnModelContexts.PRECISION_W8A8
+            } else {
+                precision
+            }
+            val output = QnnModelContexts.prepare(context, modelName, precision = effectivePrecision) ?: return false
             nativeInitQnn(output.absolutePath, context.applicationInfo.nativeLibraryDir, padding)
         }.onFailure {
             android.util.Log.w("Waifu2x", "Unable to initialize Qualcomm NPU; enhancement skipped", it)

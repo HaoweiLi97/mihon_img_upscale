@@ -258,9 +258,6 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                         else -> 0
                                     }
                                     val tileSize = preferences.realCuganTileSize().get().coerceAtLeast(32)
-                                    val precision =
-                                        preferences.realCuganPrecision().get().takeIf { it == 0 || it == 1 || it == 3 }
-                                            ?: 0
                                     val fp16Arithmetic = preferences.realCuganFp16Arithmetic().get()
 
                                     // Validate scale based on model capabilities
@@ -273,6 +270,13 @@ class TachiyomiImageDecoder(private val resources: ImageSource, private val opti
                                         preferences.realCuganProcessingBackend().get(),
                                         model,
                                         effectiveScale,
+                                    )
+                                    val precision = Waifu2x.resolvePrecision(
+                                        preferences.realCuganPrecision().get(),
+                                        processingBackend,
+                                        model,
+                                        effectiveScale,
+                                        realEsrganStyle,
                                     )
                                     if (processingBackend != Waifu2x.PROCESSING_BACKEND_VULKAN &&
                                         !Waifu2x.isQualcommNpuModelSupported(model, effectiveScale)
