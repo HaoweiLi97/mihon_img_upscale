@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.backup
 
 import eu.kanade.tachiyomi.data.backup.create.creators.PreferenceBackupCreator
 import eu.kanade.tachiyomi.data.backup.models.BackupChapter
+import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -26,10 +27,11 @@ class CloudSyncBackupTest {
             "cloud_uploaded_meta_info_hashes" to setOf("7:hash"),
         )
 
-        val preferences = PreferenceBackupCreator(
+        val creator = PreferenceBackupCreator(
             sourceManager = mockk<SourceManager>(),
             preferenceStore = preferenceStore,
-        ).createApp(includePrivatePreferences = true)
+        )
+        val preferences = creator.createApp(includePrivatePreferences = true)
         val keys = preferences.mapTo(mutableSetOf()) { it.key }
 
         assertTrue("cloud_sync_enabled" in keys)
@@ -39,6 +41,9 @@ class CloudSyncBackupTest {
         assertTrue("cloud_sync_destination" in keys)
         assertFalse("cloud_uploaded_chapter_ids" in keys)
         assertFalse("cloud_uploaded_meta_info_hashes" in keys)
+        val publicKeys = creator.createApp(includePrivatePreferences = false).map { it.key }
+        assertFalse("cloud_sync_password" in publicKeys)
+        assertTrue("cloud_sync_url" in publicKeys)
     }
 
     @Test
@@ -50,5 +55,15 @@ class CloudSyncBackupTest {
         )
         assertTrue(restored.cloudSynced)
         assertFalse(BackupChapter("/chapter-2", "Chapter 2").cloudSynced)
+    }
+
+    @Test
+    fun `cloud sync target survives backup encoding`() {
+        val manga = BackupManga(source = 1, url = "/manga", cloudSyncTargetId = "target")
+        val restored = ProtoBuf.decodeFromByteArray(
+            BackupManga.serializer(),
+            ProtoBuf.encodeToByteArray(BackupManga.serializer(), manga),
+        )
+        assertTrue(restored.cloudSyncTargetId == "target")
     }
 }

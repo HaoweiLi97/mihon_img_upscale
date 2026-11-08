@@ -5,6 +5,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
+import java.security.MessageDigest
 
 @Inject
 @SingleIn(AppScope::class)
@@ -29,7 +30,7 @@ class DownloadPreferences(
 
     fun cloudSyncUsername() = preferenceStore.getString("cloud_sync_username", "")
 
-    fun cloudSyncPassword() = preferenceStore.getString("cloud_sync_password", "")
+    fun cloudSyncPassword() = preferenceStore.getString(CLOUD_SYNC_PASSWORD_PREF_KEY, "")
 
     fun cloudSyncDestination() = preferenceStore.getString("cloud_sync_destination", "")
 
@@ -43,28 +44,40 @@ class DownloadPreferences(
         emptySet(),
     )
 
-    fun isChapterUploadedToCloud(chapterId: Long): Boolean {
-        return chapterId.toString() in cloudUploadedChapterIds().get()
+    fun cloudSyncTargetId(
+        url: String = cloudSyncUrl().get(),
+        username: String = cloudSyncUsername().get(),
+        destination: String = cloudSyncDestination().get(),
+    ): String? {
+        val endpoint = url.trim().trimEnd('/')
+        if (endpoint.isBlank() || username.isBlank() || destination.isBlank()) return null
+        val path = destination.replace('\\', '/').split('/').filter { it.isNotBlank() }.joinToString("/")
+        return MessageDigest.getInstance("SHA-256")
+            .digest("$endpoint\u0000$username\u0000$path".toByteArray())
+            .toHexString()
     }
 
-    fun markChapterUploadedToCloud(chapterId: Long) {
-        markChaptersUploadedToCloud(listOf(chapterId))
+    fun isChapterUploadedToCloud(chapterId: Long, targetId: String?): Boolean {
+        return targetId != null && "$targetId:$chapterId" in cloudUploadedChapterIds().get()
     }
 
-    fun markChaptersUploadedToCloud(chapterIds: Collection<Long>) {
+    @Synchronized
+    fun markChaptersUploadedToCloud(chapterIds: Collection<Long>, targetId: String) {
         if (chapterIds.isEmpty()) return
-        cloudUploadedChapterIds().set(cloudUploadedChapterIds().get() + chapterIds.map { it.toString() })
+        cloudUploadedChapterIds().set(cloudUploadedChapterIds().get() + chapterIds.map { "$targetId:$it" })
     }
 
-    fun uploadedMetaInfoHash(mangaId: Long): String? {
+    fun uploadedMetaInfoHash(mangaId: Long, targetId: String): String? {
+        val prefix = "$targetId:$mangaId:"
         return cloudUploadedMetaInfoHashes().get()
-            .firstOrNull { it.substringBefore(':') == mangaId.toString() }
-            ?.substringAfter(':', "")
+            .firstOrNull { it.startsWith(prefix) }
+            ?.removePrefix(prefix)
             ?.takeIf { it.isNotBlank() }
     }
 
-    fun markMetaInfoUploadedToCloud(mangaId: Long, contentHash: String) {
-        val prefix = "$mangaId:"
+    @Synchronized
+    fun markMetaInfoUploadedToCloud(mangaId: Long, contentHash: String, targetId: String) {
+        val prefix = "$targetId:$mangaId:"
         val updated = cloudUploadedMetaInfoHashes().get()
             .filterNot { it.startsWith(prefix) }
             .toSet() + "$mangaId:$contentHash"
@@ -112,6 +125,7 @@ class DownloadPreferences(
 
     companion object {
         private const val REMOVE_EXCLUDE_CATEGORIES_PREF_KEY = "remove_exclude_categories"
+        const val CLOUD_SYNC_PASSWORD_PREF_KEY = "cloud_sync_password"
         private const val DOWNLOAD_NEW_CATEGORIES_PREF_KEY = "download_new_categories"
         private const val DOWNLOAD_NEW_CATEGORIES_EXCLUDE_PREF_KEY = "download_new_categories_exclude"
         private const val CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY = "cloud_uploaded_chapter_ids"

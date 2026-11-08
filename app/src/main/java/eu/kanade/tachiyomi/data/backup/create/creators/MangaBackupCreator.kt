@@ -56,9 +56,12 @@ class MangaBackupCreator(
         val tracksByMangaId = if (options.tracking) trackRepository.getTracksByMangaIds(mangaIds) else emptyMap()
         val historyByMangaId = if (options.history) historyRepository.getHistoryByMangaIds(mangaIds) else emptyMap()
 
+        val cloudTarget = downloadPreferences.cloudSyncTargetId()
         return mangas.map { manga ->
             val mangaObject = manga.toBackupManga()
-            mangaObject.cloudSyncMetaInfoHash = downloadPreferences.uploadedMetaInfoHash(manga.id)
+            mangaObject.cloudSyncTargetId = cloudTarget
+            mangaObject.cloudSyncMetaInfoHash =
+                cloudTarget?.let { downloadPreferences.uploadedMetaInfoHash(manga.id, it) }
             val chapters = chaptersByMangaId[manga.id].orEmpty()
 
             mangaObject.excludedScanlators = excludedScanlatorsByMangaId[manga.id].orEmpty()
@@ -66,7 +69,7 @@ class MangaBackupCreator(
             if (options.chapters) {
                 mangaObject.chapters = chapters.map { chapter ->
                     chapter.toBackupChapter().apply {
-                        cloudSynced = downloadPreferences.isChapterUploadedToCloud(chapter.id)
+                        cloudSynced = downloadPreferences.isChapterUploadedToCloud(chapter.id, cloudTarget)
                     }
                 }
             }

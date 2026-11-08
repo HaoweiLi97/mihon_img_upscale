@@ -88,5 +88,6 @@ data class Download(
         UPLOADING(3),
         DOWNLOADED(4),
         ERROR(5),
+        PAUSED(6),
     }
 }

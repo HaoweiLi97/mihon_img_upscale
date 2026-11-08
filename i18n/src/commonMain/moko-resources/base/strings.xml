@@ -1172,6 +1172,9 @@
     <string name="cloud_sync_no_destination">No destination selected</string>
     <string name="cloud_sync_delete_after_upload">Delete local file after sync</string>
     <string name="pref_cloud_sync_concurrent_uploads">Concurrent cloud uploads</string>
+    <string name="cloud_sync_upload_queued">Waiting to upload</string>
+    <string name="cloud_sync_upload_paused">Upload paused</string>
+    <string name="cloud_sync_upload_failed">Upload failed</string>
     <string name="cloud_sync_uploading_progress">Uploading %1$d%%</string>
     <string name="browse_jump_to_page">Jump to page</string>
     <string name="browse_page_number_label">Page number</string>

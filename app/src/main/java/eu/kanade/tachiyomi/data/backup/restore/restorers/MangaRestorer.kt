@@ -75,14 +75,15 @@ class MangaRestorer(
             }
         }
         backupMangas.forEach { backup ->
+            val targetId = backup.cloudSyncTargetId ?: return@forEach
             val manga = getMangaByUrlAndSourceId.await(backup.url, backup.source) ?: return@forEach
             val uploadedUrls = backup.chapters.filter { it.cloudSynced }.mapTo(mutableSetOf()) { it.url }
             if (uploadedUrls.isNotEmpty()) {
                 val ids = getChaptersByMangaId.await(manga.id).filter { it.url in uploadedUrls }.map { it.id }
-                downloadPreferences.markChaptersUploadedToCloud(ids)
+                downloadPreferences.markChaptersUploadedToCloud(ids, targetId)
             }
             backup.cloudSyncMetaInfoHash?.takeIf { it.isNotBlank() }?.let {
-                downloadPreferences.markMetaInfoUploadedToCloud(manga.id, it)
+                downloadPreferences.markMetaInfoUploadedToCloud(manga.id, it, targetId)
             }
         }
     }

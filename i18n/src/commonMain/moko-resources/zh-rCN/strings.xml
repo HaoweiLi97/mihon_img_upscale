@@ -1070,4 +1070,8 @@
     <string name="pref_book_page_turn">纸张翻页</string>
     <string name="pref_book_page_turn_summary">围绕书脊翻动书页，显示透视和阴影</string>
     <string name="reader_npu_model_requires_fp16">当前模型需要 FP16，但此设备不支持。请选择 Real-ESRGAN Anime 的 INT8 模式，或使用 Vulkan。</string>
+    <string name="cloud_sync_upload_queued">等待上传</string>
+    <string name="cloud_sync_upload_paused">上传已暂停</string>
+    <string name="cloud_sync_upload_failed">上传失败</string>
+    <string name="cloud_sync_uploading_progress">正在上传 %1$d%%</string>
 </resources>

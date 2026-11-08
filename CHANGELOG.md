@@ -12,6 +12,19 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.18-beta.1] - 2026-11-07
+
+### Added
+- Save WebDAV upload tasks across app restarts. Resume interrupted uploads automatically and retain paused and failed tasks for manual recovery.
+- Show waiting, uploading, paused and failed states in the queue, with separate Continue and Retry actions.
+
+### Fixed
+- Hide chapter upload controls and upload marks when WebDAV is unavailable.
+- Track uploaded chapters by WebDAV server, account and destination so a new destination can receive the same chapters.
+- Preserve remote CBZ files on name conflicts and replace `meta.info` only after its new contents have been uploaded.
+- Keep ordinary chapter downloads running when `meta.info` generation fails.
+- Exclude the WebDAV password from ordinary settings backups.
+
 ## [v1.3.17] - 2026-10-31
 
 This stable release consolidates the final changes from the 1.3.17 beta cycle.

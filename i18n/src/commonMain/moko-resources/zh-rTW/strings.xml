@@ -954,4 +954,8 @@
     <string name="reader_resolution_height">高度（0 不限）</string>
     <string name="pref_book_page_turn">紙張翻頁</string>
     <string name="pref_book_page_turn_summary">圍繞書脊翻動書頁，顯示透視和陰影</string>
+    <string name="cloud_sync_upload_queued">等待上傳</string>
+    <string name="cloud_sync_upload_paused">上傳已暫停</string>
+    <string name="cloud_sync_upload_failed">上傳失敗</string>
+    <string name="cloud_sync_uploading_progress">正在上傳 %1$d%%</string>
 </resources>

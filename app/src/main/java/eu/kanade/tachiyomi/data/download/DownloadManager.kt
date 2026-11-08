@@ -274,15 +274,15 @@ class DownloadManager(
         downloader.dequeue(downloads.map { it.chapter })
     }
 
-    fun resumeCloudUpload(chapterId: Long) {
+    suspend fun resumeCloudUpload(chapterId: Long) {
         downloader.resumeCloudUpload(chapterId)
     }
 
-    fun pauseCloudUpload(chapterId: Long) {
+    suspend fun pauseCloudUpload(chapterId: Long) {
         downloader.pauseCloudUpload(chapterId)
     }
 
-    fun cancelCloudUpload(chapterId: Long) {
+    suspend fun cancelCloudUpload(chapterId: Long) {
         downloader.cancelCloudUpload(chapterId)
     }
 
@@ -494,18 +494,7 @@ class DownloadManager(
         downloads + uploads
     }
         .flatMapLatest { queue ->
-            queue
-                .map { download ->
-                    download.statusFlow.drop(1).map { download }.onStart { emit(download) }
-                }
-                .merge()
-        }
-        .onStart {
-            emitAll(
-                (queueState.value + uploadQueueState.value).filter { download ->
-                    download.status == Download.State.DOWNLOADING || download.status == Download.State.UPLOADING
-                }.asFlow(),
-            )
+            queue.map { download -> download.statusFlow.map { download } }.merge()
         }
 
     fun progressFlow(): Flow<Download> = kotlinx.coroutines.flow.combine(queueState, uploadQueueState) {

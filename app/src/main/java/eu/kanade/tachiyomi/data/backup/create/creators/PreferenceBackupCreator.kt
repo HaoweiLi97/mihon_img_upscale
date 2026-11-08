@@ -66,6 +66,6 @@ class PreferenceBackupCreator(
         if (include) {
             this
         } else {
-            this.filter { !Preference.isPrivate(it.key) }
+            this.filter { !Preference.isPrivate(it.key) && it.key != DownloadPreferences.CLOUD_SYNC_PASSWORD_PREF_KEY }
         }
 }

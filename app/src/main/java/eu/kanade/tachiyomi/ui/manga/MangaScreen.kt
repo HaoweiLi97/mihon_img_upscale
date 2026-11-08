@@ -97,7 +97,9 @@ class MangaScreen(
         }
 
         val successState = state as MangaViewModel.State.Success
-        val isHttpSource = remember { successState.source is HttpSource }
+        val isHttpSource = successState.source is HttpSource
+        val cloudSyncAvailable by viewModel.cloudSyncAvailable.collectAsStateWithLifecycle(initialValue = false)
+        val canSyncChapters = isHttpSource && cloudSyncAvailable
         var showCloudSyncConfirmation by rememberSaveable { mutableStateOf(false) }
 
         LaunchedEffect(successState.manga, viewModel.source) {
@@ -161,10 +163,10 @@ class MangaScreen(
             onShareClicked = { shareManga(context, viewModel.manga, viewModel.source) }.takeIf { isHttpSource },
             onDownloadActionClicked = viewModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
             onCloudSyncClicked = { showCloudSyncConfirmation = true }
-                .takeIf { viewModel.isCloudSyncAvailable },
+                .takeIf { canSyncChapters },
             onCloudSyncChapterClicked = { chapterItem: ChapterList.Item ->
                 viewModel.runCloudSyncAction(listOf(chapterItem.chapter))
-            }.takeIf { viewModel.isCloudSyncAvailable },
+            }.takeIf { canSyncChapters },
             onEditCategoryClicked = viewModel::showChangeCategoryDialog.takeIf { successState.manga.favorite },
             onEditFetchIntervalClicked = viewModel::showSetFetchIntervalDialog.takeIf {
                 successState.manga.favorite
@@ -183,7 +185,7 @@ class MangaScreen(
             onInvertSelection = viewModel::invertSelection,
         )
 
-        if (showCloudSyncConfirmation) {
+        if (canSyncChapters && showCloudSyncConfirmation) {
             AlertDialog(
                 onDismissRequest = { showCloudSyncConfirmation = false },
                 title = { Text(stringResource(MR.strings.cloud_sync)) },

@@ -4,12 +4,14 @@ import com.hippo.unifile.UniFile
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
-import logcat.LogPriority
-import logcat.logcat
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import okhttp3.CacheControl
 import okhttp3.Credentials
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -25,6 +27,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
 import java.security.MessageDigest
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -69,36 +72,43 @@ class CloudSyncService(
         file: UniFile,
         fileName: String = file.name ?: error("Missing upload file name"),
         onProgress: (Int) -> Unit,
-    ) = uploadFile(
-        config = config,
-        remoteDirectory = remoteDirectory,
-        file = file,
-        fileName = fileName,
-        mediaType = CBZ_MEDIA_TYPE,
-        overwrite = false,
-        onProgress = onProgress,
-    )
+    ) = withIOContext {
+        val directory = ensureDirectory(config, remoteDirectory)
+        val created = putNewFile(config, directory, fileName, file, CBZ_MEDIA_TYPE, onProgress)
+        if (!created && remoteFileSha256OrNull(config, directory, fileName) != file.sha256()) {
+            throw CloudUploadConflictException(fileName)
+        }
+        onProgress(100)
+    }
 
-    suspend fun uploadFile(
+    suspend fun replaceFile(
         config: CloudSyncConfig,
         remoteDirectory: String,
         file: UniFile,
-        fileName: String = file.name ?: error("Missing upload file name"),
-        mediaType: MediaType = GENERIC_BINARY_MEDIA_TYPE,
-        overwrite: Boolean = false,
-        onProgress: (Int) -> Unit,
+        fileName: String,
     ) = withIOContext {
-        logcat(LogPriority.INFO) { "CloudSync: uploading via WebDAV" }
-        uploadWebDavCbz(
-            config = config,
-            remoteDirectory = remoteDirectory,
-            fileName = fileName,
-            file = file,
-            mediaType = mediaType,
-            overwrite = overwrite,
-            onProgress = onProgress,
-        )
-        logcat(LogPriority.INFO) { "CloudSync: WebDAV upload completed" }
+        val directory = ensureDirectory(config, remoteDirectory)
+        val stagingName = "$fileName.${UUID.randomUUID()}.tmp"
+        try {
+            check(putNewFile(config, directory, stagingName, file, GENERIC_BINARY_MEDIA_TYPE) {})
+            val request = Request.Builder()
+                .url(config.resolveUrl(directory, stagingName))
+                .headers(config.authHeaders())
+                .header("Destination", config.resolveUrl(directory, fileName).toString())
+                .header("Overwrite", "T")
+                .method("MOVE", null)
+                .build()
+            uploadClient.newCall(request).await().use { response ->
+                if (response.code !in SUCCESS_CODES) {
+                    error("WebDAV MOVE failed: HTTP ${response.code}")
+                }
+            }
+        } catch (error: Exception) {
+            withContext(NonCancellable) {
+                runCatching { deleteRemoteFile(config, directory, stagingName) }
+            }
+            throw error
+        }
     }
 
     suspend fun remoteFileSha256OrNull(
@@ -110,10 +120,11 @@ class CloudSyncService(
         val request = Request.Builder()
             .url(config.resolveUrl(effectiveRemoteDirectory, fileName))
             .headers(config.authHeaders())
+            .cacheControl(CacheControl.FORCE_NETWORK)
             .get()
             .build()
 
-        networkHelper.client.newCall(request).await().use { response ->
+        uploadClient.newCall(request).await().use { response ->
             if (response.code == 404) return@withIOContext null
             if (!response.isSuccessful) {
                 throw IllegalStateException("WebDAV file lookup failed: HTTP ${response.code}")
@@ -132,7 +143,7 @@ class CloudSyncService(
         }
     }
 
-    suspend fun deleteRemoteFile(
+    private suspend fun deleteRemoteFile(
         config: CloudSyncConfig,
         remoteDirectory: String,
         fileName: String,
@@ -152,30 +163,29 @@ class CloudSyncService(
         }
     }
 
-    private suspend fun uploadWebDavCbz(
+    private suspend fun putNewFile(
         config: CloudSyncConfig,
         remoteDirectory: String,
         fileName: String,
         file: UniFile,
         mediaType: MediaType,
-        overwrite: Boolean,
         onProgress: (Int) -> Unit,
-    ) {
-        val effectiveRemoteDirectory = ensureDirectory(config, remoteDirectory)
-
+    ): Boolean {
         onProgress(0)
         val request = Request.Builder()
-            .url(config.resolveUrl(effectiveRemoteDirectory, fileName))
+            .url(config.resolveUrl(remoteDirectory, fileName))
             .headers(config.authHeaders())
+            .header("If-None-Match", "*")
             .put(UniFileRequestBody(file, mediaType, onProgress))
             .build()
 
         uploadClient.newCall(request).await().use { response ->
+            if (response.code == 412) return false
             if (response.code !in SUCCESS_CODES) {
                 throw IllegalStateException("WebDAV upload failed: HTTP ${response.code}")
             }
         }
-        onProgress(100)
+        return true
     }
 
     private suspend fun ensureDirectory(config: CloudSyncConfig, path: String): String {
@@ -369,7 +379,7 @@ class CloudSyncService(
                     sink.write(buffer, read)
                     uploaded += read
                     if (total > 0) {
-                        onProgress((uploaded * 100 / total).toInt())
+                        onProgress((uploaded * 100 / total).toInt().coerceAtMost(99))
                     }
                 }
             }
@@ -413,13 +423,16 @@ data class CloudSyncConfig(
     val password: String,
 ) {
     val isValid: Boolean
-        get() = url.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+        get() = url.toHttpUrlOrNull() != null && username.isNotBlank() && password.isNotBlank()
 }
 
 data class CloudSyncDirectory(
     val name: String,
     val path: String,
 )
+
+internal class CloudUploadConflictException(fileName: String) :
+    IllegalStateException("WebDAV already contains a different file named $fileName")
 
 fun normalizePath(path: String): String {
     val normalized = path

@@ -44,7 +44,6 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
@@ -65,6 +64,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -145,8 +146,16 @@ class MangaViewModel(
     private val coverCache: CoverCache,
 ) : ViewModel() {
 
-    val isCloudSyncAvailable: Boolean
-        get() = source is HttpSource && downloadManager.isCloudSyncAvailable()
+    private val cloudSyncSettings = merge(
+        downloadPreferences.saveChaptersAsCBZ.changes(),
+        downloadPreferences.cloudSyncEnabled().changes(),
+        downloadPreferences.cloudSyncUrl().changes(),
+        downloadPreferences.cloudSyncUsername().changes(),
+        downloadPreferences.cloudSyncPassword().changes(),
+        downloadPreferences.cloudSyncDestination().changes(),
+    ).map { Unit }
+
+    val cloudSyncAvailable = cloudSyncSettings.map { downloadManager.isCloudSyncAvailable() }.distinctUntilChanged()
 
     fun runCloudSyncAction(chapters: List<Chapter>? = null) {
         val state = successState ?: return
@@ -256,7 +265,9 @@ class MangaViewModel(
             .distinctUntilChanged(),
         downloadCache.changes.pausedWhileUnsubscribed(),
         downloadManager.queueState.pausedWhileUnsubscribed(),
-    ) { (manga, chapters), _, _ ->
+        merge(cloudSyncSettings, downloadPreferences.cloudUploadedChapterIds().changes().map { Unit })
+            .pausedWhileUnsubscribed(),
+    ) { (manga, chapters), _, _, _ ->
         MangaAndChapters(
             manga = manga,
             source = sourceManager.getOrStub(manga.source),
@@ -628,6 +639,7 @@ class MangaViewModel(
         val isLocal = manga.isLocal()
         val queuedDownloads = if (isLocal) emptyMap() else downloadManager.getQueuedDownloadsByChapterId()
         val downloadedChapterIds = if (isLocal) emptySet() else downloadManager.getDownloadedChapterIds(this, manga)
+        val cloudTarget = downloadPreferences.cloudSyncTargetId()
         return map { chapter ->
             val activeDownload = queuedDownloads[chapter.id]
             val downloaded = isLocal || chapter.id in downloadedChapterIds
@@ -640,7 +652,7 @@ class MangaViewModel(
             ChapterList.Item(
                 chapter = chapter,
                 downloadState = downloadState,
-                isUploadedToCloud = downloadPreferences.isChapterUploadedToCloud(chapter.id),
+                isUploadedToCloud = downloadPreferences.isChapterUploadedToCloud(chapter.id, cloudTarget),
             )
         }
     }
@@ -672,6 +684,7 @@ class MangaViewModel(
             LibraryPreferences.ChapterSwipeAction.Download -> {
                 val downloadAction: ChapterDownloadAction = when (chapterItem.downloadState) {
                     Download.State.ERROR,
+                    Download.State.PAUSED,
                     Download.State.NOT_DOWNLOADED,
                     -> ChapterDownloadAction.START_NOW
                     Download.State.QUEUE,

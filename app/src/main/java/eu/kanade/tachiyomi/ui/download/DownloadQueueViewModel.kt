@@ -40,27 +40,20 @@ class DownloadQueueViewModel(
     val state: StateFlow<List<DownloadHeaderItem>> = combine(
         downloadManager.queueState,
         downloadManager.uploadQueueState,
-    ) {
-            downloads,
-            uploads,
-        ->
+    ) { downloads, uploads ->
         val ids = downloads.mapTo(mutableSetOf()) { it.chapter.id }
-        downloads + uploads.filterNot { it.chapter.id in ids }
-    }
-        .map { downloads ->
-            downloads
-                .groupBy { it.source }
-                .map { entry ->
-                    DownloadHeaderItem(entry.key.id, entry.key.name, entry.value.size).apply {
-                        addSubItems(
-                            0,
-                            entry.value.map {
-                                DownloadItem(it, this, it.status == Download.State.UPLOADING)
-                            },
-                        )
-                    }
+        val rows = downloads.map { it to false } + uploads.filterNot { it.chapter.id in ids }.map { it to true }
+        rows
+            .groupBy { (download, _) -> download.source }
+            .map { (source, items) ->
+                DownloadHeaderItem(source.id, source.name, items.size).apply {
+                    addSubItems(
+                        0,
+                        items.map { (download, isUpload) -> DownloadItem(download, this, isUpload) },
+                    )
                 }
-        }
+            }
+    }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), emptyList())
 
@@ -102,6 +95,15 @@ class DownloadQueueViewModel(
             val item = adapter?.getItem(position) ?: return
             if (item is DownloadItem) {
                 when (menuItem.itemId) {
+                    R.id.resume_upload -> viewModelScope.launch {
+                        downloadManager.resumeCloudUpload(item.download.chapter.id)
+                    }
+                    R.id.pause_upload -> viewModelScope.launch {
+                        downloadManager.pauseCloudUpload(item.download.chapter.id)
+                    }
+                    R.id.cancel_upload -> viewModelScope.launch {
+                        downloadManager.cancelCloudUpload(item.download.chapter.id)
+                    }
                     R.id.move_to_top, R.id.move_to_bottom -> {
                         val headerItems = adapter?.headerItems ?: return
                         val newDownloads = mutableListOf<Download>()
@@ -204,21 +206,11 @@ class DownloadQueueViewModel(
      */
     fun onStatusChange(download: Download) {
         when (download.status) {
-            Download.State.DOWNLOADING -> {
-                launchProgressJob(download)
-                // Initial update of the downloaded pages
-                onUpdateDownloadedPages(download)
-            }
-            Download.State.DOWNLOADED -> {
-                cancelProgressJob(download)
-                onUpdateProgress(download)
-                onUpdateDownloadedPages(download)
-            }
-            Download.State.ERROR -> cancelProgressJob(download)
-            else -> {
-                /* unused */
-            }
+            Download.State.DOWNLOADING, Download.State.UPLOADING -> launchProgressJob(download)
+            else -> cancelProgressJob(download)
         }
+        onUpdateProgress(download)
+        onUpdateDownloadedPages(download)
     }
 
     /**
@@ -285,6 +277,10 @@ class DownloadQueueViewModel(
      * @return the holder of the download or null if it's not bound.
      */
     private fun getHolder(download: Download): DownloadHolder? {
-        return controllerBinding.root.findViewHolderForItemId(download.chapter.id) as? DownloadHolder
+        val chapterId = download.chapter.id
+        val list = controllerBinding.root
+        return sequenceOf(DownloadItem.stableId(chapterId, false), DownloadItem.stableId(chapterId, true))
+            .mapNotNull { list.findViewHolderForItemId(it.toLong()) as? DownloadHolder }
+            .firstOrNull { it.isBoundTo(download) }
     }
 }

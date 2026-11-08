@@ -74,7 +74,7 @@ fun ChapterDownloadIndicator(
             modifier = modifier,
             onClick = onClick,
         )
-        Download.State.ERROR -> ErrorIndicator(
+        Download.State.ERROR, Download.State.PAUSED -> ErrorIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,

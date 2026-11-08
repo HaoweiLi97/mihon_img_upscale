@@ -31,6 +31,28 @@ class DownloadStore(
      * Preference file where active downloads are stored.
      */
     private val preferences by lazy { context.getSharedPreferences("active_downloads", Context.MODE_PRIVATE) }
+    private val uploads by lazy { uploadPreferences(context) }
+
+    internal fun saveUpload(record: CloudUploadRecord) {
+        check(uploads.edit().putString(record.key, json.encodeToString(record)).commit())
+    }
+
+    internal fun removeUpload(key: String) {
+        check(uploads.edit().remove(key).commit())
+    }
+
+    internal suspend fun restoreUploads(): List<Pair<CloudUploadRecord, Download>> {
+        return uploads.all.values.mapNotNull { value ->
+            val record =
+                (value as? String)?.let { runCatching { json.decodeFromString<CloudUploadRecord>(it) }.getOrNull() }
+                    ?: return@mapNotNull null
+            val manga = getManga.await(record.mangaId) ?: return@mapNotNull null
+            val chapter =
+                getChapter.await(record.chapterId)?.takeIf { it.mangaId == manga.id } ?: return@mapNotNull null
+            val source = sourceManager.get(manga.source) as? HttpSource ?: return@mapNotNull null
+            record to Download(source, manga, chapter)
+        }.sortedBy { (record, _) -> record.order }
+    }
 
     /**
      * Counter used to keep the queue order.
@@ -137,6 +159,13 @@ class DownloadStore(
             null
         }
     }
+
+    companion object {
+        internal fun hasCloudUploads(context: Context): Boolean = uploadPreferences(context).all.isNotEmpty()
+
+        private fun uploadPreferences(context: Context) =
+            context.getSharedPreferences("active_cloud_uploads", Context.MODE_PRIVATE)
+    }
 }
 
 /**
@@ -148,3 +177,21 @@ class DownloadStore(
  */
 @Serializable
 private data class DownloadObject(val mangaId: Long, val chapterId: Long, val order: Int)
+
+@Serializable
+internal data class CloudUploadRecord(
+    val mangaId: Long,
+    val chapterId: Long,
+    val targetId: String,
+    val remoteDirectory: String,
+    val fileUri: String,
+    val fileName: String,
+    val deleteAfterUpload: Boolean = false,
+    val contentHash: String? = null,
+    val paused: Boolean = false,
+    val order: Long = 0,
+    val failed: Boolean = false,
+) {
+    val isChapter: Boolean get() = contentHash == null
+    val key: String get() = if (isChapter) "chapter:$chapterId" else "meta:$targetId:$mangaId:$remoteDirectory"
+}
