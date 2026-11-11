@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.util.qnn.QnnModelContexts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,6 +36,7 @@ object ImageEnhancementCache {
     private const val REAL_CUGAN_TEXTURE_OCCUPANCY_REVISION = 3
     private const val MONOCHROME_INPUT_NORMALIZATION_REVISION = 3
     private const val REAL_ESRGAN_PHOTO_NCNN_REVISION = 2
+    private const val QNN_W8A8_PAGE_CACHE_REVISION = 1
     private const val MAX_CACHE_SIZE = 3L * 1024 * 1024 * 1024 // 3GB
     private var cacheDir: File? = null
 
@@ -627,6 +629,11 @@ object ImageEnhancementCache {
             }
             if (resolvedBackend == Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU) {
                 append("_qv${Waifu2x.QNN_CONTEXT_CACHE_VERSION}_nf1")
+                val qnnModel = Waifu2x.qnnModelName(model, effectiveScale, noise, realEsrganStyle)
+                if (QnnModelContexts.supportsW8a8(qnnModel)) {
+                    // Discard old FP16 skip markers and FP16 results saved under the INT8 preference.
+                    append("_w8a8v$QNN_W8A8_PAGE_CACHE_REVISION")
+                }
             }
             if (resolvedBackend == Waifu2x.PROCESSING_BACKEND_MEDIATEK_NPU) {
                 append("_mtv${eu.kanade.tachiyomi.util.mediatek.MediaTekNpu.CACHE_VERSION}")

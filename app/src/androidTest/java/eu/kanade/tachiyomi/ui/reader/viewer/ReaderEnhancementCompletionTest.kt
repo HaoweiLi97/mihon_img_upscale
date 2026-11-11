@@ -3,24 +3,29 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.widget.TextView
+import androidx.core.view.children
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.util.qnn.QnnModelContexts
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancementCache
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import eu.kanade.tachiyomi.util.waifu2x.Waifu2x
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import tachiyomi.core.common.i18n.stringResource
@@ -41,6 +46,40 @@ class ReaderEnhancementCompletionTest {
     @Test
     fun visibleOriginalIsEnhancedAndTheReaderShowsCompleted() = withReader { scenario, view, mangaId, chapterId, hash ->
         awaitLabel(scenario, view, context.stringResource(MR.strings.reader_status_processed))
+        assertEnhancedCache(mangaId, chapterId, hash)
+    }
+
+    @Test
+    fun firstPageIsDisplayedAfterQnnAutomaticallyFallsBackToInt8() {
+        assumeTrue("Integer-only Qualcomm HTP required", Waifu2x.isQualcommNpuAvailable())
+        assumeTrue("Integer-only Qualcomm HTP required", QnnModelContexts.detectFp16Support(context) == false)
+        val field = QnnModelContexts::class.java.getDeclaredField("mutableFp16Supported").apply { isAccessible = true }
+
+        @Suppress("UNCHECKED_CAST")
+        val fp16Supported = field.get(null) as MutableStateFlow<Boolean?>
+        fp16Supported.value = null
+        try {
+            withReader(
+                processingBackend = Waifu2x.PROCESSING_BACKEND_QUALCOMM_NPU,
+                model = Waifu2x.MODEL_REAL_ESRGAN_ANIME,
+                precision = 0,
+            ) { scenario, view, mangaId, chapterId, hash ->
+                awaitLabel(scenario, view, context.stringResource(MR.strings.reader_status_processed))
+                awaitReader(scenario) {
+                    view.children.filterIsInstance<SubsamplingScaleImageView>().any {
+                        it.isShown && it.alpha == 1f && it.isImageLoaded && it.sWidth == 96 && it.sHeight == 128
+                    }
+                }
+                assertEquals(false, fp16Supported.value)
+                assertTrue(Waifu2x.isQnnActive())
+                assertEnhancedCache(mangaId, chapterId, hash)
+            }
+        } finally {
+            fp16Supported.value = false
+        }
+    }
+
+    private fun assertEnhancedCache(mangaId: Long, chapterId: Long, hash: String) {
         val file = ImageEnhancementCache.getCachedImage(mangaId, chapterId, 0, hash)
         assertNotNull("The completion label must represent a saved enhancement", file)
         val bitmap = ImageEnhancementCache.decodeCachedImage(requireNotNull(file))
@@ -84,6 +123,9 @@ class ReaderEnhancementCompletionTest {
 
     private fun withReader(
         beforeDisplay: (Long, Long) -> Unit = { _, _ -> },
+        processingBackend: Int = Waifu2x.PROCESSING_BACKEND_VULKAN,
+        model: Int = 0,
+        precision: Int = 1,
         verify: (ActivityScenario<MainActivity>, ReaderPageImageView, Long, Long, String) -> Unit,
     ) {
         val preferences = Injekt.get<ReaderPreferences>()
@@ -99,11 +141,12 @@ class ReaderEnhancementCompletionTest {
         try {
             set(preferences.realCuganEnabled(), true)
             set(preferences.realCuganShowStatus(), true)
-            set(preferences.realCuganProcessingBackend(), Waifu2x.PROCESSING_BACKEND_VULKAN)
-            set(preferences.realCuganModel(), 0)
+            set(preferences.realCuganProcessingBackend(), processingBackend)
+            set(preferences.realCuganModel(), model)
+            set(preferences.realEsrganStyle(), Waifu2x.REAL_ESRGAN_STYLE_ANIME)
             set(preferences.realCuganNoiseLevel(), 0)
             set(preferences.realCuganScale(), 2)
-            set(preferences.realCuganPrecision(), 1)
+            set(preferences.realCuganPrecision(), precision)
             set(preferences.realCuganTileSize(), 32)
             set(preferences.realCuganSkipMaxSizeWidth(), 0)
             set(preferences.realCuganSkipMaxSizeHeight(), 0)
@@ -165,15 +208,16 @@ class ReaderEnhancementCompletionTest {
         scenario: ActivityScenario<MainActivity>,
         view: ReaderPageImageView,
         expected: String,
-    ) = runBlocking {
+    ) = awaitReader(scenario) {
+        view.children.filterIsInstance<TextView>().firstOrNull { it.isShown }?.text?.toString() == expected
+    }
+
+    private fun awaitReader(scenario: ActivityScenario<MainActivity>, condition: () -> Boolean) = runBlocking {
         withTimeout(90_000) {
             while (true) {
-                var actual: String? = null
-                scenario.onActivity {
-                    actual = (0 until view.childCount).mapNotNull { view.getChildAt(it) as? TextView }
-                        .firstOrNull { it.isShown }?.text?.toString()
-                }
-                if (actual == expected) break
+                var matched = false
+                scenario.onActivity { matched = condition() }
+                if (matched) break
                 delay(100)
             }
         }
