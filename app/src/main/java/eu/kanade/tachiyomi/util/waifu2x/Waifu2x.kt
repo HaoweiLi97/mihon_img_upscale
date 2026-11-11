@@ -1019,15 +1019,10 @@ object Waifu2x {
         realEsrganStyle: Int = REAL_ESRGAN_STYLE_ANIME,
     ): Int {
         if (processingBackend == PROCESSING_BACKEND_QUALCOMM_NPU) {
-            val modelName = qnnModelName(model, scale, 0, realEsrganStyle)
-            // Migrate the retired local W8A16 setting (4) or fall back from unsupported FP16 for an INT8-capable model.
-            return if (
-                (
-                    requestedPrecision == QnnModelContexts.PRECISION_W8A8 ||
-                        requestedPrecision == 4 ||
-                        QnnModelContexts.fp16Supported.value == false
-                    ) &&
-                QnnModelContexts.supportsW8a8(modelName)
+            // Keep the requested mode stable for page caches. QNN initialization handles device fallback.
+            // Migrate the retired local W8A16 setting (4) only for an INT8-capable model.
+            return if ((requestedPrecision == QnnModelContexts.PRECISION_W8A8 || requestedPrecision == 4) &&
+                QnnModelContexts.supportsW8a8(qnnModelName(model, scale, 0, realEsrganStyle))
             ) {
                 QnnModelContexts.PRECISION_W8A8
             } else {
