@@ -270,6 +270,11 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                     subtitle = stringResource(MR.strings.cloud_sync_auto_pause_summary),
                     visible = autoSyncAvailable && participatingIds.isNotEmpty(),
                 ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = downloadPreferences.cloudSyncPreferWebDavDownloads(),
+                    title = stringResource(MR.strings.cloud_sync_prefer_webdav_downloads),
+                    subtitle = stringResource(MR.strings.cloud_sync_prefer_webdav_downloads_summary),
+                ),
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(MR.strings.cloud_sync_delete_after_upload),
                 ) {

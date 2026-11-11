@@ -5,6 +5,7 @@ import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.CacheControl
 import okhttp3.Credentials
@@ -145,6 +146,35 @@ class CloudSyncService(
                 }
             }
             digest.digest().toHexString()
+        }
+    }
+
+    internal suspend fun downloadCbz(
+        config: CloudSyncConfig,
+        remoteDirectory: String,
+        fileName: String,
+        file: UniFile,
+    ): Boolean = withIOContext {
+        val request = Request.Builder()
+            .url(config.resolveUrl(remoteDirectory, fileName))
+            .headers(config.authHeaders())
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .get()
+            .build()
+        networkHelper.client.newCall(request).await().use { response ->
+            if (response.code == 404) return@withIOContext false
+            check(response.code == 200) { "WebDAV download failed: HTTP ${response.code}" }
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            file.openOutputStream().use { output ->
+                val input = response.body.byteStream()
+                while (true) {
+                    ensureActive()
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    output.write(buffer, 0, read)
+                }
+            }
+            true
         }
     }
 

@@ -1001,6 +1001,8 @@
     <string name="cloud_sync">云盘同步</string>
     <string name="cloud_sync_destination">同步目标位置</string>
     <string name="cloud_sync_delete_after_upload">同步后删除本地文件</string>
+    <string name="cloud_sync_prefer_webdav_downloads">优先从 WebDAV 下载</string>
+    <string name="cloud_sync_prefer_webdav_downloads_summary">已同步的章节优先从 WebDAV 下载。云端副本不可用时，从原图源下载。</string>
     <string name="pref_cloud_sync_concurrent_uploads">并行云上传数</string>
     <string name="action_add_repo_message">在 %s 中添加扩展商店。可输入以 index.min.json、repo.json 或 .pb 结尾的网址。</string>
     <string name="reader_image_enhancement">图像增强</string>

@@ -12,6 +12,14 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.20] - 2026-11-11
+
+### Added
+- Prefer downloading synced chapters from WebDAV. The switch is on by default in Remote Sync settings, and downloads fall back to the original source when the cloud copy is unavailable.
+
+### Other
+- Increase Android versionCode to 52 for in-place upgrades.
+
 ## [v1.3.19] - 2026-11-11
 
 This release includes all changes from v1.3.18.

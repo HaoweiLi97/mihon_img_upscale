@@ -34,6 +34,8 @@ class DownloadPreferences(
 
     fun cloudSyncDestination() = preferenceStore.getString("cloud_sync_destination", "")
 
+    fun cloudSyncPreferWebDavDownloads() = preferenceStore.getBoolean("cloud_sync_prefer_webdav_downloads", true)
+
     fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
 
     fun cloudSyncCategories() = preferenceStore.getStringSet(CLOUD_SYNC_CATEGORIES_PREF_KEY, emptySet())

@@ -936,6 +936,8 @@
     <string name="cloud_sync">雲端同步</string>
     <string name="cloud_sync_destination">同步目的地</string>
     <string name="cloud_sync_delete_after_upload">同步後刪除本機檔案</string>
+    <string name="cloud_sync_prefer_webdav_downloads">優先從 WebDAV 下載</string>
+    <string name="cloud_sync_prefer_webdav_downloads_summary">已同步的章節優先從 WebDAV 下載。雲端副本無法使用時，從原圖源下載。</string>
     <string name="pref_cloud_sync_concurrent_uploads">並行雲端上傳數</string>
     <string name="action_add_repo_message">將擴充套件商店新增至 %s。可輸入結尾為 index.min.json、repo.json 或 .pb 的網址。</string>
     <string name="reader_processing_backend">處理路線</string>

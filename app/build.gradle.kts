@@ -164,8 +164,8 @@ android {
     defaultConfig {
         applicationId = "app.mihon.upscale"
 
-        versionCode = 51
-        versionName = "1.3.19"
+        versionCode = 52
+        versionName = "1.3.20"
         buildConfigField("int", "UPSTREAM_VERSION_CODE", "38")
 
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")

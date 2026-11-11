@@ -62,6 +62,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import mihon.core.archive.ZipWriter
+import mihon.core.archive.archiveReader
 import mihon.core.metro.AppCoroutineScope
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
@@ -891,10 +892,17 @@ class Downloader(
             return
         }
 
-        val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
-
         try {
             download.status = Download.State.DOWNLOADING
+            val syncedArchive = downloadSyncedChapter(download, mangaDir, "$chapterDirname.cbz")
+            if (syncedArchive != null) {
+                mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
+                cache.addChapter(chapterDirname, mangaDir, download.manga)
+                finishChapterDownload(download, mangaDir, syncedArchive)
+                return
+            }
+
+            val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
             // If the page list already exists, start from the file
             val pageList = download.pages ?: run {
                 // Otherwise, pull page list from network and add them to download object
@@ -964,6 +972,49 @@ class Downloader(
             logcat(LogPriority.ERROR, error)
             failDownload(download)
             notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+        }
+    }
+
+    private suspend fun downloadSyncedChapter(download: Download, mangaDir: UniFile, fileName: String): UniFile? {
+        if (!downloadPreferences.cloudSyncPreferWebDavDownloads().get()) return null
+        val target = cloudSyncTargetOrNull() ?: return null
+        val chapter = download.chapter
+        if (!downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id)) return null
+
+        val tempName = fileName + TMP_DIR_SUFFIX
+        mangaDir.findFile(tempName)?.delete()
+        val tempFile = mangaDir.createFile(tempName) ?: return null
+        try {
+            val downloaded = try {
+                val prefix = "${target.id}:${download.manga.id}:"
+                val directories = buildSet {
+                    add(cloudRemoteDirectory(download, target))
+                    downloadPreferences.remoteSyncMangaFolders().get()
+                        .filter { it.startsWith(prefix) }
+                        .forEach { add(it.removePrefix(prefix)) }
+                }
+                val names = provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
+                    .filter { it.endsWith(".cbz") }
+                    .distinct()
+                val found = names.any { name ->
+                    directories.any { directory ->
+                        cloudSyncService.downloadCbz(target.config, directory, name, tempFile)
+                    }
+                }
+                found && tempFile.archiveReader(context).use { reader ->
+                    reader.useEntries { entries -> entries.any { it.isFile && ImageUtil.isImage(it.name) } }
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                logcat(LogPriority.WARN, error) { "WebDAV download failed for chapter ${chapter.id}" }
+                false
+            }
+            coroutineContext.ensureActive()
+            if (!downloaded || cloudSyncTargetOrNull()?.id != target.id) return null
+
+            return finalizeDownloadFile(tempFile, mangaDir, fileName)
+        } finally {
+            mangaDir.findFile(tempName)?.delete()
         }
     }
 

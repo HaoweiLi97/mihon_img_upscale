@@ -343,6 +343,68 @@ class WebDavDownloadIntegrationTest {
     }
 
     @Test
+    fun syncedChaptersPreferWebDavAndFallBackToTheSource() = runBlocking {
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        downloads.cloudSyncDeleteAfterUpload().set(true)
+        assertTrue(downloads.cloudSyncPreferWebDavDownloads().get())
+
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        val chapter = chapters.first()
+        val (_, downloader) = createDownloader()
+
+        suspend fun downloadChapter() {
+            downloader.queueChapters(manga, listOf(chapter), autoStart = false)
+            assertTrue(downloader.start())
+            await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        }
+
+        fun localArchives() = root.walkTopDown().filter { it.extension == "cbz" }.toList()
+
+        downloadChapter()
+        await {
+            downloads.isChapterUploadedToCloud(chapter.id, target) && downloader.uploadQueueState.value.isEmpty()
+        }
+        assertTrue(localArchives().isEmpty())
+        assertEquals(1, server.images.get())
+        assertTrue(server.fileGets.isEmpty())
+
+        val (originalPath, remoteBytes) = server.files.entries.single()
+        val oldDirectory = "/target/Previous folder"
+        val oldPath = "/target/Previous%20folder/${originalPath.substringAfterLast('/')}"
+        server.files.remove(originalPath)
+        server.files[oldPath] = remoteBytes
+        downloads.markRemoteSyncMangaFolder(manga.id, target, oldDirectory)
+
+        server.rejectImages = true
+        downloadChapter()
+        assertArrayEquals(remoteBytes, localArchives().single().readBytes())
+        assertEquals(listOf(originalPath, oldPath), server.fileGets.toList())
+        assertEquals(1, server.images.get())
+        assertTrue(localArchives().single().delete())
+
+        server.rejectImages = false
+        server.fileGets.clear()
+        downloads.cloudSyncPreferWebDavDownloads().set(false)
+        downloadChapter()
+        assertTrue(server.fileGets.isEmpty())
+        assertEquals(2, server.images.get())
+        assertTrue(localArchives().single().delete())
+
+        downloads.cloudSyncPreferWebDavDownloads().set(true)
+        server.files[oldPath] = "Invalid archive".toByteArray()
+        downloadChapter()
+        assertTrue(oldPath in server.fileGets)
+        assertEquals(3, server.images.get())
+        ZipFile(localArchives().single()).use { assertTrue(it.getEntry("001.png") != null) }
+        assertEquals(1, server.conditionedPuts.get())
+        assertFalse(root.walkTopDown().any { it.name.endsWith(".cbz_tmp") })
+    }
+
+    @Test
     fun automaticScopePausesQueuedDownloadsAndUploadsAcrossRestart() = runBlocking {
         var fixture = createDownloader()
         var downloader = fixture.downloader
@@ -1064,6 +1126,7 @@ private class DavTestServer : AutoCloseable {
     val url = "http://127.0.0.1:${server.localPort}"
     val files = ConcurrentHashMap<String, ByteArray>()
     val images = AtomicInteger()
+    val fileGets = java.util.concurrent.ConcurrentLinkedQueue<String>()
     val conditionedPuts = AtomicInteger()
     val deletedCollections = java.util.concurrent.ConcurrentLinkedQueue<String>()
     val releaseLookups = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -1115,7 +1178,10 @@ private class DavTestServer : AutoCloseable {
         }
         check(headers["authorization"] == "Basic dXNlcjpwYXNz")
         when (method) {
-            "GET" -> files[path]?.let { respond(socket, 200, it) } ?: respond(socket, 404)
+            "GET" -> {
+                fileGets += path
+                files[path]?.let { respond(socket, 200, it) } ?: respond(socket, 404)
+            }
             "HEAD" -> {
                 releaseLookups += method
                 files[path]?.let { respond(socket, 200, it, headOnly = true) } ?: respond(socket, 404)
