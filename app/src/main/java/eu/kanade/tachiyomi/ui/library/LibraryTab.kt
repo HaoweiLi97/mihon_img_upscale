@@ -209,6 +209,7 @@ data object LibraryTab : Tab {
                             currentPage = state.coercedActiveCategoryIndex,
                             hasActiveFilters = state.hasActiveFilters,
                             showPageTabs = state.showCategoryTabs || !state.searchQuery.isNullOrEmpty(),
+                            syncCategoryIds = syncSelection?.rules?.categories.orEmpty(),
                             syncStatuses = syncStatuses,
                             syncActions = LibrarySyncActions(
                                 pausedCategories = syncSelection?.rules?.pausedCategories.orEmpty(),

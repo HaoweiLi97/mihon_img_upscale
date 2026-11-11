@@ -14,13 +14,17 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -30,9 +34,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hippo.unifile.UniFile
+import eu.kanade.core.preference.asState
+import eu.kanade.presentation.library.components.LibraryContent
 import eu.kanade.presentation.library.components.LibrarySyncActions
 import eu.kanade.presentation.library.components.LibraryTabs
 import eu.kanade.presentation.manga.MangaCloudSyncActions
+import eu.kanade.presentation.manga.components.LocalMangaCoverSyncStatuses
 import eu.kanade.presentation.manga.components.MangaChapterListItem
 import eu.kanade.presentation.manga.components.MangaToolbar
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
@@ -50,6 +57,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.download.DownloadAdapter
 import eu.kanade.tachiyomi.ui.download.DownloadHeaderItem
 import eu.kanade.tachiyomi.ui.download.DownloadItem
+import eu.kanade.tachiyomi.ui.library.LibraryItem
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +80,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -85,6 +94,7 @@ import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetLibraryManga
@@ -660,6 +670,80 @@ class WebDavDownloadIntegrationTest {
                 await { label in automation.rootInActiveWindow?.stateDescriptions().orEmpty() }
                 if (index == 0) captureQueueIfRequested("library-sync-tabs")
             }
+        }
+    }
+
+    @Test
+    fun mangaCoverBadgeAppearsOnlyInParticipatingCategory() = runBlocking {
+        val libraryManga = GetLibraryManga(mangaRepo).subscribe().first().single()
+        val categories = listOf(Category(5, "Synced", 0, 0), Category(8, "Not participating", 1, 0))
+        val item = LibraryItem(libraryManga, 0, 0, false, "", "", LibraryItem.Badges(0, 0, false, ""))
+        val coverStatuses = mapOf(manga.id to CloudCoverStatus.Unsynced)
+        val libraryPreferences = LibraryPreferences(preferences)
+        libraryPreferences.displayMode.set(LibraryDisplayMode.List)
+        val visiblePage = AtomicInteger()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val badgeLabel = app.stringResource(MR.strings.remote_sync_cover_unsynced)
+        fun badge() = instrumentation.uiAutomation.rootInActiveWindow?.findNode {
+            it.isVisibleToUser && it.contentDescription?.contains(badgeLabel) == true
+        }
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.ready = true
+                activity.setContentView(
+                    ComposeView(activity).apply {
+                        setContent {
+                            TachiyomiPreviewTheme {
+                                Surface(Modifier.statusBarsPadding()) {
+                                    val scope = rememberCoroutineScope()
+                                    val displayMode = remember { libraryPreferences.displayMode.asState(scope) }
+                                    CompositionLocalProvider(LocalMangaCoverSyncStatuses provides coverStatuses) {
+                                        LibraryContent(
+                                            categories = categories,
+                                            searchQuery = null,
+                                            selection = emptySet(),
+                                            contentPadding = PaddingValues(),
+                                            currentPage = 0,
+                                            hasActiveFilters = false,
+                                            showPageTabs = true,
+                                            syncCategoryIds = setOf(5L),
+                                            syncStatuses = mapOf(5L to CloudSyncStatus.Paused),
+                                            syncActions = LibrarySyncActions(
+                                                pausedCategories = setOf(5L),
+                                                enabled = true,
+                                                releasingStorage = false,
+                                                onPauseChanged = { _, _ -> },
+                                                onReleaseStorage = {},
+                                            ),
+                                            onChangeCurrentPage = visiblePage::set,
+                                            onClickManga = {},
+                                            onContinueReadingClicked = null,
+                                            onToggleSelection = { _, _ -> },
+                                            onToggleRangeSelection = { _, _ -> },
+                                            onRefresh = { false },
+                                            onGlobalSearchClicked = {},
+                                            getItemCountForCategory = { 1 },
+                                            getDisplayMode = { displayMode },
+                                            getColumnsForOrientation = { error("Expected list layout") },
+                                            getItemsForCategory = { listOf(item) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
+                )
+            }
+            await("Manga in the participating category should have a sync badge") { badge() != null }
+            val tab = checkNotNull(findText(categories[1].name))
+            instrumentation.tap(Rect().also(tab::getBoundsInScreen))
+            await { visiblePage.get() == 1 }
+            instrumentation.waitForIdleSync()
+            await("The manga should remain visible after switching categories") {
+                findText(manga.title)?.isVisibleToUser == true
+            }
+            assertNull("The same manga should not show a badge in the nonparticipating category", badge())
         }
     }
 
