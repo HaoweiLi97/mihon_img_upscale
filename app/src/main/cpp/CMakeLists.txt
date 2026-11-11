@@ -71,8 +71,7 @@ set(WAIFU2X_SOURCES
     qnn_backend.cpp
     qnn_context_bridge.cpp
     litert_backend.cpp
-    spatial_qnn_runtime.cpp
-    depth_qnn_bridge.cpp
+    qnn_dlc_runtime.cpp
     waifu2x_jni.cpp
 )
 

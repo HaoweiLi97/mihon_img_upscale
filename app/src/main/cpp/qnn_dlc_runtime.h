@@ -1,11 +1,11 @@
-#ifndef MIHON_SPATIAL_QNN_RUNTIME_H
-#define MIHON_SPATIAL_QNN_RUNTIME_H
+#ifndef MIHON_QNN_DLC_RUNTIME_H
+#define MIHON_QNN_DLC_RUNTIME_H
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace spatial_qnn {
+namespace qnn_dlc {
 
 struct TensorData {
   std::string name;
@@ -26,8 +26,6 @@ public:
   bool load(const std::string &binary_path);
   bool execute(const std::vector<TensorData> &inputs,
                std::vector<TensorData> &outputs);
-  bool execute_to_files(const std::vector<TensorData> &inputs,
-                        const std::string &output_directory);
   void unload_graph();
   void reset();
 
@@ -35,13 +33,11 @@ public:
   const std::vector<TensorData> &output_metadata() const;
   const std::string &error() const;
 
-  static std::string safe_tensor_filename(const std::string &name);
-
 private:
   class Impl;
   Impl *impl_;
 };
 
-} // namespace spatial_qnn
+} // namespace qnn_dlc
 
 #endif

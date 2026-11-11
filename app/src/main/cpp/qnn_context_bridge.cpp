@@ -1,4 +1,4 @@
-#include "spatial_qnn_runtime.h"
+#include "qnn_dlc_runtime.h"
 
 #include <cstdlib>
 #include <jni.h>
@@ -77,7 +77,7 @@ Java_eu_kanade_tachiyomi_util_qnn_QnnModelContexts_nativeCompile(
       utf(env, native_library_dir) +
       ";/vendor/dsp/cdsp;/vendor/lib/rfsa/cdsp;/system/vendor/lib/rfsa/cdsp";
   setenv("ADSP_LIBRARY_PATH", paths.c_str(), 1);
-  spatial_qnn::Runtime runtime;
+  qnn_dlc::Runtime runtime;
   if (!runtime.compile_dlc(utf(env, dlc_path), utf(env, context_path)) ||
       !runtime.load(utf(env, context_path))) {
     return env->NewStringUTF(runtime.error().c_str());

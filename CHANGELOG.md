@@ -12,6 +12,9 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+### Removed
+- Remove spatial images from the reader. The feature is maintained separately on the codex/spatial-images branch.
+
 ## [v1.3.18-beta.1] - 2026-11-07
 
 ### Added

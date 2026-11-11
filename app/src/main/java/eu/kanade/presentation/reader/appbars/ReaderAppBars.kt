@@ -76,9 +76,6 @@ fun ReaderAppBars(
     onClickCropBorder: () -> Unit,
     imageEnhancementEnabled: Boolean,
     onClickImageEnhancement: () -> Unit,
-    spatialSceneActive: Boolean,
-    spatialSceneBusy: Boolean,
-    onClickSpatialScene: () -> Unit,
     onClickSettings: () -> Unit,
 ) {
     val backgroundColor = MaterialTheme.colorScheme
@@ -181,9 +178,6 @@ fun ReaderAppBars(
                     onClickCropBorder = onClickCropBorder,
                     imageEnhancementEnabled = imageEnhancementEnabled,
                     onClickImageEnhancement = onClickImageEnhancement,
-                    spatialSceneActive = spatialSceneActive,
-                    spatialSceneBusy = spatialSceneBusy,
-                    onClickSpatialScene = onClickSpatialScene,
                     onClickSettings = onClickSettings,
                 )
             }

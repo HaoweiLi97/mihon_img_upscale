@@ -33,9 +33,6 @@ fun ReaderBottomBar(
     onClickCropBorder: () -> Unit,
     imageEnhancementEnabled: Boolean,
     onClickImageEnhancement: () -> Unit,
-    spatialSceneActive: Boolean,
-    spatialSceneBusy: Boolean,
-    onClickSpatialScene: () -> Unit,
     onClickSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -81,14 +78,6 @@ fun ReaderBottomBar(
                 imageVector = mihon.icons.materialsymbols.MaterialSymbols.Rounded.Photo,
                 contentDescription = stringResource(MR.strings.reader_image_enhancement),
                 tint = if (imageEnhancementEnabled) iconTint else inactiveTint,
-            )
-        }
-
-        IconButton(onClick = onClickSpatialScene, enabled = !spatialSceneBusy) {
-            Icon(
-                painter = painterResource(R.drawable.ic_view_in_ar_24dp),
-                contentDescription = stringResource(MR.strings.reader_spatial_scene),
-                tint = if (spatialSceneActive || spatialSceneBusy) iconTint else inactiveTint,
             )
         }
 
