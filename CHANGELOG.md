@@ -12,6 +12,16 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.19] - 2026-11-11
+
+This release includes all changes from v1.3.18.
+
+### Fixed
+- Show a manga's sync badge only in library categories that participate in WebDAV sync, including when the same manga belongs to both participating and nonparticipating categories.
+
+### Other
+- Increase Android versionCode to 51 for in-place upgrades.
+
 ## [v1.3.18] - 2026-11-11
 
 ### Added
