@@ -68,6 +68,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Cloud
 import mihon.icons.materialsymbols.rounded.Download
 import mihon.icons.materialsymbols.rounded.Favorite
 import mihon.icons.materialsymbols.rounded.FilterList
@@ -140,21 +141,27 @@ data class BrowseSourceScreen(
         val loadedMangas = mangaList.itemSnapshotList.items.map { it.value }
         val loadedMangaIds = loadedMangas.map { it.id }
         val selectedMangas = loadedMangas.filter { it.id in state.selectedMangaIds }
-        var showDownloadConfirmation by rememberSaveable { mutableStateOf(false) }
+        var transferConfirmation by rememberSaveable { mutableStateOf<BrowseSelectionTransfer?>(null) }
         var showPageDialog by rememberSaveable { mutableStateOf(false) }
 
         BackHandler(enabled = state.selectionMode) {
             viewModel.clearSelection()
         }
 
-        if (showDownloadConfirmation) {
+        transferConfirmation?.let { action ->
+            val sync = action == BrowseSelectionTransfer.Cloud
+            val title = if (sync) MR.strings.cloud_sync else MR.strings.action_download
             AlertDialog(
-                onDismissRequest = { showDownloadConfirmation = false },
-                title = { Text(stringResource(MR.strings.action_download)) },
+                onDismissRequest = { transferConfirmation = null },
+                title = { Text(stringResource(title)) },
                 text = {
                     Text(
                         stringResource(
-                            MR.strings.download_selected_manga_confirmation,
+                            if (sync) {
+                                MR.strings.cloud_sync_selected_manga_confirmation
+                            } else {
+                                MR.strings.download_selected_manga_confirmation
+                            },
                             selectedMangas.size,
                         ),
                     )
@@ -162,25 +169,34 @@ data class BrowseSourceScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            showDownloadConfirmation = false
+                            transferConfirmation = null
                             scope.launch {
-                                val result = viewModel.downloadMangas(selectedMangas)
-                                snackbarHostState.showSnackbar(
-                                    message = context.contextStringResource(
+                                val message = if (sync) {
+                                    val result = viewModel.cloudSyncMangas(selectedMangas)
+                                    context.contextStringResource(
+                                        MR.strings.cloud_sync_selected_manga_result,
+                                        result.queued,
+                                        result.skipped,
+                                        result.failed,
+                                    )
+                                } else {
+                                    val result = viewModel.downloadMangas(selectedMangas)
+                                    context.contextStringResource(
                                         MR.strings.download_selected_manga_result,
                                         result.successful,
                                         result.failed,
-                                    ),
-                                )
+                                    )
+                                }
                                 viewModel.clearSelection()
+                                snackbarHostState.showSnackbar(message)
                             }
                         },
                     ) {
-                        Text(stringResource(MR.strings.action_download))
+                        Text(stringResource(title))
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showDownloadConfirmation = false }) {
+                    TextButton(onClick = { transferConfirmation = null }) {
                         Text(stringResource(MR.strings.action_cancel))
                     }
                 },
@@ -311,7 +327,10 @@ data class BrowseSourceScreen(
                     canAdd = selectedMangas.any { !it.favorite },
                     canDownload = selectedMangas.isNotEmpty() && viewModel.source is HttpSource,
                     onAdd = { viewModel.addFavorites(selectedMangas) },
-                    onDownload = { showDownloadConfirmation = true },
+                    onDownload = { transferConfirmation = BrowseSelectionTransfer.Download },
+                    onCloudSync = { transferConfirmation = BrowseSelectionTransfer.Cloud }.takeIf {
+                        selectedMangas.isNotEmpty() && viewModel.source is HttpSource && viewModel.isCloudSyncAvailable
+                    },
                 )
             },
             floatingActionButton = {
@@ -464,6 +483,7 @@ private fun BrowseSourceSelectionBottomBar(
     canDownload: Boolean,
     onAdd: () -> Unit,
     onDownload: () -> Unit,
+    onCloudSync: (() -> Unit)?,
 ) {
     if (!visible) return
 
@@ -484,9 +504,19 @@ private fun BrowseSourceSelectionBottomBar(
                 enabled = canDownload,
                 onClick = onDownload,
             )
+            if (onCloudSync != null) {
+                SelectionActionButton(
+                    title = stringResource(MR.strings.cloud_sync),
+                    icon = MaterialSymbols.Rounded.Cloud,
+                    enabled = true,
+                    onClick = onCloudSync,
+                )
+            }
         }
     }
 }
+
+private enum class BrowseSelectionTransfer { Download, Cloud }
 
 @Composable
 private fun RowScope.SelectionActionButton(

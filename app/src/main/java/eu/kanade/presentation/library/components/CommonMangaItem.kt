@@ -36,7 +36,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import eu.kanade.presentation.manga.components.LocalMangaCoverSyncStatuses
 import eu.kanade.presentation.manga.components.MangaCover
+import eu.kanade.presentation.manga.components.MangaCoverSyncBadge
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.roundedfilled.PlayArrow
 import tachiyomi.i18n.MR
@@ -96,6 +98,7 @@ fun MangaCompactGridItem(
             },
             badgesStart = coverBadgeStart,
             badgesEnd = coverBadgeEnd,
+            mangaId = coverData.mangaId,
             content = {
                 if (title != null) {
                     CoverTextOverlay(
@@ -203,6 +206,7 @@ fun MangaComfortableGridItem(
                 },
                 badgesStart = coverBadgeStart,
                 badgesEnd = coverBadgeEnd,
+                mangaId = coverData.mangaId,
                 content = {
                     if (onClickContinueReading != null) {
                         ContinueReadingButton(
@@ -236,6 +240,7 @@ private fun MangaGridCover(
     cover: @Composable BoxScope.() -> Unit = {},
     badgesStart: (@Composable RowScope.() -> Unit)? = null,
     badgesEnd: (@Composable RowScope.() -> Unit)? = null,
+    mangaId: Long,
     content: @Composable (BoxScope.() -> Unit)? = null,
 ) {
     Box(
@@ -254,13 +259,16 @@ private fun MangaGridCover(
             )
         }
 
-        if (badgesEnd != null) {
+        val syncStatus = LocalMangaCoverSyncStatuses.current[mangaId]
+        if (badgesEnd != null || syncStatus != null) {
             BadgeGroup(
                 modifier = Modifier
                     .padding(4.dp)
                     .align(Alignment.TopEnd),
-                content = badgesEnd,
-            )
+            ) {
+                badgesEnd?.invoke(this)
+                if (syncStatus != null) MangaCoverSyncBadge(syncStatus)
+            }
         }
     }
 }
@@ -355,6 +363,7 @@ fun MangaListItem(
                 .fillMaxHeight()
                 .alpha(coverAlpha),
             data = coverData,
+            syncStatus = LocalMangaCoverSyncStatuses.current[coverData.mangaId],
         )
         Text(
             text = title,

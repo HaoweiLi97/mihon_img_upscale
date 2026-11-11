@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadWorker
+import eu.kanade.tachiyomi.data.download.LibraryCloudSync
 import eu.kanade.tachiyomi.data.library.LibraryUpdateWorker
 import eu.kanade.tachiyomi.data.library.MetadataUpdateWorker
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -45,6 +46,7 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import mihon.core.metro.IsDebugBuild
 import mihon.domain.extension.interactor.GetExtensionStoreCountAsFlow
 import mihon.domain.extension.repository.ExtensionStoreRepository
+import mihon.domain.source.interactor.UpdateMangaFromRemote
 import nl.adaptivity.xmlutil.serialization.XML
 import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.category.interactor.GetCategories
@@ -98,6 +100,7 @@ interface AppGraph : ViewModelGraph {
 
     val cloudSyncService: eu.kanade.tachiyomi.data.download.CloudSyncService
     val downloadManager: DownloadManager
+    val libraryCloudSync: LibraryCloudSync
 
     val updateChecker: AppUpdateChecker
 
@@ -118,6 +121,7 @@ interface AppGraph : ViewModelGraph {
     val javaScriptEngine: JavaScriptEngine
 
     val getFavorites: GetFavorites
+    val updateMangaFromRemote: UpdateMangaFromRemote
     val getCategories: GetCategories
     val resetViewerFlags: ResetViewerFlags
     val resetCategoryFlags: ResetCategoryFlags

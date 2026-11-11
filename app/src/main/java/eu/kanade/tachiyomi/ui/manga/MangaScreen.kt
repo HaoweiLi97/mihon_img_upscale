@@ -8,6 +8,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,14 +34,19 @@ import eu.kanade.presentation.components.NavigatorAdaptiveSheet
 import eu.kanade.presentation.manga.ChapterSettingsDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.manga.EditCoverAction
+import eu.kanade.presentation.manga.MangaCloudSyncActions
 import eu.kanade.presentation.manga.MangaScreen
 import eu.kanade.presentation.manga.components.DeleteChaptersDialog
+import eu.kanade.presentation.manga.components.LocalMangaCoverSyncStatuses
 import eu.kanade.presentation.manga.components.MangaCoverDialog
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.manga.components.SetIntervalDialog
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
+import eu.kanade.tachiyomi.data.download.CloudSyncStatus
+import eu.kanade.tachiyomi.data.download.cloudCoverStatus
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.isLocalOrStub
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -100,6 +106,26 @@ class MangaScreen(
         val isHttpSource = successState.source is HttpSource
         val cloudSyncAvailable by viewModel.cloudSyncAvailable.collectAsStateWithLifecycle(initialValue = false)
         val canSyncChapters = isHttpSource && cloudSyncAvailable
+        val cloudTransfers by viewModel.cloudTransfers.collectAsStateWithLifecycle(initialValue = emptyMap())
+        val cloudChapterStatuses = remember(cloudTransfers) {
+            cloudTransfers.mapNotNull { (id, state) ->
+                val status = when (state) {
+                    Download.State.QUEUE -> CloudSyncStatus.Waiting
+                    Download.State.DOWNLOADING, Download.State.UPLOADING ->
+                        CloudSyncStatus.Syncing
+                    Download.State.ERROR -> CloudSyncStatus.Error
+                    Download.State.PAUSED -> CloudSyncStatus.Paused
+                    Download.State.NOT_DOWNLOADED, Download.State.DOWNLOADED -> null
+                }
+                status?.let { id to it }
+            }.toMap()
+        }
+        val allChaptersSynced = successState.chapters.isNotEmpty() && successState.chapters.all { it.isUploadedToCloud }
+        val cloudStatus = if (allChaptersSynced) {
+            CloudSyncStatus.Complete
+        } else {
+            cloudChapterStatuses.values.minByOrNull { it.ordinal }
+        }
         var showCloudSyncConfirmation by rememberSaveable { mutableStateOf(false) }
 
         LaunchedEffect(successState.manga, viewModel.source) {
@@ -114,76 +140,101 @@ class MangaScreen(
             }
         }
 
-        MangaScreen(
-            state = successState,
-            snackbarHostState = viewModel.snackbarHostState,
-            nextUpdate = successState.manga.expectedNextUpdate,
-            isTabletUi = isTabletUi(),
-            chapterSwipeStartAction = viewModel.chapterSwipeStartAction,
-            chapterSwipeEndAction = viewModel.chapterSwipeEndAction,
-            navigateUp = navigator::pop,
-            onChapterClicked = { openChapter(context, it) },
-            onDownloadChapter = viewModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
-            downloadProgressProvider = viewModel::getDownloadProgress,
-            onAddToLibraryClicked = {
-                if (successState.manga.favorite) {
-                    viewModel.showRemoveFromLibraryDialog()
+        val coverStatuses = if (canSyncChapters) {
+            mapOf(
+                successState.manga.id to cloudCoverStatus(
+                    synced = allChaptersSynced,
+                    local = successState.chapters.any { it.downloadState == Download.State.DOWNLOADED },
+                    running = cloudChapterStatuses.containsValue(CloudSyncStatus.Syncing),
+                ),
+            )
+        } else {
+            emptyMap()
+        }
+        CompositionLocalProvider(LocalMangaCoverSyncStatuses provides coverStatuses) {
+            MangaScreen(
+                state = successState,
+                snackbarHostState = viewModel.snackbarHostState,
+                nextUpdate = successState.manga.expectedNextUpdate,
+                isTabletUi = isTabletUi(),
+                chapterSwipeStartAction = viewModel.chapterSwipeStartAction,
+                chapterSwipeEndAction = viewModel.chapterSwipeEndAction,
+                navigateUp = navigator::pop,
+                onChapterClicked = { openChapter(context, it) },
+                onDownloadChapter = viewModel::runChapterDownloadActions.takeIf {
+                    !successState.source.isLocalOrStub()
+                },
+                downloadProgressProvider = viewModel::getDownloadProgress,
+                onAddToLibraryClicked = {
+                    if (successState.manga.favorite) {
+                        viewModel.showRemoveFromLibraryDialog()
+                    } else {
+                        viewModel.toggleFavorite()
+                    }
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                },
+                onWebViewClicked = {
+                    openMangaInWebView(
+                        navigator,
+                        viewModel.manga,
+                        viewModel.source,
+                    )
+                }.takeIf { isHttpSource },
+                onWebViewLongClicked = {
+                    copyMangaUrl(
+                        context,
+                        viewModel.manga,
+                        viewModel.source,
+                    )
+                }.takeIf { isHttpSource },
+                onTrackingClicked = {
+                    if (!successState.hasLoggedInTrackers) {
+                        navigator.push(SettingsScreen(SettingsScreen.Destination.Tracking))
+                    } else {
+                        viewModel.showTrackDialog()
+                    }
+                },
+                onTagSearch = { scope.launch { performGenreSearch(navigator, it, viewModel.source!!) } },
+                onFilterButtonClicked = viewModel::showSettingsDialog,
+                onRefresh = viewModel::fetchAllFromSource,
+                onContinueReading = { continueReading(context, viewModel.getNextUnreadChapter()) },
+                onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
+                onCoverClicked = viewModel::showCoverDialog,
+                onShareClicked = { shareManga(context, viewModel.manga, viewModel.source) }.takeIf { isHttpSource },
+                onDownloadActionClicked = viewModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
+                cloudSync = if (canSyncChapters) {
+                    MangaCloudSyncActions(
+                        status = cloudStatus,
+                        chapterStatuses = cloudChapterStatuses,
+                        onSync = { showCloudSyncConfirmation = true },
+                        onSyncChapter = { viewModel.runCloudSyncAction(listOf(it.chapter)) },
+                        onSyncSelected = { selected ->
+                            viewModel.runCloudSyncAction(selected.map { it.chapter })
+                            viewModel.toggleAllSelection(false)
+                        },
+                        onReleaseStorage = viewModel::releaseCloudStorage,
+                    )
                 } else {
-                    viewModel.toggleFavorite()
-                }
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            },
-            onWebViewClicked = {
-                openMangaInWebView(
-                    navigator,
-                    viewModel.manga,
-                    viewModel.source,
-                )
-            }.takeIf { isHttpSource },
-            onWebViewLongClicked = {
-                copyMangaUrl(
-                    context,
-                    viewModel.manga,
-                    viewModel.source,
-                )
-            }.takeIf { isHttpSource },
-            onTrackingClicked = {
-                if (!successState.hasLoggedInTrackers) {
-                    navigator.push(SettingsScreen(SettingsScreen.Destination.Tracking))
-                } else {
-                    viewModel.showTrackDialog()
-                }
-            },
-            onTagSearch = { scope.launch { performGenreSearch(navigator, it, viewModel.source!!) } },
-            onFilterButtonClicked = viewModel::showSettingsDialog,
-            onRefresh = viewModel::fetchAllFromSource,
-            onContinueReading = { continueReading(context, viewModel.getNextUnreadChapter()) },
-            onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
-            onCoverClicked = viewModel::showCoverDialog,
-            onShareClicked = { shareManga(context, viewModel.manga, viewModel.source) }.takeIf { isHttpSource },
-            onDownloadActionClicked = viewModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
-            onCloudSyncClicked = { showCloudSyncConfirmation = true }
-                .takeIf { canSyncChapters },
-            onCloudSyncChapterClicked = { chapterItem: ChapterList.Item ->
-                viewModel.runCloudSyncAction(listOf(chapterItem.chapter))
-            }.takeIf { canSyncChapters },
-            onEditCategoryClicked = viewModel::showChangeCategoryDialog.takeIf { successState.manga.favorite },
-            onEditFetchIntervalClicked = viewModel::showSetFetchIntervalDialog.takeIf {
-                successState.manga.favorite
-            },
-            onMigrateClicked = {
-                navigator.push(MigrationConfigScreen(successState.manga.id))
-            }.takeIf { successState.manga.favorite },
-            onEditNotesClicked = { navigator.push(MangaNotesScreen(manga = successState.manga)) },
-            onMultiBookmarkClicked = viewModel::bookmarkChapters,
-            onMultiMarkAsReadClicked = viewModel::markChaptersRead,
-            onMarkPreviousAsReadClicked = viewModel::markPreviousChapterRead,
-            onMultiDeleteClicked = viewModel::showDeleteChapterDialog,
-            onChapterSwipe = viewModel::chapterSwipe,
-            onChapterSelected = viewModel::toggleSelection,
-            onAllChapterSelected = viewModel::toggleAllSelection,
-            onInvertSelection = viewModel::invertSelection,
-        )
+                    null
+                },
+                onEditCategoryClicked = viewModel::showChangeCategoryDialog.takeIf { successState.manga.favorite },
+                onEditFetchIntervalClicked = viewModel::showSetFetchIntervalDialog.takeIf {
+                    successState.manga.favorite
+                },
+                onMigrateClicked = {
+                    navigator.push(MigrationConfigScreen(successState.manga.id))
+                }.takeIf { successState.manga.favorite },
+                onEditNotesClicked = { navigator.push(MangaNotesScreen(manga = successState.manga)) },
+                onMultiBookmarkClicked = viewModel::bookmarkChapters,
+                onMultiMarkAsReadClicked = viewModel::markChaptersRead,
+                onMarkPreviousAsReadClicked = viewModel::markPreviousChapterRead,
+                onMultiDeleteClicked = viewModel::showDeleteChapterDialog,
+                onChapterSwipe = viewModel::chapterSwipe,
+                onChapterSelected = viewModel::toggleSelection,
+                onAllChapterSelected = viewModel::toggleAllSelection,
+                onInvertSelection = viewModel::invertSelection,
+            )
+        }
 
         if (canSyncChapters && showCloudSyncConfirmation) {
             AlertDialog(
@@ -220,6 +271,7 @@ class MangaScreen(
                         if (successState.manga.favorite) viewModel.toggleFavorite()
                     },
                     mangaToRemove = successState.manga,
+                    onConfirmCloudDelete = viewModel::removeFromLibraryAndRemote.takeIf { canSyncChapters },
                 )
             }
             is MangaViewModel.Dialog.ChangeCategory -> {

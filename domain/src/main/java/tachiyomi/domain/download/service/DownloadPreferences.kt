@@ -36,6 +36,57 @@ class DownloadPreferences(
 
     fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
 
+    fun cloudSyncCategories() = preferenceStore.getStringSet(CLOUD_SYNC_CATEGORIES_PREF_KEY, emptySet())
+
+    fun remoteSyncCategories() = preferenceStore.getStringSet(REMOTE_SYNC_CATEGORIES_PREF_KEY, emptySet())
+
+    fun remoteSyncScanFailures() = preferenceStore.getStringSet(
+        Preference.appStateKey("remote_sync_scan_failures"),
+        emptySet(),
+    )
+
+    fun remoteSyncMangaFolders() = preferenceStore.getStringSet(
+        Preference.appStateKey("remote_sync_manga_folders"),
+        emptySet(),
+    )
+
+    @Synchronized
+    fun markRemoteSyncMangaFolder(mangaId: Long, targetId: String, folder: String) {
+        val preference = remoteSyncMangaFolders()
+        val key = "$targetId:$mangaId:$folder"
+        val folders = preference.get()
+        if (key !in folders) preference.set(folders + key)
+    }
+
+    @Synchronized
+    fun clearRemoteSyncManga(mangaId: Long, targetId: String, chapterIds: Collection<Long>) {
+        val chapters = cloudUploadedChapterIds()
+        chapters.set(chapters.get() - chapterIds.map { "$targetId:$it" }.toSet())
+        val prefix = "$targetId:$mangaId:"
+        val folders = remoteSyncMangaFolders()
+        folders.set(folders.get().filterNot { it.startsWith(prefix) }.toSet())
+        val metadata = cloudUploadedMetaInfoHashes()
+        metadata.set(metadata.get().filterNot { it.startsWith(prefix) || it.startsWith("$mangaId:") }.toSet())
+    }
+
+    @Synchronized
+    fun migrateRemoteSyncScope() {
+        val categories = remoteSyncCategories()
+        if (categories.isSet()) return
+        val legacySources = preferenceStore.getStringSet("cloud_sync_sources", emptySet())
+        val remoteSources = preferenceStore.getStringSet("remote_sync_sources", emptySet())
+        when {
+            remoteSources.isSet() -> categories.set(emptySet())
+            organizeDownloadsByCategory().get() && cloudSyncCategories().isSet() ->
+                categories.set(cloudSyncCategories().get())
+            !organizeDownloadsByCategory().get() && legacySources.isSet() -> categories.set(emptySet())
+        }
+    }
+
+    fun cloudSyncAutomaticPaused() = preferenceStore.getBoolean("cloud_sync_automatic_paused", false)
+
+    fun cloudSyncPausedCategories() = preferenceStore.getStringSet(CLOUD_SYNC_PAUSED_CATEGORIES_PREF_KEY, emptySet())
+
     fun parallelCloudUploadLimit() = preferenceStore.getInt("cloud_sync_parallel_upload_limit", 5)
 
     fun cloudUploadedChapterIds() = preferenceStore.getStringSet(CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY, emptySet())
@@ -130,6 +181,9 @@ class DownloadPreferences(
         private const val DOWNLOAD_NEW_CATEGORIES_EXCLUDE_PREF_KEY = "download_new_categories_exclude"
         private const val CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY = "cloud_uploaded_chapter_ids"
         private const val CLOUD_UPLOADED_META_INFO_HASHES_PREF_KEY = "cloud_uploaded_meta_info_hashes"
+        private const val CLOUD_SYNC_CATEGORIES_PREF_KEY = "cloud_sync_categories"
+        private const val CLOUD_SYNC_PAUSED_CATEGORIES_PREF_KEY = "cloud_sync_paused_categories"
+        private const val REMOTE_SYNC_CATEGORIES_PREF_KEY = "remote_sync_categories"
         val cloudSyncRecordPreferenceKeys = setOf(
             CLOUD_UPLOADED_CHAPTER_IDS_PREF_KEY,
             CLOUD_UPLOADED_META_INFO_HASHES_PREF_KEY,
@@ -138,6 +192,9 @@ class DownloadPreferences(
             REMOVE_EXCLUDE_CATEGORIES_PREF_KEY,
             DOWNLOAD_NEW_CATEGORIES_PREF_KEY,
             DOWNLOAD_NEW_CATEGORIES_EXCLUDE_PREF_KEY,
+            CLOUD_SYNC_CATEGORIES_PREF_KEY,
+            CLOUD_SYNC_PAUSED_CATEGORIES_PREF_KEY,
+            REMOTE_SYNC_CATEGORIES_PREF_KEY,
         )
     }
 }

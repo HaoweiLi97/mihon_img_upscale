@@ -212,11 +212,15 @@ fun AppBarActions(
                 onClick = it.onClick,
                 enabled = it.enabled,
             ) {
-                Icon(
-                    imageVector = it.icon,
-                    tint = it.iconTint ?: LocalContentColor.current,
-                    contentDescription = it.title,
-                )
+                if (it.iconContent != null) {
+                    it.iconContent.invoke()
+                } else {
+                    Icon(
+                        imageVector = it.icon,
+                        tint = it.iconTint ?: LocalContentColor.current,
+                        contentDescription = it.title,
+                    )
+                }
             }
         }
     }
@@ -440,6 +444,7 @@ sealed interface AppBar {
         val iconTint: Color? = null,
         val onClick: () -> Unit,
         val enabled: Boolean = true,
+        val iconContent: (@Composable () -> Unit)? = null,
     ) : AppBarAction
 
     data class OverflowAction(

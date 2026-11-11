@@ -22,7 +22,11 @@ data class Download(
     val source: HttpSource,
     val manga: Manga,
     val chapter: Chapter,
+    val automaticSyncTarget: String? = null,
+    val explicitCloudSync: Boolean = false,
 ) {
+    val isCloudSync get() = automaticSyncTarget != null || explicitCloudSync
+
     @Transient
     private val _pagesFlow = MutableStateFlow<List<Page>?>(null)
 

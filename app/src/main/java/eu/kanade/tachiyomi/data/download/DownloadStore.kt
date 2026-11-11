@@ -41,6 +41,10 @@ class DownloadStore(
         check(uploads.edit().remove(key).commit())
     }
 
+    internal fun clearUploads() {
+        check(uploads.edit().clear().commit())
+    }
+
     internal suspend fun restoreUploads(): List<Pair<CloudUploadRecord, Download>> {
         return uploads.all.values.mapNotNull { value ->
             val record =
@@ -50,7 +54,12 @@ class DownloadStore(
             val chapter =
                 getChapter.await(record.chapterId)?.takeIf { it.mangaId == manga.id } ?: return@mapNotNull null
             val source = sourceManager.get(manga.source) as? HttpSource ?: return@mapNotNull null
-            record to Download(source, manga, chapter)
+            record to Download(
+                source,
+                manga,
+                chapter,
+                automaticSyncTarget = record.targetId.takeIf { record.automatic },
+            )
         }.sortedBy { (record, _) -> record.order }
     }
 
@@ -68,6 +77,12 @@ class DownloadStore(
         preferences.edit {
             downloads.forEach { putString(getKey(it), serialize(it)) }
         }
+    }
+
+    internal fun setFailed(download: Download, failed: Boolean) {
+        val key = getKey(download)
+        val record = preferences.getString(key, null)?.let(::deserialize) ?: return
+        preferences.edit { putString(key, json.encodeToString(record.copy(failed = failed))) }
     }
 
     /**
@@ -122,13 +137,16 @@ class DownloadStore(
         val downloads = mutableListOf<Download>()
         if (objs.isNotEmpty()) {
             val cachedManga = mutableMapOf<Long, Manga?>()
-            for ((mangaId, chapterId) in objs) {
+            for (obj in objs) {
+                val (mangaId, chapterId) = obj
                 val manga = cachedManga.getOrPut(mangaId) {
                     getManga.await(mangaId)
                 } ?: continue
                 val source = sourceManager.get(manga.source) as? HttpSource ?: continue
                 val chapter = getChapter.await(chapterId) ?: continue
-                downloads.add(Download(source, manga, chapter))
+                val download = Download(source, manga, chapter, obj.automaticSyncTarget, obj.explicitCloudSync)
+                if (obj.failed && download.isCloudSync) download.status = Download.State.ERROR
+                downloads.add(download)
             }
         }
 
@@ -143,7 +161,14 @@ class DownloadStore(
      * @param download the download to serialize.
      */
     private fun serialize(download: Download): String {
-        val obj = DownloadObject(download.manga.id, download.chapter.id, counter++)
+        val obj = DownloadObject(
+            download.manga.id,
+            download.chapter.id,
+            counter++,
+            download.automaticSyncTarget,
+            download.explicitCloudSync,
+            failed = download.isCloudSync && download.status == Download.State.ERROR,
+        )
         return json.encodeToString(obj)
     }
 
@@ -176,7 +201,14 @@ class DownloadStore(
  * @param order the order of the download in the queue.
  */
 @Serializable
-private data class DownloadObject(val mangaId: Long, val chapterId: Long, val order: Int)
+private data class DownloadObject(
+    val mangaId: Long,
+    val chapterId: Long,
+    val order: Int,
+    val automaticSyncTarget: String? = null,
+    val explicitCloudSync: Boolean = false,
+    val failed: Boolean = false,
+)
 
 @Serializable
 internal data class CloudUploadRecord(
@@ -191,6 +223,8 @@ internal data class CloudUploadRecord(
     val paused: Boolean = false,
     val order: Long = 0,
     val failed: Boolean = false,
+    val automatic: Boolean = false,
+    val temporaryArchive: Boolean = false,
 ) {
     val isChapter: Boolean get() = contentHash == null
     val key: String get() = if (isChapter) "chapter:$chapterId" else "meta:$targetId:$mangaId:$remoteDirectory"

@@ -30,10 +30,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.components.CloudSyncIcon
+import eu.kanade.presentation.components.label
+import eu.kanade.tachiyomi.data.download.CloudSyncStatus
 import eu.kanade.tachiyomi.data.download.model.Download
 import me.saket.swipe.SwipeableActionsBox
 import mihon.icons.materialsymbols.MaterialSymbols
-import mihon.icons.materialsymbols.rounded.ArrowUpward
 import mihon.icons.materialsymbols.rounded.Bookmark
 import mihon.icons.materialsymbols.rounded.BookmarkAdd
 import mihon.icons.materialsymbols.rounded.BookmarkRemove
@@ -52,7 +54,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
 
 @Composable
-fun MangaChapterListItem(
+internal fun MangaChapterListItem(
     title: String,
     date: String?,
     readProgress: String?,
@@ -61,7 +63,7 @@ fun MangaChapterListItem(
     bookmark: Boolean,
     selected: Boolean,
     downloadIndicatorEnabled: Boolean,
-    cloudUploaded: Boolean,
+    cloudStatus: CloudSyncStatus?,
     downloadStateProvider: () -> Download.State,
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
@@ -182,16 +184,13 @@ fun MangaChapterListItem(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (cloudUploaded || onCloudSyncClick != null) {
+                if (cloudStatus != null || onCloudSyncClick != null) {
                     IconButton(
                         onClick = { onCloudSyncClick?.invoke() },
-                        enabled = !cloudUploaded && onCloudSyncClick != null,
+                        enabled = onCloudSyncClick != null,
                         modifier = Modifier.size(40.dp),
                     ) {
-                        Icon(
-                            imageVector = if (cloudUploaded) MaterialSymbols.Rounded.Check else MaterialSymbols.Rounded.ArrowUpward,
-                            contentDescription = stringResource(MR.strings.cloud_sync),
-                        )
+                        CloudSyncIcon(cloudStatus, stringResource(cloudStatus?.label ?: MR.strings.cloud_sync))
                     }
                 }
                 ChapterDownloadIndicator(

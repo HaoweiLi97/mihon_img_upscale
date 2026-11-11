@@ -1,0 +1,403 @@
+package eu.kanade.presentation.more.settings.screen
+
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.presentation.category.visualName
+import eu.kanade.presentation.components.CloudSyncIcon
+import eu.kanade.presentation.components.label
+import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.widget.MultiSelectListPreferenceWidget
+import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
+import eu.kanade.presentation.more.settings.widget.TrailingWidgetBuffer
+import eu.kanade.tachiyomi.data.download.CloudSyncConfig
+import eu.kanade.tachiyomi.data.download.CloudSyncService
+import eu.kanade.tachiyomi.data.download.CloudSyncStatus
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import mihon.app.di.appGraph
+import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.pluralStringResource
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import tachiyomi.core.common.i18n.stringResource as contextStringResource
+
+object SettingsRemoteSyncScreen : SearchableSettings {
+
+    @ReadOnlyComposable
+    @Composable
+    override fun getTitleRes() = MR.strings.remote_sync
+
+    @Composable
+    override fun getPreferences(): List<Preference> {
+        val graph = LocalContext.current.appGraph
+        val categories by graph.getCategories.subscribe().collectAsState(initial = emptyList())
+        val participatingIds by graph.downloadPreferences.remoteSyncCategories().collectAsState()
+        val saveAsCbz by graph.downloadPreferences.saveChaptersAsCBZ.collectAsState()
+        return listOf(
+            getCloudSyncGroup(graph.downloadPreferences, saveAsCbz, categories, participatingIds),
+            getCategorySyncGroup(categories.filter { it.id.toString() in participatingIds }),
+        )
+    }
+
+    @Composable
+    private fun getCategorySyncGroup(categories: List<Category>): Preference.PreferenceGroup {
+        val context = LocalContext.current
+        val graph = context.appGraph
+        val cloudSync = graph.libraryCloudSync
+        val selection by cloudSync.selection.collectAsState()
+        val statuses by cloudSync.categoryStatuses.collectAsState()
+        val scope = rememberCoroutineScope()
+        var retrying by remember { mutableStateOf(emptySet<Long>()) }
+        val rules = selection?.rules
+        val canSync = rules?.target != null
+        val globallyPaused = rules?.paused == true
+        val groupTitle = stringResource(MR.strings.remote_sync_categories)
+
+        if (categories.isEmpty()) {
+            return Preference.PreferenceGroup(
+                title = groupTitle,
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.remote_sync_no_categories),
+                    ),
+                ),
+            )
+        }
+
+        return Preference.PreferenceGroup(
+            title = groupTitle,
+            preferenceItems = categories.map { category ->
+                val title = category.visualName
+                Preference.PreferenceItem.CustomPreference(title = title) {
+                    val categoryPaused = category.id in rules?.pausedCategories.orEmpty()
+                    val status = if (categoryPaused || globallyPaused) {
+                        CloudSyncStatus.Paused
+                    } else {
+                        statuses[category.id]?.takeUnless { it == CloudSyncStatus.Paused } ?: CloudSyncStatus.Waiting
+                    }
+                    TextPreferenceWidget(
+                        title = title,
+                        subtitle = stringResource(if (canSync) status.label else MR.strings.remote_sync_setup_required),
+                        widget = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (canSync) CloudSyncIcon(status)
+                                if (canSync && status == CloudSyncStatus.Error) {
+                                    TextButton(
+                                        enabled = category.id !in retrying,
+                                        onClick = {
+                                            retrying += category.id
+                                            scope.launch {
+                                                try {
+                                                    cloudSync.retryCategory(category.id)
+                                                } catch (error: CancellationException) {
+                                                    throw error
+                                                } catch (_: Exception) {
+                                                    context.toast(MR.strings.cloud_sync_status_error)
+                                                } finally {
+                                                    retrying -= category.id
+                                                }
+                                            }
+                                        },
+                                    ) {
+                                        Text(stringResource(MR.strings.action_retry))
+                                    }
+                                }
+                                if (canSync && !globallyPaused) {
+                                    val action = if (categoryPaused) {
+                                        MR.strings.cloud_sync_resume_category
+                                    } else {
+                                        MR.strings.cloud_sync_pause_category
+                                    }
+                                    TextButton(onClick = {
+                                        cloudSync.setCategoryPaused(category.id, !categoryPaused)
+                                    }) {
+                                        Text(stringResource(action))
+                                    }
+                                }
+                            }
+                        },
+                    )
+                }
+            },
+        )
+    }
+
+    @Composable
+    private fun getCloudSyncGroup(
+        downloadPreferences: DownloadPreferences,
+        saveChaptersAsCBZ: Boolean,
+        categories: List<Category>,
+        participatingIds: Set<String>,
+    ): Preference.PreferenceGroup {
+        val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        val cloudSyncService = remember { Injekt.get<CloudSyncService>() }
+
+        val cloudSyncEnabled by downloadPreferences.cloudSyncEnabled().collectAsState()
+        val cloudSyncUrl by downloadPreferences.cloudSyncUrl().collectAsState()
+        val cloudSyncUsername by downloadPreferences.cloudSyncUsername().collectAsState()
+        val cloudSyncPassword by downloadPreferences.cloudSyncPassword().collectAsState()
+        val cloudSyncDestination by downloadPreferences.cloudSyncDestination().collectAsState()
+        val deleteAfterUpload by downloadPreferences.cloudSyncDeleteAfterUpload().collectAsState()
+
+        var showLoginDialog by rememberSaveable { mutableStateOf(false) }
+        var testingConnection by rememberSaveable { mutableStateOf(false) }
+
+        if (showLoginDialog) {
+            CloudSyncLoginDialog(
+                initialUrl = cloudSyncUrl,
+                initialUsername = cloudSyncUsername,
+                initialPassword = cloudSyncPassword,
+                testingConnection = testingConnection,
+                onDismissRequest = { if (!testingConnection) showLoginDialog = false },
+                onConfirm = { url, username, password ->
+                    testingConnection = true
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching {
+                                cloudSyncService.testConnection(
+                                    CloudSyncConfig(
+                                        url = url.trim(),
+                                        username = username.trim(),
+                                        password = password,
+                                    ),
+                                )
+                            }
+                        }
+                        testingConnection = false
+                        result
+                            .onSuccess {
+                                downloadPreferences.cloudSyncUrl().set(url.trim())
+                                downloadPreferences.cloudSyncUsername().set(username.trim())
+                                downloadPreferences.cloudSyncPassword().set(password)
+                                downloadPreferences.cloudSyncEnabled().set(true)
+                                showLoginDialog = false
+                                context.toast(MR.strings.cloud_sync_connection_success)
+                            }
+                            .onFailure {
+                                context.toast(
+                                    it.message ?: context.contextStringResource(
+                                        MR.strings.cloud_sync_connection_failed,
+                                    ),
+                                )
+                            }
+                    }
+                },
+            )
+        }
+
+        val cloudSettingsAvailable = saveChaptersAsCBZ
+        val destinationAvailable = cloudSettingsAvailable && cloudSyncEnabled
+        val autoSyncAvailable = destinationAvailable && cloudSyncDestination.isNotBlank()
+        val libraryCloudSync = context.appGraph.libraryCloudSync
+        val categoryEntries = categories.associate { it.id.toString() to it.visualName }
+        val categoryPickerTitle = stringResource(MR.strings.cloud_sync_auto_categories)
+
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.cloud_sync),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(MR.strings.cloud_sync),
+                ) {
+                    CloudSyncTextPreference(
+                        title = stringResource(MR.strings.cloud_sync),
+                        subtitle = when {
+                            !saveChaptersAsCBZ -> stringResource(MR.strings.cloud_sync_requires_cbz)
+                            cloudSyncEnabled -> stringResource(MR.strings.cloud_sync_connected, cloudSyncUsername)
+                            else -> stringResource(MR.strings.cloud_sync_not_configured)
+                        },
+                        enabled = cloudSettingsAvailable,
+                        onClick = { showLoginDialog = true },
+                    )
+                },
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(MR.strings.cloud_sync_destination),
+                ) {
+                    CloudSyncTextPreference(
+                        title = stringResource(MR.strings.cloud_sync_destination),
+                        subtitle = cloudSyncDestination.takeIf { it.isNotBlank() }
+                            ?: stringResource(MR.strings.cloud_sync_no_destination),
+                        enabled = destinationAvailable,
+                        onClick = { navigator.push(CloudSyncDestinationScreen()) },
+                    )
+                },
+                Preference.PreferenceItem.CustomPreference(title = categoryPickerTitle) {
+                    val names = categoryEntries.filterKeys { it in participatingIds }.values
+                    MultiSelectListPreferenceWidget(
+                        values = participatingIds,
+                        title = categoryPickerTitle,
+                        subtitle = names.takeIf { it.isNotEmpty() }?.joinToString() ?: stringResource(MR.strings.none),
+                        icon = null,
+                        entries = categoryEntries,
+                        onValuesChange = libraryCloudSync::setParticipatingCategories,
+                    )
+                },
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = downloadPreferences.cloudSyncAutomaticPaused(),
+                    title = stringResource(MR.strings.cloud_sync_auto_pause),
+                    subtitle = stringResource(MR.strings.cloud_sync_auto_pause_summary),
+                    visible = autoSyncAvailable && participatingIds.isNotEmpty(),
+                ),
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(MR.strings.cloud_sync_delete_after_upload),
+                ) {
+                    CloudSyncSwitchPreference(
+                        title = stringResource(MR.strings.cloud_sync_delete_after_upload),
+                        checked = deleteAfterUpload,
+                        enabled = destinationAvailable,
+                        onCheckedChanged = { downloadPreferences.cloudSyncDeleteAfterUpload().set(it) },
+                    )
+                },
+                Preference.PreferenceItem.SliderPreference(
+                    preference = downloadPreferences.parallelCloudUploadLimit(),
+                    valueRange = 1..5,
+                    title = stringResource(MR.strings.pref_cloud_sync_concurrent_uploads),
+                    visible = destinationAvailable,
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun CloudSyncTextPreference(
+        title: String,
+        subtitle: String?,
+        enabled: Boolean,
+        onClick: () -> Unit,
+    ) {
+        TextPreferenceWidget(
+            modifier = Modifier.alpha(if (enabled) 1f else DISABLED_PREFERENCE_ALPHA),
+            title = title,
+            subtitle = subtitle,
+            onPreferenceClick = onClick.takeIf { enabled },
+        )
+    }
+
+    @Composable
+    private fun CloudSyncSwitchPreference(
+        title: String,
+        checked: Boolean,
+        enabled: Boolean,
+        onCheckedChanged: (Boolean) -> Unit,
+    ) {
+        TextPreferenceWidget(
+            modifier = Modifier.alpha(if (enabled) 1f else DISABLED_PREFERENCE_ALPHA),
+            title = title,
+            widget = {
+                Switch(
+                    checked = checked,
+                    enabled = enabled,
+                    onCheckedChange = null,
+                    modifier = Modifier.padding(start = TrailingWidgetBuffer),
+                )
+            },
+            onPreferenceClick = if (enabled) {
+                { onCheckedChanged(!checked) }
+            } else {
+                null
+            },
+        )
+    }
+
+    @Composable
+    private fun CloudSyncLoginDialog(
+        initialUrl: String,
+        initialUsername: String,
+        initialPassword: String,
+        testingConnection: Boolean,
+        onDismissRequest: () -> Unit,
+        onConfirm: (String, String, String) -> Unit,
+    ) {
+        var url by rememberSaveable { mutableStateOf(initialUrl) }
+        var username by rememberSaveable { mutableStateOf(initialUsername) }
+        var password by rememberSaveable { mutableStateOf(initialPassword) }
+        val canConfirm = url.isNotBlank() && username.isNotBlank() && password.isNotBlank() && !testingConnection
+
+        AlertDialog(
+            onDismissRequest = onDismissRequest,
+            title = { Text(text = stringResource(MR.strings.cloud_sync_login)) },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text(text = stringResource(MR.strings.cloud_sync_webdav_url)) },
+                        singleLine = true,
+                        enabled = !testingConnection,
+                    )
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text(text = stringResource(MR.strings.username)) },
+                        singleLine = true,
+                        enabled = !testingConnection,
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text(text = stringResource(MR.strings.password)) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        enabled = !testingConnection,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = canConfirm,
+                    onClick = { onConfirm(url, username, password) },
+                ) {
+                    if (testingConnection) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.padding(end = 8.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                    Text(text = stringResource(MR.strings.cloud_sync_test_connection))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !testingConnection,
+                    onClick = onDismissRequest,
+                ) {
+                    Text(text = stringResource(MR.strings.action_cancel))
+                }
+            },
+        )
+    }
+}
+
+private const val DISABLED_PREFERENCE_ALPHA = 0.38f

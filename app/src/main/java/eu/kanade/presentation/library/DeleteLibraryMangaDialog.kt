@@ -9,8 +9,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import dev.icerock.moko.resources.StringResource
-import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LabeledCheckbox
 import tachiyomi.presentation.core.i18n.stringResource
@@ -18,19 +16,13 @@ import tachiyomi.presentation.core.i18n.stringResource
 @Composable
 fun DeleteLibraryMangaDialog(
     containsLocalManga: Boolean,
+    canDeleteRemote: Boolean,
     onDismissRequest: () -> Unit,
-    onConfirm: (Boolean, Boolean) -> Unit,
+    onConfirm: (Boolean, Boolean, Boolean) -> Unit,
 ) {
-    var list by remember {
-        mutableStateOf(
-            buildList<CheckboxState.State<StringResource>> {
-                add(CheckboxState.State.None(MR.strings.manga_from_library))
-                if (!containsLocalManga) {
-                    add(CheckboxState.State.None(MR.strings.downloaded_chapters))
-                }
-            },
-        )
-    }
+    var fromLibrary by remember { mutableStateOf(false) }
+    var downloadedChapters by remember { mutableStateOf(false) }
+    var remoteFolder by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismissRequest,
         dismissButton = {
@@ -40,13 +32,10 @@ fun DeleteLibraryMangaDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = list.any { it.isChecked },
+                enabled = fromLibrary || downloadedChapters,
                 onClick = {
                     onDismissRequest()
-                    onConfirm(
-                        list[0].isChecked,
-                        list.getOrElse(1) { CheckboxState.State.None(0) }.isChecked,
-                    )
+                    onConfirm(fromLibrary, downloadedChapters, remoteFolder && fromLibrary && canDeleteRemote)
                 },
             ) {
                 Text(text = stringResource(MR.strings.action_ok))
@@ -57,17 +46,28 @@ fun DeleteLibraryMangaDialog(
         },
         text = {
             Column {
-                list.forEach { state ->
+                LabeledCheckbox(
+                    label = stringResource(MR.strings.manga_from_library),
+                    checked = fromLibrary,
+                    onCheckedChange = {
+                        fromLibrary = it
+                        if (!it) remoteFolder = false
+                    },
+                )
+                if (!containsLocalManga) {
                     LabeledCheckbox(
-                        label = stringResource(state.value),
-                        checked = state.isChecked,
+                        label = stringResource(MR.strings.downloaded_chapters),
+                        checked = downloadedChapters,
+                        onCheckedChange = { downloadedChapters = it },
+                    )
+                }
+                if (canDeleteRemote) {
+                    LabeledCheckbox(
+                        label = stringResource(MR.strings.remote_sync_delete_folder),
+                        checked = remoteFolder,
                         onCheckedChange = {
-                            val index = list.indexOf(state)
-                            if (index != -1) {
-                                val mutableList = list.toMutableList()
-                                mutableList[index] = state.next() as CheckboxState.State<StringResource>
-                                list = mutableList.toList()
-                            }
+                            remoteFolder = it
+                            if (it) fromLibrary = true
                         },
                     )
                 }

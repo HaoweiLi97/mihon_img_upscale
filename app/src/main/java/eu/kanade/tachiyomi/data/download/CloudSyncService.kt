@@ -22,10 +22,11 @@ import okio.Buffer
 import okio.BufferedSink
 import okio.source
 import org.w3c.dom.Element
+import org.xml.sax.SAXException
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.net.URLDecoder
+import java.io.InputStream
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -40,6 +41,7 @@ class CloudSyncService(
             .readTimeout(UPLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
             .writeTimeout(UPLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
             .callTimeout(UPLOAD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
+            .retryOnConnectionFailure(false)
             .build()
     }
 
@@ -60,8 +62,11 @@ class CloudSyncService(
                 throw IllegalStateException("WebDAV PROPFIND failed: HTTP ${response.code}")
             }
             response.body.byteStream().use { input ->
-                parseDirectories(config, input.readBytes())
-                    .filterNot { it.path == normalizePath(path) }
+                parseDirectories(config, path, input)
+                    .filter { directory ->
+                        val parent = directory.path.substringBeforeLast('/').ifBlank { "/" }
+                        directory.path != normalizePath(path) && parent == normalizePath(path)
+                    }
             }
         }
     }
@@ -143,6 +148,88 @@ class CloudSyncService(
         }
     }
 
+    internal suspend fun remoteFileSize(
+        config: CloudSyncConfig,
+        remoteDirectory: String,
+        fileName: String,
+    ): Long? = withIOContext {
+        val request = Request.Builder()
+            .url(config.resolveUrl(normalizePath(remoteDirectory), fileName))
+            .headers(config.authHeaders())
+            .header("Accept-Encoding", "identity")
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .head()
+            .build()
+        networkHelper.client.newCall(request).await().use { response ->
+            if (response.code != 200) return@use null
+            response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0L }
+        }
+    }
+
+    /**
+     * Lists the requested direct children. A null result means directory listing is unavailable,
+     * and a null size means an individual file needs a HEAD request.
+     */
+    internal suspend fun listRemoteFileSizes(
+        config: CloudSyncConfig,
+        remoteDirectory: String,
+        fileNames: Set<String>,
+    ): Map<String, Long?>? = withIOContext {
+        val directory = config.resolveUrl(remoteDirectory, trailingSlash = true)
+        val request = Request.Builder()
+            .url(directory)
+            .headers(config.authHeaders())
+            .header("Depth", "1")
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .method("PROPFIND", PROPFIND_FILE_SIZES_BODY)
+            .build()
+        networkHelper.client.newCall(request).await().use { response ->
+            when (response.code) {
+                207 -> response.body.byteStream().use { parseFileSizes(directory, fileNames, it) }
+                404 -> emptyMap()
+                403, 405, 501 -> null
+                else -> error("WebDAV PROPFIND failed: HTTP ${response.code}")
+            }
+        }
+    }
+
+    private fun parseFileSizes(directory: HttpUrl, fileNames: Set<String>, input: InputStream): Map<String, Long?>? {
+        val multistatus = parseDavDocument(input).documentElement
+        if (multistatus.namespaceURI != DAV_NAMESPACE || multistatus.localName != "multistatus") return null
+        val directorySegments = directory.pathSegments.dropLast(1)
+        val resources = multistatus.getElementsByTagNameNS(DAV_NAMESPACE, "response")
+        return buildMap {
+            for (index in 0 until resources.length) {
+                val resource = resources.item(index) as Element
+                val href = resource.firstTextByTagName("href", DAV_NAMESPACE) ?: continue
+                val url = directory.resolve(href) ?: continue
+                if (url.scheme != directory.scheme || url.host != directory.host || url.port != directory.port ||
+                    url.pathSegments.dropLast(1) != directorySegments
+                ) {
+                    continue
+                }
+                val fileName = url.pathSegments.last()
+                if (fileName !in fileNames) continue
+
+                var isCollection = false
+                var size: Long? = null
+                val results = resource.getElementsByTagNameNS(DAV_NAMESPACE, "propstat")
+                for (resultIndex in 0 until results.length) {
+                    val result = results.item(resultIndex) as Element
+                    val status = result.firstTextByTagName("status", DAV_NAMESPACE)
+                    if (status?.split(' ', limit = 3)?.getOrNull(1) != "200") continue
+                    val properties = result.getElementsByTagNameNS(DAV_NAMESPACE, "prop").item(0) as? Element
+                        ?: continue
+                    isCollection =
+                        isCollection || properties.getElementsByTagNameNS(DAV_NAMESPACE, "collection").length > 0
+                    properties.firstTextByTagName("getcontentlength", DAV_NAMESPACE)?.toLongOrNull()
+                        ?.takeIf { it > 0 }?.let { size = it }
+                }
+                if (!isCollection) put(fileName, size)
+            }
+        }
+    }
+
     private suspend fun deleteRemoteFile(
         config: CloudSyncConfig,
         remoteDirectory: String,
@@ -159,6 +246,20 @@ class CloudSyncService(
             if (response.code == 404) return@withIOContext
             if (response.code !in SUCCESS_CODES) {
                 throw IllegalStateException("WebDAV delete failed: HTTP ${response.code}")
+            }
+        }
+    }
+
+    internal suspend fun deleteMangaCollection(config: CloudSyncConfig, directory: String) = withIOContext {
+        val request = Request.Builder()
+            .url(config.resolveUrl(directory, trailingSlash = true))
+            .headers(config.authHeaders())
+            .header("Depth", "infinity")
+            .delete()
+            .build()
+        uploadClient.newCall(request).await().use { response ->
+            if (response.code !in setOf(200, 204, 404)) {
+                error("WebDAV collection delete failed: HTTP ${response.code}")
             }
         }
     }
@@ -256,12 +357,12 @@ class CloudSyncService(
         }
     }
 
-    private fun parseDirectories(config: CloudSyncConfig, bytes: ByteArray): List<CloudSyncDirectory> {
-        val document = DocumentBuilderFactory.newInstance()
-            .apply { isNamespaceAware = true }
-            .newDocumentBuilder()
-            .parse(bytes.inputStream())
-
+    private fun parseDirectories(
+        config: CloudSyncConfig,
+        directory: String,
+        input: InputStream,
+    ): List<CloudSyncDirectory> {
+        val document = parseDavDocument(input)
         val responses = document.getElementsByTagNameNS("*", "response")
         return (0 until responses.length)
             .asSequence()
@@ -272,7 +373,7 @@ class CloudSyncService(
                 val isCollection = element.getElementsByTagNameNS("*", "collection").length > 0
                 if (!isCollection) return@mapNotNull null
 
-                val path = config.relativePathFromHref(href)
+                val path = config.relativePathFromHref(href, directory) ?: return@mapNotNull null
                 val name = element.firstTextByTagName("displayname")
                     ?.takeUnless { it.isBlank() }
                     ?: path.trim('/').substringAfterLast('/', missingDelimiterValue = "/")
@@ -286,8 +387,14 @@ class CloudSyncService(
             .sortedWith(compareBy({ it.path != "/" }, { it.name.lowercase() }))
     }
 
-    private fun Element.firstTextByTagName(localName: String): String? {
-        return getElementsByTagNameNS("*", localName)
+    private fun parseDavDocument(input: InputStream) = DocumentBuilderFactory.newInstance()
+        .apply { isNamespaceAware = true }
+        .newDocumentBuilder()
+        .apply { setEntityResolver { _, _ -> throw SAXException("External entities are unsupported") } }
+        .parse(input)
+
+    private fun Element.firstTextByTagName(localName: String, namespace: String = "*"): String? {
+        return getElementsByTagNameNS(namespace, localName)
             .item(0)
             ?.textContent
             ?.trim()
@@ -321,17 +428,12 @@ class CloudSyncService(
             .build()
     }
 
-    private fun CloudSyncConfig.relativePathFromHref(href: String): String {
-        val hrefPath = runCatching {
-            URLDecoder.decode(java.net.URI(href).path ?: href, Charsets.UTF_8.name())
-        }.getOrElse {
-            URLDecoder.decode(href, Charsets.UTF_8.name())
-        }
-        val basePath = "/" + url.toHttpUrl().pathSegments.filter { it.isNotBlank() }.joinToString("/")
-        val relativePath = hrefPath
-            .removePrefix(basePath)
-            .trim('/')
-        return normalizePath(relativePath)
+    private fun CloudSyncConfig.relativePathFromHref(href: String, directory: String): String? {
+        val base = url.toHttpUrl().pathSegments.filter { it.isNotBlank() }
+        val hrefUrl = resolveUrl(directory, trailingSlash = true).resolve(href) ?: return null
+        val segments = hrefUrl.pathSegments.filter { it.isNotBlank() }
+        if (segments.take(base.size) != base) return null
+        return normalizePath(segments.drop(base.size).joinToString("/"))
     }
 
     private fun ByteArray.toHexString(): String {
@@ -387,11 +489,21 @@ class CloudSyncService(
     }
 
     companion object {
+        private const val DAV_NAMESPACE = "DAV:"
         private val PROPFIND_BODY = """
             <?xml version="1.0" encoding="utf-8" ?>
             <d:propfind xmlns:d="DAV:">
               <d:prop>
                 <d:displayname />
+                <d:resourcetype />
+              </d:prop>
+            </d:propfind>
+        """.trimIndent().toRequestBody("application/xml; charset=utf-8".toMediaType())
+        private val PROPFIND_FILE_SIZES_BODY = """
+            <?xml version="1.0" encoding="utf-8" ?>
+            <d:propfind xmlns:d="DAV:">
+              <d:prop>
+                <d:getcontentlength />
                 <d:resourcetype />
               </d:prop>
             </d:propfind>

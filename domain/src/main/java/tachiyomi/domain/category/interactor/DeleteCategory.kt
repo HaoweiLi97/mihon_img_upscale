@@ -38,6 +38,9 @@ class DeleteCategory(
             downloadPreferences.removeExcludeCategories,
             downloadPreferences.downloadNewChapterCategories,
             downloadPreferences.downloadNewChapterCategoriesExclude,
+            downloadPreferences.cloudSyncCategories(),
+            downloadPreferences.cloudSyncPausedCategories(),
+            downloadPreferences.remoteSyncCategories(),
         )
         val categoryIdString = categoryId.toString()
         categoryPreferences.forEach { preference ->

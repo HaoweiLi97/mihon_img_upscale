@@ -213,6 +213,15 @@ class DownloadProvider(
         findMangaDirs(manga.title, source).flatMap { findChapterDirs(chapters, it).keys }.toSet()
     }
 
+    internal suspend fun findDownloadedChapters(
+        chapters: List<Chapter>,
+        mangaDirs: List<UniFile>,
+    ): Map<Long, UniFile> = buildMap {
+        mangaDirs.forEach { dir ->
+            findChapterDirs(chapters, dir).forEach { (id, file) -> putIfAbsent(id, file) }
+        }
+    }
+
     /**
      * Returns the download directory of each chapter that has one, keyed by chapter id.
      *

@@ -124,8 +124,8 @@ object DownloadQueueScreen : Screen() {
                     },
                     navigateUp = navigator::pop,
                     actions = {
+                        var sortExpanded by remember { mutableStateOf(false) }
                         if (queuedDownloadCount > 0) {
-                            var sortExpanded by remember { mutableStateOf(false) }
                             val onDismissRequest = { sortExpanded = false }
                             DropdownMenu(
                                 expanded = sortExpanded,
@@ -182,19 +182,26 @@ object DownloadQueueScreen : Screen() {
                                     },
                                 )
                             }
-
+                        }
+                        if (downloadCount > 0) {
                             AppBarActions(
-                                listOf(
-                                    AppBar.Action(
-                                        title = stringResource(MR.strings.action_sort),
-                                        icon = MaterialSymbols.AutoMirroredRounded.Sort,
-                                        onClick = { sortExpanded = true },
-                                    ),
-                                    AppBar.OverflowAction(
-                                        title = stringResource(MR.strings.action_cancel_all),
-                                        onClick = { viewModel.clearQueue() },
-                                    ),
-                                ),
+                                buildList {
+                                    if (queuedDownloadCount > 0) {
+                                        add(
+                                            AppBar.Action(
+                                                title = stringResource(MR.strings.action_sort),
+                                                icon = MaterialSymbols.AutoMirroredRounded.Sort,
+                                                onClick = { sortExpanded = true },
+                                            ),
+                                        )
+                                    }
+                                    add(
+                                        AppBar.OverflowAction(
+                                            title = stringResource(MR.strings.action_cancel_all),
+                                            onClick = { viewModel.clearQueue() },
+                                        ),
+                                    )
+                                },
                             )
                         }
                     },

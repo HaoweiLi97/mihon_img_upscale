@@ -98,12 +98,12 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
     companion object {
         private const val TAG = "Downloader"
 
-        fun start(context: Context) {
+        fun start(context: Context, policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE) {
             val request = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .addTag(TAG)
                 .build()
             WorkManager.getInstance(context)
-                .enqueueUniqueWork(TAG, ExistingWorkPolicy.REPLACE, request)
+                .enqueueUniqueWork(TAG, policy, request)
         }
 
         fun isRunningFlow(context: Context): Flow<Boolean> {

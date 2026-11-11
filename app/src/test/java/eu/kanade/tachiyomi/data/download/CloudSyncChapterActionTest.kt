@@ -6,6 +6,14 @@ import org.junit.jupiter.api.Test
 class CloudSyncChapterActionTest {
 
     @Test
+    fun `cover distinguishes active transfers from stored copies`() {
+        assertEquals(CloudCoverStatus.Unsynced, cloudCoverStatus(synced = false, local = true, running = false))
+        assertEquals(CloudCoverStatus.CloudOnly, cloudCoverStatus(synced = true, local = false, running = false))
+        assertEquals(CloudCoverStatus.LocalCopy, cloudCoverStatus(synced = true, local = true, running = false))
+        assertEquals(CloudCoverStatus.Syncing, cloudCoverStatus(synced = false, local = false, running = true))
+    }
+
+    @Test
     fun `cloud directory includes category when category layout is enabled`() {
         val path = cloudRemoteDirectoryPath(
             destination = "/Mihon/",

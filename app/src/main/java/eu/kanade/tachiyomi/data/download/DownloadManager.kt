@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
+import androidx.work.ExistingWorkPolicy
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -88,6 +89,8 @@ class DownloadManager(
         downloader.stop()
     }
 
+    suspend fun clearAllTransfers() = downloader.clearAllTransfers()
+
     /**
      * Returns the download from queue if the chapter is queued for download
      * else it will return null which means that the chapter is not queued for download
@@ -108,7 +111,7 @@ class DownloadManager(
     suspend fun startDownloadNow(chapterId: Long) {
         // If not in queue try to start a new download
         val toAdd = getQueuedDownloadOrNull(chapterId) ?: downloadFromChapterId(chapterId) ?: return
-        downloader.updateQueue { queue ->
+        downloader.updateQueue(retryChapterId = chapterId) { queue ->
             val (existing, others) = queue.partition { it.chapter.id == chapterId }
             listOf(existing.firstOrNull() ?: toAdd) + others
         }
@@ -152,12 +155,36 @@ class DownloadManager(
 
     fun isCloudSyncAvailable(): Boolean = downloader.isCloudSyncAvailable()
 
+    internal suspend fun releaseCloudStorage(
+        manga: Manga,
+        targetId: String? = downloadPreferences.cloudSyncTargetId(),
+    ): CloudStorageReleaseResult = withContext(Dispatchers.IO) {
+        downloader.releaseCloudStorage(manga, targetId)
+    }
+
+    internal suspend fun deleteRemoteManga(manga: Manga, others: List<Manga>, onDeleted: suspend () -> Unit) {
+        withContext(Dispatchers.IO) { downloader.deleteRemoteManga(manga, others, onDeleted) }
+    }
+
     internal suspend fun cloudSyncChapters(
         manga: Manga,
         chapters: List<Chapter>,
         autoStart: Boolean = true,
+        automaticTarget: String? = null,
     ): CloudSyncQueueResult {
-        return downloader.queueChaptersForCloudSync(manga, chapters, autoStart)
+        return downloader.queueChaptersForCloudSync(manga, chapters, autoStart, automaticTarget)
+    }
+
+    internal fun startAutomaticDownloads() {
+        if (!downloader.isRunning && !downloader.isPaused) {
+            DownloadWorker.start(context, ExistingWorkPolicy.KEEP)
+        }
+    }
+
+    internal suspend fun retryAutomaticCloudSync(mangaIds: Set<Long>, target: String) {
+        downloader.retryCloudTransfers { download ->
+            download.automaticSyncTarget == target && download.manga.id in mangaIds
+        }
     }
 
     /**

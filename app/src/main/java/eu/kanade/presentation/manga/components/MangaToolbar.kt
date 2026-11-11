@@ -14,10 +14,14 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
+import eu.kanade.presentation.components.CloudSyncIcon
 import eu.kanade.presentation.components.DownloadDropdownMenu
+import eu.kanade.presentation.components.label
 import eu.kanade.presentation.manga.DownloadAction
+import eu.kanade.presentation.manga.MangaCloudSyncActions
+import eu.kanade.tachiyomi.data.download.CloudSyncStatus
 import mihon.icons.materialsymbols.MaterialSymbols
-import mihon.icons.materialsymbols.rounded.ArrowUpward
+import mihon.icons.materialsymbols.rounded.Cloud
 import mihon.icons.materialsymbols.rounded.Download
 import mihon.icons.materialsymbols.rounded.FilterList
 import mihon.icons.materialsymbols.rounded.FlipToBack
@@ -27,14 +31,14 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.theme.active
 
 @Composable
-fun MangaToolbar(
+internal fun MangaToolbar(
     title: String,
     hasFilters: Boolean,
     navigateUp: () -> Unit,
     onClickFilter: () -> Unit,
     onClickShare: (() -> Unit)?,
     onClickDownload: ((DownloadAction) -> Unit)?,
-    onClickCloudSync: (() -> Unit)?,
+    cloudSync: MangaCloudSyncActions?,
     onClickEditCategory: (() -> Unit)?,
     onClickRefresh: () -> Unit,
     onClickMigrate: (() -> Unit)?,
@@ -104,12 +108,22 @@ fun MangaToolbar(
                             ),
                         )
                     }
-                    if (onClickCloudSync != null) {
+                    if (cloudSync != null) {
+                        val label = stringResource(cloudSync.status?.label ?: MR.strings.cloud_sync)
                         add(
                             AppBar.Action(
-                                title = stringResource(MR.strings.cloud_sync),
-                                icon = MaterialSymbols.Rounded.ArrowUpward,
-                                onClick = onClickCloudSync,
+                                title = label,
+                                icon = MaterialSymbols.Rounded.Cloud,
+                                onClick = cloudSync.onSync,
+                                enabled = cloudSync.status != CloudSyncStatus.Complete &&
+                                    cloudSync.status != CloudSyncStatus.Syncing,
+                                iconContent = { CloudSyncIcon(cloudSync.status, label) },
+                            ),
+                        )
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.cloud_sync_release_storage),
+                                onClick = cloudSync.onReleaseStorage,
                             ),
                         )
                     }

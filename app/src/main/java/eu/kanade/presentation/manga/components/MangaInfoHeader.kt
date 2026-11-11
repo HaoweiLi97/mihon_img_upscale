@@ -364,6 +364,7 @@ private fun MangaAndSourceTitlesLarge(
                 .crossfade(true)
                 .build(),
             contentDescription = stringResource(MR.strings.manga_cover),
+            syncStatus = LocalMangaCoverSyncStatuses.current[manga.id],
             onClick = onCoverClick,
         )
         Spacer(modifier = Modifier.height(16.dp))
@@ -405,6 +406,7 @@ private fun MangaAndSourceTitlesSmall(
                 .crossfade(true)
                 .build(),
             contentDescription = stringResource(MR.strings.manga_cover),
+            syncStatus = LocalMangaCoverSyncStatuses.current[manga.id],
             onClick = onCoverClick,
         )
         Column(

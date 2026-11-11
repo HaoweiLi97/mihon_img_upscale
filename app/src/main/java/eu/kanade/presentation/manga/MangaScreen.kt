@@ -56,6 +56,7 @@ import eu.kanade.presentation.manga.components.MangaInfoBox
 import eu.kanade.presentation.manga.components.MangaToolbar
 import eu.kanade.presentation.manga.components.MissingChapterCountListItem
 import eu.kanade.presentation.util.formatChapterNumber
+import eu.kanade.tachiyomi.data.download.CloudSyncStatus
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
 import eu.kanade.tachiyomi.ui.manga.ChapterList
@@ -77,8 +78,17 @@ import tachiyomi.presentation.core.util.shouldExpandFAB
 import tachiyomi.source.local.isLocal
 import kotlin.time.Instant
 
+internal data class MangaCloudSyncActions(
+    val status: CloudSyncStatus?,
+    val chapterStatuses: Map<Long, CloudSyncStatus>,
+    val onSync: () -> Unit,
+    val onSyncChapter: (ChapterList.Item) -> Unit,
+    val onSyncSelected: ((List<ChapterList.Item>) -> Unit)? = null,
+    val onReleaseStorage: () -> Unit,
+)
+
 @Composable
-fun MangaScreen(
+internal fun MangaScreen(
     state: MangaViewModel.State.Success,
     snackbarHostState: SnackbarHostState,
     nextUpdate: Instant?,
@@ -108,8 +118,7 @@ fun MangaScreen(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
-    onCloudSyncClicked: (() -> Unit)?,
-    onCloudSyncChapterClicked: ((ChapterList.Item) -> Unit)?,
+    cloudSync: MangaCloudSyncActions?,
     onEditCategoryClicked: (() -> Unit)?,
     onEditFetchIntervalClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
@@ -160,8 +169,7 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
-            onCloudSyncClicked = onCloudSyncClicked,
-            onCloudSyncChapterClicked = onCloudSyncChapterClicked,
+            cloudSync = cloudSync,
             onEditCategoryClicked = onEditCategoryClicked,
             onEditIntervalClicked = onEditFetchIntervalClicked,
             onMigrateClicked = onMigrateClicked,
@@ -199,8 +207,7 @@ fun MangaScreen(
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
             onDownloadActionClicked = onDownloadActionClicked,
-            onCloudSyncClicked = onCloudSyncClicked,
-            onCloudSyncChapterClicked = onCloudSyncChapterClicked,
+            cloudSync = cloudSync,
             onEditCategoryClicked = onEditCategoryClicked,
             onEditIntervalClicked = onEditFetchIntervalClicked,
             onMigrateClicked = onMigrateClicked,
@@ -248,8 +255,7 @@ private fun MangaScreenSmallImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
-    onCloudSyncClicked: (() -> Unit)?,
-    onCloudSyncChapterClicked: ((ChapterList.Item) -> Unit)?,
+    cloudSync: MangaCloudSyncActions?,
     onEditCategoryClicked: (() -> Unit)?,
     onEditIntervalClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
@@ -306,7 +312,7 @@ private fun MangaScreenSmallImpl(
                 onClickFilter = onFilterClicked,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
-                onClickCloudSync = onCloudSyncClicked,
+                cloudSync = cloudSync,
                 onClickEditCategory = onEditCategoryClicked,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
@@ -327,6 +333,7 @@ private fun MangaScreenSmallImpl(
                 onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                 onDownloadChapter = onDownloadChapter,
                 onMultiDeleteClicked = onMultiDeleteClicked,
+                onCloudSyncSelected = cloudSync?.onSyncSelected,
                 fillFraction = 1f,
             )
         },
@@ -442,7 +449,7 @@ private fun MangaScreenSmallImpl(
                         chapterSwipeEndAction = chapterSwipeEndAction,
                         onChapterClicked = onChapterClicked,
                         onDownloadChapter = onDownloadChapter,
-                        onCloudSyncChapter = onCloudSyncChapterClicked,
+                        cloudSync = cloudSync,
                         downloadProgressProvider = downloadProgressProvider,
                         onChapterSelected = onChapterSelected,
                         onChapterSwipe = onChapterSwipe,
@@ -454,7 +461,7 @@ private fun MangaScreenSmallImpl(
 }
 
 @Composable
-fun MangaScreenLargeImpl(
+private fun MangaScreenLargeImpl(
     state: MangaViewModel.State.Success,
     snackbarHostState: SnackbarHostState,
     nextUpdate: Instant?,
@@ -484,8 +491,7 @@ fun MangaScreenLargeImpl(
     // For top action menu
     onShareClicked: (() -> Unit)?,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
-    onCloudSyncClicked: (() -> Unit)?,
-    onCloudSyncChapterClicked: ((ChapterList.Item) -> Unit)?,
+    cloudSync: MangaCloudSyncActions?,
     onEditCategoryClicked: (() -> Unit)?,
     onEditIntervalClicked: (() -> Unit)?,
     onMigrateClicked: (() -> Unit)?,
@@ -535,7 +541,7 @@ fun MangaScreenLargeImpl(
                 onClickFilter = onFilterButtonClicked,
                 onClickShare = onShareClicked,
                 onClickDownload = onDownloadActionClicked,
-                onClickCloudSync = onCloudSyncClicked,
+                cloudSync = cloudSync,
                 onClickEditCategory = onEditCategoryClicked,
                 onClickRefresh = onRefresh,
                 onClickMigrate = onMigrateClicked,
@@ -558,6 +564,7 @@ fun MangaScreenLargeImpl(
                 onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                 onDownloadChapter = onDownloadChapter,
                 onMultiDeleteClicked = onMultiDeleteClicked,
+                onCloudSyncSelected = cloudSync?.onSyncSelected,
                 fillFraction = 0.5f,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -671,7 +678,7 @@ fun MangaScreenLargeImpl(
                                 chapterSwipeEndAction = chapterSwipeEndAction,
                                 onChapterClicked = onChapterClicked,
                                 onDownloadChapter = onDownloadChapter,
-                                onCloudSyncChapter = onCloudSyncChapterClicked,
+                                cloudSync = cloudSync,
                                 downloadProgressProvider = downloadProgressProvider,
                                 onChapterSelected = onChapterSelected,
                                 onChapterSwipe = onChapterSwipe,
@@ -692,6 +699,7 @@ private fun SharedMangaBottomActionMenu(
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
+    onCloudSyncSelected: ((List<ChapterList.Item>) -> Unit)?,
     fillFraction: Float,
     modifier: Modifier = Modifier,
 ) {
@@ -723,6 +731,7 @@ private fun SharedMangaBottomActionMenu(
         }.takeIf {
             selected.fastAny { it.downloadState == Download.State.DOWNLOADED }
         },
+        onCloudSyncClicked = onCloudSyncSelected?.let { sync -> { sync(selected) } },
     )
 }
 
@@ -734,7 +743,7 @@ private fun LazyListScope.sharedChapterItems(
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
-    onCloudSyncChapter: ((ChapterList.Item) -> Unit)?,
+    cloudSync: MangaCloudSyncActions?,
     downloadProgressProvider: (chapterId: Long) -> Int,
     onChapterSelected: (ChapterList.Item, Boolean, Boolean) -> Unit,
     onChapterSwipe: (ChapterList.Item, LibraryPreferences.ChapterSwipeAction) -> Unit,
@@ -756,6 +765,11 @@ private fun LazyListScope.sharedChapterItems(
                 MissingChapterCountListItem(count = item.count)
             }
             is ChapterList.Item -> {
+                val cloudStatus = if (cloudSync != null && item.isUploadedToCloud) {
+                    CloudSyncStatus.Complete
+                } else {
+                    cloudSync?.chapterStatuses?.get(item.id)
+                }
                 MangaChapterListItem(
                     title = if (manga.displayMode == Manga.CHAPTER_DISPLAY_NUMBER) {
                         stringResource(
@@ -779,7 +793,7 @@ private fun LazyListScope.sharedChapterItems(
                     bookmark = item.chapter.bookmark,
                     selected = item.selected,
                     downloadIndicatorEnabled = !isAnyChapterSelected && !manga.isLocal(),
-                    cloudUploaded = onCloudSyncChapter != null && item.isUploadedToCloud,
+                    cloudStatus = cloudStatus,
                     downloadStateProvider = { item.downloadState },
                     downloadProgressProvider = { downloadProgressProvider(item.id) },
                     chapterSwipeStartAction = chapterSwipeStartAction,
@@ -801,8 +815,11 @@ private fun LazyListScope.sharedChapterItems(
                     } else {
                         null
                     },
-                    onCloudSyncClick = onCloudSyncChapter
-                        ?.takeUnless { isAnyChapterSelected || item.isUploadedToCloud }
+                    onCloudSyncClick = cloudSync?.onSyncChapter
+                        ?.takeUnless {
+                            isAnyChapterSelected || cloudStatus == CloudSyncStatus.Complete ||
+                                cloudStatus == CloudSyncStatus.Syncing
+                        }
                         ?.let { syncChapter -> { syncChapter(item) } },
                     onChapterSwipe = {
                         onChapterSwipe(item, it)

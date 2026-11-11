@@ -173,7 +173,7 @@ class DownloadQueueViewModel(
     }
 
     fun clearQueue() {
-        viewModelScope.launch { downloadManager.clearQueue() }
+        viewModelScope.launch { downloadManager.clearAllTransfers() }
     }
 
     fun reorder(downloads: List<Download>) {
