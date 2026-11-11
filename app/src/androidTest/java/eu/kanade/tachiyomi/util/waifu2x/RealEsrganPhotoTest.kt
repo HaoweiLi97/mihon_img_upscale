@@ -61,7 +61,10 @@ class RealEsrganPhotoTest {
                     assertTrue("Gradient or tile seams are damaged: MAE=$meanError", meanError < 12)
                     val file = File(context.getExternalFilesDir(null), "photo-ncnn-$precision-$arithmetic.png")
                     file.outputStream().use { output.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                    Log.i("RealEsrganPhotoTest", "precision=$precision arithmetic=$arithmetic mean=$mean MAE=$meanError saved=$file")
+                    Log.i(
+                        "RealEsrganPhotoTest",
+                        "precision=$precision arithmetic=$arithmetic mean=$mean MAE=$meanError saved=$file",
+                    )
                 } finally {
                     output?.recycle()
                 }
