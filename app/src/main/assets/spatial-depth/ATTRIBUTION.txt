@@ -1,0 +1,9 @@
+Depth Anything V3 (DA3-Small)
+Copyright (c) 2025 Depth Anything contributors
+Licensed under the Apache License, Version 2.0.
+
+Model source: https://huggingface.co/depth-anything/DA3-SMALL
+Qualcomm QNN export: https://huggingface.co/qualcomm/Depth-Anything-V3
+
+The model is downloaded on demand and is not embedded in this application.
+Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0

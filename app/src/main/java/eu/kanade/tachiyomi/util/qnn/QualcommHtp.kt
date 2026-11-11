@@ -3,7 +3,7 @@ package eu.kanade.tachiyomi.util.qnn
 import android.content.Context
 import android.util.Log
 
-/** Runtime HTP capability detection for image enhancement. */
+/** Runtime HTP capability detection shared by image enhancement and spatial depth. */
 object QualcommHtp {
     private val supportedArchitectures = setOf(69, 73, 75, 79, 81)
 

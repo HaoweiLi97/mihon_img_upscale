@@ -1,4 +1,4 @@
-#include "qnn_dlc_runtime.h"
+#include "spatial_qnn_runtime.h"
 #include <android/log.h>
 #include <jni.h>
 #include <chrono>
@@ -42,7 +42,7 @@ Java_dev_mihon_npubench_MainActivity_nativeRun(JNIEnv* env, jobject activity,
         const std::string dsp = utf(env, libraryDir) +
             ";/vendor/dsp/cdsp;/vendor/lib/rfsa/cdsp;/system/vendor/lib/rfsa/cdsp";
         setenv("ADSP_LIBRARY_PATH", dsp.c_str(), 1);
-        qnn_dlc::Runtime runtime;
+        spatial_qnn::Runtime runtime;
         stage(env, activity, "Initializing QNN 2.49 HTP runtime");
         auto start = Clock::now();
         if (!runtime.initialize()) throw std::runtime_error(runtime.error());
@@ -74,7 +74,7 @@ Java_dev_mihon_npubench_MainActivity_nativeRun(JNIEnv* env, jobject activity,
             outputs[0].dimensions != std::vector<uint32_t>{1, 512, 512, 3})
             throw std::runtime_error("Unexpected graph shape; expected NHWC 256 -> 512 RGB");
         stage(env, activity, "Running one synthetic 256x256 tile on HTP");
-        qnn_dlc::TensorData input = inputs[0];
+        spatial_qnn::TensorData input = inputs[0];
         input.values.resize(256 * 256 * 3);
         for (size_t y = 0; y < 256; ++y) {
             for (size_t x = 0; x < 256; ++x) {
@@ -84,7 +84,7 @@ Java_dev_mihon_npubench_MainActivity_nativeRun(JNIEnv* env, jobject activity,
                 input.values[i + 2] = 0.5f;
             }
         }
-        std::vector<qnn_dlc::TensorData> result;
+        std::vector<spatial_qnn::TensorData> result;
         start = Clock::now();
         if (!runtime.execute({std::move(input)}, result)) throw std::runtime_error(runtime.error());
         report << "FIRST TILE (including tensor copies): " << millis(start) << " ms\n";

@@ -85,7 +85,7 @@ Both Qualcomm and MediaTek backends use these 15 FP16 model variants:
 
 ## Reader features
 
-Retains Mihon's library, categories, tracking, backups, local reading, and webtoon support, with additional book page turns, image enhancement, and ink filters.
+Retains Mihon's library, categories, tracking, backups, local reading, and webtoon support, with additional book page turns, image enhancement, ink filters, and Depth Anything V3 spatial images. Spatial images use a separate depth model and Qualcomm processing pipeline.
 
 ## Building locally
 

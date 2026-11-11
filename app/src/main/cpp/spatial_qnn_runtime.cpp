@@ -1,7 +1,8 @@
-#include "qnn_dlc_runtime.h"
+#include "spatial_qnn_runtime.h"
 
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -10,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <sys/stat.h>
 #include <utility>
 
 #if MIHON_ENABLE_QNN
@@ -18,7 +20,7 @@
 #include <System/QnnSystemInterface.h>
 #endif
 
-namespace qnn_dlc {
+namespace spatial_qnn {
 
 #if MIHON_ENABLE_QNN
 namespace {
@@ -513,7 +515,7 @@ public:
     if (status != QNN_SUCCESS || !binary_graphs(info, graphs, graph_count) ||
         graph_count != 1) {
       system().systemContextFree(system_context);
-      return fail("Expected one graph in compiled QNN context");
+      return fail("Expected one graph in compiled depth context");
     }
     const char *name = nullptr;
     const Qnn_Tensor_t *graph_inputs = nullptr, *graph_outputs = nullptr;
@@ -521,7 +523,7 @@ public:
     if (!graph_fields(graphs[0], name, graph_inputs, input_count, graph_outputs,
                       output_count) || !name || !graph_inputs || !graph_outputs) {
       system().systemContextFree(system_context);
-      return fail("Invalid graph metadata in compiled QNN context");
+      return fail("Invalid graph metadata in compiled depth context");
     }
     graph_name = name;
     inputs.resize(input_count);
@@ -529,13 +531,13 @@ public:
     for (uint32_t i = 0; i < input_count; ++i) {
       if (!copy_tensor(graph_inputs[i], inputs[i])) {
         system().systemContextFree(system_context);
-        return fail("Unsupported QNN input tensor metadata");
+        return fail("Unsupported depth input tensor metadata");
       }
     }
     for (uint32_t i = 0; i < output_count; ++i) {
       if (!copy_tensor(graph_outputs[i], outputs[i])) {
         system().systemContextFree(system_context);
-        return fail("Unsupported QNN output tensor metadata");
+        return fail("Unsupported depth output tensor metadata");
       }
     }
     system().systemContextFree(system_context);
@@ -544,7 +546,7 @@ public:
     if (status == QNN_SUCCESS) status = qnn().graphRetrieve(context, graph_name.c_str(), &graph);
     if (status != QNN_SUCCESS) {
       unload_graph();
-      return fail("Unable to load compiled QNN graph: " +
+      return fail("Unable to load compiled depth graph: " +
                   std::to_string(status));
     }
     input_metadata.clear();
@@ -628,7 +630,7 @@ public:
   bool execute(const std::vector<TensorData> &provided_inputs,
                std::vector<TensorData> &provided_outputs) {
     if (!graph || provided_inputs.size() != inputs.size())
-      return fail("QNN graph is not loaded or input count is incorrect");
+      return fail("Depth graph is not loaded or input count is incorrect");
     std::vector<Qnn_Tensor_t> input_tensors(inputs.size());
     std::vector<Qnn_Tensor_t> output_tensors(outputs.size());
     for (size_t i = 0; i < inputs.size(); ++i) {
@@ -662,6 +664,58 @@ public:
     error.clear();
     return true;
   }
+
+  bool execute_to_files(const std::vector<TensorData> &provided_inputs,
+                        const std::string &output_directory) {
+    if (!graph || provided_inputs.size() != inputs.size())
+      return fail("Depth graph is not loaded or input count is incorrect");
+    if (mkdir(output_directory.c_str(), 0700) != 0 && errno != EEXIST)
+      return fail("Unable to create output directory " + output_directory);
+
+    std::vector<Qnn_Tensor_t> input_tensors(inputs.size());
+    std::vector<Qnn_Tensor_t> output_tensors(outputs.size());
+    for (size_t i = 0; i < inputs.size(); ++i) {
+      auto found = std::find_if(provided_inputs.begin(), provided_inputs.end(),
+                                [&](const TensorData &value) {
+                                  return value.name == inputs[i].name;
+                                });
+      if (found == provided_inputs.end() || !encode(*found, inputs[i])) return false;
+      input_tensors[i] = inputs[i].tensor;
+    }
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      size_t count = 0;
+      if (!checked_elements(outputs[i].dimensions, count))
+        return fail("Invalid output dimensions for " + outputs[i].name);
+      const size_t bytes = count * element_size(outputs[i].tensor.v2.dataType);
+      if (!outputs[i].buffer.resize(bytes))
+        return fail("Unable to allocate output buffer for " + outputs[i].name);
+      outputs[i].tensor.v2.clientBuf.data = outputs[i].buffer.data;
+      outputs[i].tensor.v2.clientBuf.dataSize = static_cast<uint32_t>(bytes);
+      output_tensors[i] = outputs[i].tensor;
+    }
+    const Qnn_ErrorHandle_t status = qnn().graphExecute(
+        graph, input_tensors.data(), static_cast<uint32_t>(input_tensors.size()),
+        output_tensors.data(), static_cast<uint32_t>(output_tensors.size()),
+        nullptr, nullptr);
+    if (status != QNN_SUCCESS)
+      return fail("QNN graphExecute failed: " + std::to_string(status));
+
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      TensorData decoded;
+      if (!decode(outputs[i], decoded)) return false;
+      const std::string path = output_directory + "/" +
+          Runtime::safe_tensor_filename(outputs[i].name) + ".raw";
+      std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+      stream.write(reinterpret_cast<const char *>(decoded.values.data()),
+                   static_cast<std::streamsize>(decoded.values.size() * sizeof(float)));
+      stream.close();
+      decoded.values.clear();
+      outputs[i].buffer.clear();
+      if (!stream) return fail("Unable to write QNN output " + path);
+    }
+    error.clear();
+    return true;
+  }
 #else
   bool initialize() { error = "QNN is available only in arm64 builds"; return false; }
   void unload_graph() {}
@@ -669,6 +723,7 @@ public:
   bool compile_dlc(const std::string &, const std::string &) { return initialize(); }
   bool load(const std::string &) { return initialize(); }
   bool execute(const std::vector<TensorData> &, std::vector<TensorData> &) { return initialize(); }
+  bool execute_to_files(const std::vector<TensorData> &, const std::string &) { return initialize(); }
 #endif
 };
 
@@ -686,6 +741,10 @@ bool Runtime::execute(const std::vector<TensorData> &inputs,
                       std::vector<TensorData> &outputs) {
   return impl_->execute(inputs, outputs);
 }
+bool Runtime::execute_to_files(const std::vector<TensorData> &inputs,
+                               const std::string &output_directory) {
+  return impl_->execute_to_files(inputs, output_directory);
+}
 void Runtime::unload_graph() { impl_->unload_graph(); }
 void Runtime::reset() { impl_->reset(); }
 const std::vector<TensorData> &Runtime::input_metadata() const {
@@ -696,4 +755,13 @@ const std::vector<TensorData> &Runtime::output_metadata() const {
 }
 const std::string &Runtime::error() const { return impl_->error; }
 
-} // namespace qnn_dlc
+std::string Runtime::safe_tensor_filename(const std::string &name) {
+  std::string result = name;
+  for (char &value : result) {
+    if (!std::isalnum(static_cast<unsigned char>(value)) && value != '-' &&
+        value != '_' && value != '.') value = '_';
+  }
+  return result;
+}
+
+} // namespace spatial_qnn
