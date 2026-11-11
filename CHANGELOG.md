@@ -12,8 +12,22 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.18] - 2026-11-11
+
+### Added
+- Configure automatic WebDAV library sync by category in the new Remote Sync settings. Pause or resume individual categories and see sync status in the library and manga details.
+- Manage WebDAV uploads from the download queue. Pause, resume, retry or cancel individual uploads, and retain their state across app restarts.
+
+### Fixed
+- Preserve existing remote CBZ files on filename conflicts and replace `meta.info` only after its new contents have been uploaded. Keep ordinary chapter downloads running if metadata generation fails.
+- Scope chapter upload history to the WebDAV destination and account, hide upload actions when WebDAV is unavailable, and exclude the WebDAV password from ordinary settings backups.
+- Preserve INT8 (W8A8) when loading Real-ESRGAN Anime 2x on Qualcomm NPUs. Automatically use INT8 when FP16 is reported as unsupported, keep the page cache key consistent through the fallback, and discard old incorrectly labeled results and skip markers. Thanks to @akg002 for PR #29.
+
 ### Removed
 - Remove spatial images from the reader. The feature is maintained separately on the codex/spatial-images branch.
+
+### Other
+- Increase Android versionCode to 50 for in-place upgrades from v1.3.17 and v1.3.18-beta.1.
 
 ## [v1.3.18-beta.1] - 2026-11-07
 
