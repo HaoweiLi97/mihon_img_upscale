@@ -12,6 +12,14 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.21] - 2026-11-12
+
+### Added
+- Choose OneDrive or WebDAV for cloud sync. Each service remembers its own connection and destination.
+
+### Fixed
+- Complete OneDrive sign-in when Microsoft adds a trailing slash to the Android callback URL.
+
 ## [v1.3.20] - 2026-11-11
 
 ### Added

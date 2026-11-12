@@ -99,6 +99,7 @@ interface AppGraph : ViewModelGraph {
     val crashLogUtil: CrashLogUtil
 
     val cloudSyncService: eu.kanade.tachiyomi.data.download.CloudSyncService
+    val oneDriveAuth: eu.kanade.tachiyomi.data.download.OneDriveAuth
     val downloadManager: DownloadManager
     val libraryCloudSync: LibraryCloudSync
 

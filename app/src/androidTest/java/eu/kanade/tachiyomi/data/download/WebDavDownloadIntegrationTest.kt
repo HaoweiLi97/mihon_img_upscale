@@ -233,26 +233,26 @@ class WebDavDownloadIntegrationTest {
 
     @Test
     fun remoteConflictsAndFailedIndexReplacementPreserveExistingBytes() = runBlocking {
-        val config = CloudSyncConfig(server.url, "user", "pass")
-        val service = graph.cloudSyncService
+        val config = WebDavConfig(server.url, "user", "pass")
+        val service = graph.cloudSyncService.storage(config)
         val local = "local contents".toByteArray()
         val original = "existing contents".toByteArray()
         val file = checkNotNull(UniFile.fromFile(File(root, "new.cbz").apply { writeBytes(local) }))
         server.files["/target/chapter.cbz"] = original
-        val failure = runCatching { service.uploadCbz(config, "/target", file, "chapter.cbz") {} }.exceptionOrNull()
+        val failure = runCatching { service.uploadCbz("/target", file, "chapter.cbz") {} }.exceptionOrNull()
         assertTrue(failure is CloudUploadConflictException)
         assertArrayEquals(original, server.files["/target/chapter.cbz"])
         server.files["/target/chapter.cbz"] = local
-        service.uploadCbz(config, "/target", file, "chapter.cbz") {}
+        service.uploadCbz("/target", file, "chapter.cbz") {}
         assertEquals(2, server.conditionedPuts.get())
 
         server.files["/target/meta.info"] = original
         server.rejectMove = true
-        assertTrue(runCatching { service.replaceFile(config, "/target", file, "meta.info") }.isFailure)
+        assertTrue(runCatching { service.replaceFile("/target", file, "meta.info") }.isFailure)
         assertArrayEquals(original, server.files["/target/meta.info"])
         assertFalse(server.files.keys.any { it.endsWith(".tmp") })
         server.rejectMove = false
-        service.replaceFile(config, "/target", file, "meta.info")
+        service.replaceFile("/target", file, "meta.info")
         assertArrayEquals(local, server.files["/target/meta.info"])
     }
 
@@ -350,7 +350,7 @@ class WebDavDownloadIntegrationTest {
         downloads.cloudSyncDestination().set("/target")
         downloads.cloudSyncEnabled().set(true)
         downloads.cloudSyncDeleteAfterUpload().set(true)
-        assertTrue(downloads.cloudSyncPreferWebDavDownloads().get())
+        assertTrue(downloads.cloudSyncPreferRemoteDownloads().get())
 
         val target = checkNotNull(downloads.cloudSyncTargetId())
         val chapter = chapters.first()
@@ -388,13 +388,13 @@ class WebDavDownloadIntegrationTest {
 
         server.rejectImages = false
         server.fileGets.clear()
-        downloads.cloudSyncPreferWebDavDownloads().set(false)
+        downloads.cloudSyncPreferRemoteDownloads().set(false)
         downloadChapter()
         assertTrue(server.fileGets.isEmpty())
         assertEquals(2, server.images.get())
         assertTrue(localArchives().single().delete())
 
-        downloads.cloudSyncPreferWebDavDownloads().set(true)
+        downloads.cloudSyncPreferRemoteDownloads().set(true)
         server.files[oldPath] = "Invalid archive".toByteArray()
         downloadChapter()
         assertTrue(oldPath in server.fileGets)
@@ -610,8 +610,8 @@ class WebDavDownloadIntegrationTest {
         ) { href ->
             "<d:response><d:href>$href</d:href><d:resourcetype><d:collection/></d:resourcetype></d:response>"
         }
-        val config = CloudSyncConfig("${server.url}/dav", "user", "pass")
-        val directories = graph.cloudSyncService.listDirectories(config, "/target")
+        val config = WebDavConfig("${server.url}/dav", "user", "pass")
+        val directories = graph.cloudSyncService.storage(config).listDirectories("/target")
         assertEquals(setOf("/target/A+B", "/target/Nested%2Fname"), directories.map { it.path }.toSet())
     }
 

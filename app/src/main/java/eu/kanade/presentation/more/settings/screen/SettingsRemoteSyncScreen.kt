@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -32,24 +33,21 @@ import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.MultiSelectListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TrailingWidgetBuffer
-import eu.kanade.tachiyomi.data.download.CloudSyncConfig
-import eu.kanade.tachiyomi.data.download.CloudSyncService
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.download.CloudSyncStatus
+import eu.kanade.tachiyomi.data.download.WebDavConfig
+import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import mihon.app.di.appGraph
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.download.service.CloudSyncStorage
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.i18n.MR
-import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import tachiyomi.core.common.i18n.stringResource as contextStringResource
 
 object SettingsRemoteSyncScreen : SearchableSettings {
@@ -163,19 +161,40 @@ object SettingsRemoteSyncScreen : SearchableSettings {
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
-        val cloudSyncService = remember { Injekt.get<CloudSyncService>() }
+        val graph = context.appGraph
+        val oneDriveAuth = graph.oneDriveAuth
 
+        val storage by downloadPreferences.cloudSyncStorage().collectAsState()
         val cloudSyncEnabled by downloadPreferences.cloudSyncEnabled().collectAsState()
         val cloudSyncUrl by downloadPreferences.cloudSyncUrl().collectAsState()
         val cloudSyncUsername by downloadPreferences.cloudSyncUsername().collectAsState()
         val cloudSyncPassword by downloadPreferences.cloudSyncPassword().collectAsState()
-        val cloudSyncDestination by downloadPreferences.cloudSyncDestination().collectAsState()
+        val oneDriveId by downloadPreferences.cloudSyncOneDriveId().collectAsState()
+        val cloudSyncDestination by key(storage) { downloadPreferences.cloudSyncDestination(storage).collectAsState() }
         val deleteAfterUpload by downloadPreferences.cloudSyncDeleteAfterUpload().collectAsState()
 
-        var showLoginDialog by rememberSaveable { mutableStateOf(false) }
-        var testingConnection by rememberSaveable { mutableStateOf(false) }
+        var showLoginDialog by rememberSaveable(storage) { mutableStateOf(false) }
+        var testingConnection by remember { mutableStateOf(false) }
+        val oneDriveConnected = oneDriveId.isNotBlank()
 
-        if (showLoginDialog) {
+        fun signInToOneDrive() {
+            testingConnection = true
+            scope.launch {
+                try {
+                    val url = oneDriveAuth.authorizationUrl(BuildConfig.ONEDRIVE_CLIENT_ID)
+                    showLoginDialog = false
+                    context.openInBrowser(url, forceDefaultBrowser = true)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    context.toast(MR.strings.cloud_sync_onedrive_login_failed)
+                } finally {
+                    testingConnection = false
+                }
+            }
+        }
+
+        if (showLoginDialog && storage == CloudSyncStorage.WebDav) {
             CloudSyncLoginDialog(
                 initialUrl = cloudSyncUrl,
                 initialUsername = cloudSyncUsername,
@@ -185,61 +204,95 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                 onConfirm = { url, username, password ->
                     testingConnection = true
                     scope.launch {
-                        val result = withContext(Dispatchers.IO) {
-                            runCatching {
-                                cloudSyncService.testConnection(
-                                    CloudSyncConfig(
-                                        url = url.trim(),
-                                        username = username.trim(),
-                                        password = password,
-                                    ),
-                                )
-                            }
+                        try {
+                            val config = WebDavConfig(url.trim(), username.trim(), password)
+                            graph.cloudSyncService.storage(config).listDirectories("/")
+                            downloadPreferences.cloudSyncUrl().set(config.url)
+                            downloadPreferences.cloudSyncUsername().set(config.username)
+                            downloadPreferences.cloudSyncPassword().set(config.password)
+                            downloadPreferences.cloudSyncEnabled().set(true)
+                            showLoginDialog = false
+                            context.toast(MR.strings.cloud_sync_connection_success)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            context.toast(
+                                error.message ?: context.contextStringResource(MR.strings.cloud_sync_connection_failed),
+                            )
+                        } finally {
+                            testingConnection = false
                         }
-                        testingConnection = false
-                        result
-                            .onSuccess {
-                                downloadPreferences.cloudSyncUrl().set(url.trim())
-                                downloadPreferences.cloudSyncUsername().set(username.trim())
-                                downloadPreferences.cloudSyncPassword().set(password)
-                                downloadPreferences.cloudSyncEnabled().set(true)
-                                showLoginDialog = false
-                                context.toast(MR.strings.cloud_sync_connection_success)
-                            }
-                            .onFailure {
-                                context.toast(
-                                    it.message ?: context.contextStringResource(
-                                        MR.strings.cloud_sync_connection_failed,
-                                    ),
-                                )
-                            }
+                    }
+                },
+            )
+        }
+        if (showLoginDialog && storage == CloudSyncStorage.OneDrive && oneDriveConnected) {
+            OneDriveAccountDialog(
+                busy = testingConnection,
+                onDismiss = { if (!testingConnection) showLoginDialog = false },
+                onSignIn = ::signInToOneDrive,
+                onDisconnect = {
+                    testingConnection = true
+                    scope.launch {
+                        try {
+                            oneDriveAuth.disconnect()
+                            showLoginDialog = false
+                        } finally {
+                            testingConnection = false
+                        }
                     }
                 },
             )
         }
 
         val cloudSettingsAvailable = saveChaptersAsCBZ
-        val destinationAvailable = cloudSettingsAvailable && cloudSyncEnabled
+        val connected = when (storage) {
+            CloudSyncStorage.WebDav ->
+                cloudSyncEnabled &&
+                    WebDavConfig(cloudSyncUrl, cloudSyncUsername, cloudSyncPassword).isValid
+            CloudSyncStorage.OneDrive -> oneDriveConnected
+        }
+        val destinationAvailable = cloudSettingsAvailable && connected
         val autoSyncAvailable = destinationAvailable && cloudSyncDestination.isNotBlank()
-        val libraryCloudSync = context.appGraph.libraryCloudSync
+        val libraryCloudSync = graph.libraryCloudSync
         val categoryEntries = categories.associate { it.id.toString() to it.visualName }
         val categoryPickerTitle = stringResource(MR.strings.cloud_sync_auto_categories)
+        val connectionTitle = stringResource(
+            when (storage) {
+                CloudSyncStorage.WebDav -> MR.strings.cloud_sync_webdav_connection
+                CloudSyncStorage.OneDrive -> MR.strings.cloud_sync_onedrive_connection
+            },
+        )
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.cloud_sync),
             preferenceItems = persistentListOf(
-                Preference.PreferenceItem.CustomPreference(
-                    title = stringResource(MR.strings.cloud_sync),
-                ) {
+                Preference.PreferenceItem.ListPreference(
+                    preference = downloadPreferences.cloudSyncStorage(),
+                    entries = mapOf(CloudSyncStorage.WebDav to "WebDAV", CloudSyncStorage.OneDrive to "OneDrive"),
+                    title = stringResource(MR.strings.cloud_sync_storage),
+                ),
+                Preference.PreferenceItem.CustomPreference(title = connectionTitle) {
                     CloudSyncTextPreference(
-                        title = stringResource(MR.strings.cloud_sync),
+                        title = connectionTitle,
                         subtitle = when {
                             !saveChaptersAsCBZ -> stringResource(MR.strings.cloud_sync_requires_cbz)
-                            cloudSyncEnabled -> stringResource(MR.strings.cloud_sync_connected, cloudSyncUsername)
+                            connected && storage == CloudSyncStorage.WebDav ->
+                                stringResource(MR.strings.cloud_sync_connected, cloudSyncUsername)
+                            connected -> stringResource(MR.strings.cloud_sync_connection_success)
+                            storage == CloudSyncStorage.OneDrive -> stringResource(
+                                MR.strings.cloud_sync_onedrive_sign_in,
+                            )
                             else -> stringResource(MR.strings.cloud_sync_not_configured)
                         },
-                        enabled = cloudSettingsAvailable,
-                        onClick = { showLoginDialog = true },
+                        enabled = cloudSettingsAvailable && !testingConnection,
+                        onClick = {
+                            if (storage == CloudSyncStorage.OneDrive && !oneDriveConnected) {
+                                signInToOneDrive()
+                            } else {
+                                showLoginDialog = true
+                            }
+                        },
                     )
                 },
                 Preference.PreferenceItem.CustomPreference(
@@ -271,9 +324,9 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                     visible = autoSyncAvailable && participatingIds.isNotEmpty(),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = downloadPreferences.cloudSyncPreferWebDavDownloads(),
-                    title = stringResource(MR.strings.cloud_sync_prefer_webdav_downloads),
-                    subtitle = stringResource(MR.strings.cloud_sync_prefer_webdav_downloads_summary),
+                    preference = downloadPreferences.cloudSyncPreferRemoteDownloads(),
+                    title = stringResource(MR.strings.cloud_sync_prefer_remote_downloads),
+                    subtitle = stringResource(MR.strings.cloud_sync_prefer_remote_downloads_summary),
                 ),
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(MR.strings.cloud_sync_delete_after_upload),
@@ -292,6 +345,30 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                     visible = destinationAvailable,
                 ),
             ),
+        )
+    }
+
+    @Composable
+    private fun OneDriveAccountDialog(
+        busy: Boolean,
+        onDismiss: () -> Unit,
+        onSignIn: () -> Unit,
+        onDisconnect: () -> Unit,
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(stringResource(MR.strings.cloud_sync_onedrive_connection)) },
+            text = { Text(stringResource(MR.strings.cloud_sync_connection_success)) },
+            confirmButton = {
+                TextButton(enabled = !busy, onClick = onSignIn) {
+                    Text(stringResource(MR.strings.cloud_sync_onedrive_reconnect))
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = onDisconnect) {
+                    Text(stringResource(MR.strings.cloud_sync_onedrive_disconnect))
+                }
+            },
         )
     }
 

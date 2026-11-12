@@ -72,12 +72,7 @@ class LibraryCloudSync(
         preferences.remoteSyncCategories().changes(),
         preferences.cloudSyncAutomaticPaused().changes(),
         preferences.cloudSyncPausedCategories().changes(),
-        preferences.saveChaptersAsCBZ.changes(),
-        preferences.cloudSyncEnabled().changes(),
-        preferences.cloudSyncUrl().changes(),
-        preferences.cloudSyncUsername().changes(),
-        preferences.cloudSyncPassword().changes(),
-        preferences.cloudSyncDestination().changes(),
+        preferences.cloudSyncSettingsChanges(),
     ).map { currentRules() }.distinctUntilChanged()
 
     internal val selection = rules.flatMapLatest { rules ->
@@ -99,17 +94,9 @@ class LibraryCloudSync(
     }
 
     internal fun currentRules(): CloudSyncRules {
-        val target = preferences.cloudSyncTargetId().takeIf {
-            preferences.saveChaptersAsCBZ.get() && preferences.cloudSyncEnabled().get() &&
-                CloudSyncConfig(
-                    preferences.cloudSyncUrl().get(),
-                    preferences.cloudSyncUsername().get(),
-                    preferences.cloudSyncPassword().get(),
-                ).isValid
-        }
         return CloudSyncRules(
             categories = preferences.remoteSyncCategories().get().mapNotNull(String::toLongOrNull).toSet(),
-            target = target,
+            target = preferences.activeCloudSyncTarget()?.id,
             paused = preferences.cloudSyncAutomaticPaused().get(),
             pausedCategories = preferences.cloudSyncPausedCategories().get().mapNotNull(String::toLongOrNull).toSet(),
         )

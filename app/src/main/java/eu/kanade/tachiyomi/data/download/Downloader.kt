@@ -594,7 +594,7 @@ class Downloader(
         otherMangas: List<Manga>,
         onDeleted: suspend () -> Unit,
     ) {
-        val target = cloudSyncTargetOrNull() ?: error("WebDAV is not configured")
+        val target = cloudSyncTargetOrNull() ?: error("Cloud storage is not configured")
         val source = sourceManager.getOrStub(manga.source)
         check(deletingRemoteMangas.add(manga.id)) { "This manga is already being removed" }
         try {
@@ -625,7 +625,7 @@ class Downloader(
                         folder.split('/').none { it == "." || it == ".." } &&
                         (otherRecordedFolders + otherFolders).none { it.equals(folder, ignoreCase = true) }
                 },
-            ) { "The WebDAV manga folder is shared or outside the sync destination" }
+            ) { "The cloud manga folder is shared or outside the sync destination" }
 
             var interruptedDownload: Job? = null
             editQueue {
@@ -638,8 +638,8 @@ class Downloader(
             }
             jobs.forEach { it.join() }
             folders.forEach { folder ->
-                check(cloudSyncTargetOrNull()?.id == target.id) { "WebDAV settings changed" }
-                cloudSyncService.deleteMangaCollection(target.config, folder)
+                check(cloudSyncTargetOrNull()?.id == target.id) { "Cloud storage settings changed" }
+                cloudSyncService.storage(target.config).deleteMangaCollection(folder)
             }
 
             withContext(NonCancellable) {
@@ -690,7 +690,7 @@ class Downloader(
         val remoteSizes = if (candidates.size > 1) {
             try {
                 val fileNames = candidates.mapTo(HashSet()) { it.remoteName }
-                cloudSyncService.listRemoteFileSizes(target.config, remoteDirectory, fileNames)
+                cloudSyncService.storage(target.config).listRemoteFileSizes(remoteDirectory, fileNames)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 logcat(LogPriority.WARN, error) { "Could not verify remote files for manga ${manga.id}" }
@@ -706,7 +706,7 @@ class Downloader(
                 val deleted = try {
                     val remoteSize = remoteSizes?.get(remoteName)
                     val verifiedSize = if (remoteSizes == null || (remoteName in remoteSizes && remoteSize == null)) {
-                        cloudSyncService.remoteFileSize(target.config, remoteDirectory, remoteName)
+                        cloudSyncService.storage(target.config).remoteFileSize(remoteDirectory, remoteName)
                     } else {
                         remoteSize
                     }
@@ -976,7 +976,7 @@ class Downloader(
     }
 
     private suspend fun downloadSyncedChapter(download: Download, mangaDir: UniFile, fileName: String): UniFile? {
-        if (!downloadPreferences.cloudSyncPreferWebDavDownloads().get()) return null
+        if (!downloadPreferences.cloudSyncPreferRemoteDownloads().get()) return null
         val target = cloudSyncTargetOrNull() ?: return null
         val chapter = download.chapter
         if (!downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id)) return null
@@ -998,7 +998,7 @@ class Downloader(
                     .distinct()
                 val found = names.any { name ->
                     directories.any { directory ->
-                        cloudSyncService.downloadCbz(target.config, directory, name, tempFile)
+                        cloudSyncService.storage(target.config).downloadCbz(directory, name, tempFile)
                     }
                 }
                 found && tempFile.archiveReader(context).use { reader ->
@@ -1006,7 +1006,7 @@ class Downloader(
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                logcat(LogPriority.WARN, error) { "WebDAV download failed for chapter ${chapter.id}" }
+                logcat(LogPriority.WARN, error) { "Cloud download failed for chapter ${chapter.id}" }
                 false
             }
             coroutineContext.ensureActive()
@@ -1380,20 +1380,7 @@ class Downloader(
         return snapshot
     }
 
-    private fun cloudSyncTargetOrNull(): CloudSyncTarget? {
-        if (!downloadPreferences.saveChaptersAsCBZ.get() || !downloadPreferences.cloudSyncEnabled().get()) return null
-
-        val config = CloudSyncConfig(
-            url = downloadPreferences.cloudSyncUrl().get(),
-            username = downloadPreferences.cloudSyncUsername().get(),
-            password = downloadPreferences.cloudSyncPassword().get(),
-        )
-        val destination = downloadPreferences.cloudSyncDestination().get()
-        if (!config.isValid) return null
-        val id = downloadPreferences.cloudSyncTargetId(config.url, config.username, destination) ?: return null
-
-        return CloudSyncTarget(config, destination, id)
-    }
+    private fun cloudSyncTargetOrNull() = downloadPreferences.activeCloudSyncTarget()
 
     private suspend fun enqueueCloudUpload(record: CloudUploadRecord, download: Download): Boolean {
         restoreCloudUploadsJob.join()
@@ -1496,9 +1483,9 @@ class Downloader(
             val uploadFile = file
             val config = cloudSyncTargetOrNull()?.takeIf { it.id == record.targetId }?.config
                 ?: throw CloudUploadTargetChangedException()
+            val storage = cloudSyncService.storage(config)
             if (record.isChapter) {
-                cloudSyncService.uploadCbz(
-                    config,
+                storage.uploadCbz(
                     record.remoteDirectory,
                     uploadFile,
                     record.fileName,
@@ -1506,13 +1493,12 @@ class Downloader(
                     if (owner.isActive) task.download.uploadProgress = progress
                 }
             } else {
-                val remoteHash = cloudSyncService.remoteFileSha256OrNull(
-                    config,
+                val remoteHash = storage.remoteFileSha256OrNull(
                     record.remoteDirectory,
                     record.fileName,
                 )
                 if (remoteHash != record.contentHash) {
-                    cloudSyncService.replaceFile(config, record.remoteDirectory, uploadFile, record.fileName)
+                    storage.replaceFile(record.remoteDirectory, uploadFile, record.fileName)
                 }
             }
         } catch (error: Exception) {
@@ -1883,12 +1869,6 @@ private fun Long.toMetaInfoStatus(): String = when (toInt()) {
     else -> "unknown"
 }
 
-private data class CloudSyncTarget(
-    val config: CloudSyncConfig,
-    val destination: String,
-    val id: String,
-)
-
 private data class CloudStorageCandidate(
     val chapter: Chapter,
     val file: UniFile,
@@ -1939,7 +1919,7 @@ private class CloudUploadTask(record: CloudUploadRecord, val download: Download)
 }
 
 private class CloudUploadTargetChangedException :
-    IllegalStateException("Restore the original WebDAV settings to resume this upload")
+    IllegalStateException("Switch back to the original cloud storage and destination to resume this upload")
 
 @Serializable
 private data class MetaInfoManifest(

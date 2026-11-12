@@ -35,25 +35,25 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.data.download.CloudSyncConfig
 import eu.kanade.tachiyomi.data.download.CloudSyncDirectory
-import eu.kanade.tachiyomi.data.download.CloudSyncService
+import eu.kanade.tachiyomi.data.download.OneDriveConfig
+import eu.kanade.tachiyomi.data.download.WebDavConfig
+import eu.kanade.tachiyomi.data.download.cloudStorageConfig
 import eu.kanade.tachiyomi.data.download.normalizePath
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import mihon.app.di.appGraph
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.Check
 import mihon.icons.materialsymbols.rounded.Folder
 import mihon.icons.materialsymbols.rounded.KeyboardArrowDown
 import mihon.icons.materialsymbols.rounded.KeyboardArrowRight
-import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.download.service.CloudSyncStorage
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 class CloudSyncDestinationScreen : Screen() {
 
@@ -61,22 +61,23 @@ class CloudSyncDestinationScreen : Screen() {
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
-        val downloadPreferences = remember { Injekt.get<DownloadPreferences>() }
-        val cloudSyncService = remember { Injekt.get<CloudSyncService>() }
+        val graph = context.appGraph
+        val downloadPreferences = graph.downloadPreferences
 
+        val storage by downloadPreferences.cloudSyncStorage().collectAsState()
+        val enabled by downloadPreferences.cloudSyncEnabled().collectAsState()
         val url by downloadPreferences.cloudSyncUrl().collectAsState()
         val username by downloadPreferences.cloudSyncUsername().collectAsState()
         val password by downloadPreferences.cloudSyncPassword().collectAsState()
-        val savedDestination by downloadPreferences.cloudSyncDestination().collectAsState()
-        val config = remember(url, username, password) {
-            CloudSyncConfig(
-                url = url,
-                username = username,
-                password = password,
-            )
+        val driveId by downloadPreferences.cloudSyncOneDriveId().collectAsState()
+        val savedDestination by key(storage) { downloadPreferences.cloudSyncDestination(storage).collectAsState() }
+        val config = when (storage) {
+            CloudSyncStorage.WebDav -> WebDavConfig(url, username, password).takeIf { enabled && it.isValid }
+            CloudSyncStorage.OneDrive -> driveId.takeIf(String::isNotBlank)?.let(::OneDriveConfig)
         }
 
-        key(config) {
+        key(storage, config) {
+            val remote = remember(config) { config?.let(graph.cloudSyncService::storage) }
             val scope = rememberCoroutineScope()
             var selectedPath by remember(savedDestination) {
                 mutableStateOf(savedDestination.ifBlank { "/" })
@@ -87,11 +88,11 @@ class CloudSyncDestinationScreen : Screen() {
 
             fun load(path: String) {
                 val normalizedPath = normalizePath(path)
-                if (!config.isValid || normalizedPath in loadingPaths) return
+                if (remote == null || normalizedPath in loadingPaths) return
                 loadingPaths += normalizedPath
                 scope.launch {
                     try {
-                        childrenByPath += normalizedPath to cloudSyncService.listDirectories(config, normalizedPath)
+                        childrenByPath += normalizedPath to remote.listDirectories(normalizedPath)
                         expandedPaths += normalizedPath
                     } catch (error: CancellationException) {
                         throw error
@@ -114,10 +115,16 @@ class CloudSyncDestinationScreen : Screen() {
                         navigateUp = navigator::pop,
                         actions = {
                             TextButton(
-                                enabled = selectedPath.isNotBlank(),
+                                enabled = selectedPath in childrenByPath,
                                 onClick = {
-                                    downloadPreferences.cloudSyncDestination().set(normalizePath(selectedPath))
-                                    navigator.pop()
+                                    if (downloadPreferences.cloudSyncStorage().get() == storage &&
+                                        downloadPreferences.cloudStorageConfig(storage) == config
+                                    ) {
+                                        downloadPreferences.cloudSyncDestination(
+                                            storage,
+                                        ).set(normalizePath(selectedPath))
+                                        navigator.pop()
+                                    }
                                 },
                             ) {
                                 Text(text = stringResource(MR.strings.action_select))
@@ -127,7 +134,7 @@ class CloudSyncDestinationScreen : Screen() {
                     )
                 },
             ) { contentPadding ->
-                if (!config.isValid) {
+                if (remote == null) {
                     Text(
                         text = stringResource(MR.strings.cloud_sync_not_configured),
                         modifier = Modifier.padding(contentPadding).padding(16.dp),

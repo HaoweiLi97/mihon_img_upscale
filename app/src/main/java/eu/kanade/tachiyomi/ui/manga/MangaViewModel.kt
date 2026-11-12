@@ -42,6 +42,7 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.LibraryCloudSync
+import eu.kanade.tachiyomi.data.download.cloudSyncSettingsChanges
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -151,14 +152,7 @@ class MangaViewModel(
     private val coverCache: CoverCache,
 ) : ViewModel() {
 
-    private val cloudSyncSettings = merge(
-        downloadPreferences.saveChaptersAsCBZ.changes(),
-        downloadPreferences.cloudSyncEnabled().changes(),
-        downloadPreferences.cloudSyncUrl().changes(),
-        downloadPreferences.cloudSyncUsername().changes(),
-        downloadPreferences.cloudSyncPassword().changes(),
-        downloadPreferences.cloudSyncDestination().changes(),
-    ).map { Unit }
+    private val cloudSyncSettings = downloadPreferences.cloudSyncSettingsChanges()
 
     val cloudSyncAvailable = cloudSyncSettings.map { downloadManager.isCloudSyncAvailable() }.distinctUntilChanged()
 

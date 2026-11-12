@@ -222,6 +222,18 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.setting.OneDriveLoginActivity"
+            android:exported="true"
+            android:label="OneDrive">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}" android:host="onedrive-auth" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name=".data.notification.NotificationReceiver"
             android:exported="false" />

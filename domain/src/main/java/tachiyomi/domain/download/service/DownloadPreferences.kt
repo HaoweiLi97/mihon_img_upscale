@@ -5,6 +5,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.getEnum
 import java.security.MessageDigest
 
 @Inject
@@ -32,9 +33,16 @@ class DownloadPreferences(
 
     fun cloudSyncPassword() = preferenceStore.getString(CLOUD_SYNC_PASSWORD_PREF_KEY, "")
 
-    fun cloudSyncDestination() = preferenceStore.getString("cloud_sync_destination", "")
+    fun cloudSyncStorage() = preferenceStore.getEnum("cloud_sync_storage", CloudSyncStorage.WebDav)
 
-    fun cloudSyncPreferWebDavDownloads() = preferenceStore.getBoolean("cloud_sync_prefer_webdav_downloads", true)
+    fun cloudSyncOneDriveId() = preferenceStore.getString(Preference.appStateKey("cloud_sync_onedrive_id"), "")
+
+    fun cloudSyncDestination(storage: CloudSyncStorage = cloudSyncStorage().get()) = when (storage) {
+        CloudSyncStorage.WebDav -> preferenceStore.getString("cloud_sync_destination", "")
+        CloudSyncStorage.OneDrive -> preferenceStore.getString("cloud_sync_onedrive_destination", "")
+    }
+
+    fun cloudSyncPreferRemoteDownloads() = preferenceStore.getBoolean("cloud_sync_prefer_webdav_downloads", true)
 
     fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
 
@@ -98,15 +106,22 @@ class DownloadPreferences(
     )
 
     fun cloudSyncTargetId(
+        storage: CloudSyncStorage = cloudSyncStorage().get(),
+        account: String = when (storage) {
+            CloudSyncStorage.WebDav -> cloudSyncUsername().get()
+            CloudSyncStorage.OneDrive -> cloudSyncOneDriveId().get()
+        },
+        destination: String = cloudSyncDestination(storage).get(),
         url: String = cloudSyncUrl().get(),
-        username: String = cloudSyncUsername().get(),
-        destination: String = cloudSyncDestination().get(),
     ): String? {
-        val endpoint = url.trim().trimEnd('/')
-        if (endpoint.isBlank() || username.isBlank() || destination.isBlank()) return null
+        if (account.isBlank() || destination.isBlank()) return null
         val path = destination.replace('\\', '/').split('/').filter { it.isNotBlank() }.joinToString("/")
+        val endpoint = when (storage) {
+            CloudSyncStorage.WebDav -> url.trim().trimEnd('/').takeIf { it.isNotBlank() } ?: return null
+            CloudSyncStorage.OneDrive -> "\u0000onedrive"
+        }
         return MessageDigest.getInstance("SHA-256")
-            .digest("$endpoint\u0000$username\u0000$path".toByteArray())
+            .digest("$endpoint\u0000$account\u0000$path".toByteArray())
             .toHexString()
     }
 
