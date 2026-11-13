@@ -12,8 +12,10 @@ import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.preferenceKey
 import eu.kanade.tachiyomi.source.sourcePreferences
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.domain.download.service.CloudSyncStorage
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.source.service.SourceManager
 
@@ -21,10 +23,34 @@ import tachiyomi.domain.source.service.SourceManager
 class PreferenceBackupCreator(
     private val sourceManager: SourceManager,
     private val preferenceStore: PreferenceStore,
+    private val downloadPreferences: DownloadPreferences,
 ) {
 
-    fun createApp(includePrivatePreferences: Boolean): List<BackupPreference> {
-        return preferenceStore.getAll().toBackupPreferences()
+    fun createApp(includePrivatePreferences: Boolean, includeCloudStorageLogin: Boolean): List<BackupPreference> {
+        val preferences = preferenceStore.getAll()
+        val fingerprintPreference = downloadPreferences.cloudSyncOneDriveAccountFingerprint()
+        val driveId = preferences[downloadPreferences.cloudSyncOneDriveId().key()] as? String
+        val fingerprint = driveId?.let { downloadPreferences.cloudSyncTargetId(CloudSyncStorage.OneDrive, it, "/", "") }
+        val appPreferences = if (fingerprint ==
+            null
+        ) {
+            preferences
+        } else {
+            preferences + (fingerprintPreference.key() to fingerprint)
+        }
+        return appPreferences
+            .filter { (key, value) ->
+                includeCloudStorageLogin || when (key) {
+                    in DownloadPreferences.cloudStorageLoginPreferenceKeys -> false
+                    DownloadPreferences.CLOUD_SYNC_URL_PREF_KEY -> {
+                        val url = (value as? String)?.toHttpUrlOrNull()
+                        url != null && url.username.isEmpty() && url.password.isEmpty() && url.query == null &&
+                            url.fragment == null
+                    }
+                    else -> true
+                }
+            }
+            .toBackupPreferences()
             .withPrivatePreferences(includePrivatePreferences)
     }
 
@@ -66,6 +92,6 @@ class PreferenceBackupCreator(
         if (include) {
             this
         } else {
-            this.filter { !Preference.isPrivate(it.key) && it.key != DownloadPreferences.CLOUD_SYNC_PASSWORD_PREF_KEY }
+            this.filterNot { Preference.isPrivate(it.key) }
         }
 }

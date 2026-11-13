@@ -88,9 +88,11 @@ internal fun PreferenceItem(
                 )
             }
             is Preference.PreferenceItem.SliderPreference -> {
-                val value by item.preference.collectAsState()
+                val savedValue by item.preference.collectAsState()
+                val value = item.fixedValue ?: savedValue
                 BaseSliderItem(
                     value = value,
+                    enabled = item.fixedValue == null,
                     valueRange = item.valueRange,
                     steps = item.steps,
                     title = item.title,

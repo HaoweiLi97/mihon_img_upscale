@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.data.backup.BackupDecoder
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
+import eu.kanade.tachiyomi.data.backup.models.BackupOneDriveSession
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
@@ -17,6 +18,7 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.ExtensionStoreRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceRestorer
 import eu.kanade.tachiyomi.data.download.DownloadCache
+import eu.kanade.tachiyomi.data.download.OneDriveAuth
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -59,6 +61,7 @@ class BackupRestorer(
     private val backupDecoder: BackupDecoder,
     private val sourceManager: SourceManager,
     private val stubSourceRepository: StubSourceRepository,
+    private val oneDriveAuth: OneDriveAuth,
 ) {
 
     @AssistedFactory
@@ -132,21 +135,24 @@ class BackupRestorer(
             } else {
                 null
             }
-            if (options.appSettings) {
-                restoreAppPreferences(
-                    backup.backupPreferences,
-                    backup.backupCategories.takeIf { options.categories },
-                    restoreCategoriesJob,
-                )
-            }
             if (options.sourceSettings) {
                 restoreSourcePreferences(backup.backupSourcePreferences)
             }
-            if (options.libraryEntries) {
+            val restoreMangaJob = if (options.libraryEntries) {
                 restoreManga(
                     uri,
                     if (options.categories) backup.backupCategories else emptyList(),
                     restoreCategoriesJob,
+                )
+            } else {
+                null
+            }
+            if (options.appSettings) {
+                restoreAppPreferences(
+                    backup.backupPreferences,
+                    backup.backupCategories.takeIf { options.categories },
+                    backup.oneDriveSession,
+                    restoreMangaJob ?: restoreCategoriesJob,
                 )
             }
             if (options.extensionStores) {
@@ -241,14 +247,25 @@ class BackupRestorer(
     private fun CoroutineScope.restoreAppPreferences(
         preferences: List<BackupPreference>,
         categories: List<BackupCategory>?,
-        categoriesRestoreJob: Job?,
+        oneDriveSession: BackupOneDriveSession?,
+        prerequisite: Job?,
     ) = launch {
         ensureActive()
-        categoriesRestoreJob?.join()
+        prerequisite?.join()
         preferenceRestorer.restoreApp(
             preferences,
             categories,
+            restoringOneDriveLogin = oneDriveSession != null,
         )
+        if (oneDriveSession != null) {
+            try {
+                oneDriveAuth.restoreSessionFromBackup(oneDriveSession)
+            } catch (e: Exception) {
+                ensureActive()
+                logcat(LogPriority.ERROR) { "Failed to restore OneDrive login (${e.javaClass.simpleName})" }
+                errors.add(Date() to context.stringResource(MR.strings.cloud_sync_onedrive_login_failed))
+            }
+        }
 
         val progress = restoreProgress.incrementAndFetch()
         notifier.showRestoreProgress(

@@ -11,6 +11,7 @@ data class DownloadHeaderItem(
     val id: Long,
     val name: String,
     val size: Int,
+    val isUpload: Boolean = false,
 ) : AbstractExpandableHeaderItem<DownloadHeaderHolder, DownloadItem>() {
 
     override fun getLayoutRes(): Int {
@@ -40,6 +41,7 @@ data class DownloadHeaderItem(
         other as DownloadHeaderItem
 
         if (id != other.id) return false
+        if (isUpload != other.isUpload) return false
         if (name != other.name) return false
         if (size != other.size) return false
         if (subItemsCount != other.subItemsCount) return false
@@ -50,6 +52,7 @@ data class DownloadHeaderItem(
 
     override fun hashCode(): Int {
         var result = id.hashCode()
+        result = 31 * result + isUpload.hashCode()
         result = 31 * result + name.hashCode()
         result = 31 * result + size
         result = 31 * result + subItems.hashCode()
@@ -60,5 +63,6 @@ data class DownloadHeaderItem(
         isHidden = false
         isExpanded = true
         isSelectable = false
+        isDraggable = !isUpload
     }
 }

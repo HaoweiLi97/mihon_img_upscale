@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import eu.kanade.tachiyomi.data.download.CloudStorageReleaseReason
 import eu.kanade.tachiyomi.data.download.CloudStorageReleaseResult
 import eu.kanade.tachiyomi.data.download.CloudSyncStatus
 import mihon.icons.materialsymbols.MaterialSymbols
@@ -37,6 +38,22 @@ internal val CloudSyncStatus.label
     }
 
 internal fun CloudStorageReleaseResult.message(context: Context): String = when {
+    kept > 0 && reasons.isNotEmpty() -> {
+        val details = CloudStorageReleaseReason.entries.mapNotNull { reason ->
+            val count = reasons[reason] ?: return@mapNotNull null
+            val label = when (reason) {
+                CloudStorageReleaseReason.RemoteMissing -> MR.strings.cloud_sync_release_storage_remote_missing
+                CloudStorageReleaseReason.RemoteUnavailable -> MR.strings.cloud_sync_release_storage_remote_unavailable
+                CloudStorageReleaseReason.RemoteMismatch -> MR.strings.cloud_sync_release_storage_remote_mismatch
+                CloudStorageReleaseReason.InTransfer -> MR.strings.cloud_sync_release_storage_in_transfer
+                CloudStorageReleaseReason.LocalChanged -> MR.strings.cloud_sync_release_storage_local_changed
+                CloudStorageReleaseReason.LocalDeleteFailed -> MR.strings.cloud_sync_release_storage_local_delete_failed
+                CloudStorageReleaseReason.TargetChanged -> MR.strings.cloud_sync_release_storage_target_changed
+            }
+            context.stringResource(label, count)
+        }.joinToString(" · ")
+        context.stringResource(MR.strings.cloud_sync_release_storage_detailed, released, kept, details)
+    }
     kept > 0 -> context.stringResource(MR.strings.cloud_sync_release_storage_partial, released, kept)
     released > 0 -> context.stringResource(MR.strings.cloud_sync_release_storage_result, released)
     else -> context.stringResource(MR.strings.cloud_sync_release_storage_empty)

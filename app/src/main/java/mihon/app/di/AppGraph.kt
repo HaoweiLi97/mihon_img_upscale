@@ -20,6 +20,8 @@ import eu.kanade.tachiyomi.data.backup.create.BackupCreateWorker
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreWorker
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.download.CloudUploadScheduler
+import eu.kanade.tachiyomi.data.download.CloudUploadWorker
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadWorker
@@ -54,6 +56,7 @@ import tachiyomi.domain.category.interactor.ResetCategoryFlags
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetFavorites
+import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.interactor.ResetViewerFlags
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StoragePreferences
@@ -64,6 +67,10 @@ import tachiyomi.domain.track.interactor.UpsertTrack
     bindingContainers = [AppBindings::class],
 )
 interface AppGraph : ViewModelGraph {
+    @Provides
+    fun provideCloudUploadScheduler(context: Context): CloudUploadScheduler =
+        CloudUploadScheduler { wifiOnly -> CloudUploadWorker.schedule(context, wifiOnly) }
+
     fun inject(app: App)
     fun inject(mainActivity: MainActivity)
     fun inject(readerActivity: ReaderActivity)
@@ -122,6 +129,7 @@ interface AppGraph : ViewModelGraph {
     val javaScriptEngine: JavaScriptEngine
 
     val getFavorites: GetFavorites
+    val getManga: GetManga
     val updateMangaFromRemote: UpdateMangaFromRemote
     val getCategories: GetCategories
     val resetViewerFlags: ResetViewerFlags

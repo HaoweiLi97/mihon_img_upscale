@@ -136,9 +136,12 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
                     findItem(R.id.pause_upload).isVisible =
                         status == Download.State.QUEUE || status == Download.State.UPLOADING
                 } else {
-                    findItem(R.id.move_to_top).isVisible = bindingAdapterPosition > 1
+                    val position = bindingAdapterPosition
+                    val header = (adapter.getItem(position) as? DownloadItem)?.header
+                    findItem(R.id.move_to_top).isVisible =
+                        header != null && (adapter.getItem(position - 1) as? DownloadItem)?.header == header
                     findItem(R.id.move_to_bottom).isVisible =
-                        bindingAdapterPosition != adapter.itemCount - 1
+                        header != null && (adapter.getItem(position + 1) as? DownloadItem)?.header == header
                 }
             },
             onMenuItemClick = {

@@ -87,13 +87,7 @@ class ChapterLoader(
      */
     private suspend fun getPageLoader(chapter: ReaderChapter): PageLoader {
         val dbChapter = chapter.chapter
-        val isDownloaded = downloadManager.isChapterDownloadedOnDisk(
-            dbChapter.name,
-            dbChapter.scanlator,
-            dbChapter.url,
-            manga.title,
-            source,
-        )
+        val isDownloaded = downloadManager.isChapterDownloadedOnDisk(dbChapter, manga, source)
         return when {
             isDownloaded -> DownloadPageLoader(
                 chapter,

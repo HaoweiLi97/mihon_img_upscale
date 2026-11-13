@@ -50,6 +50,20 @@
     <string name="label_more">More</string>
     <string name="label_settings">Settings</string>
     <string name="label_download_queue">Download queue</string>
+    <string name="label_transfer_queue">Transfer queue</string>
+    <string name="transfer_queue_uploads">Uploads</string>
+    <string name="transfer_queue_no_uploads">No uploads</string>
+    <string name="transfer_status_title">Transfer status</string>
+    <string name="transfer_status_count_summary">%1$d tasks · %2$d in progress</string>
+    <string name="pref_idle_transfer_notification_summary">Keep a shortcut to the transfer queue in the notification shade when idle.</string>
+    <string name="transfer_queue_download_actions">Download actions</string>
+    <string name="transfer_queue_upload_actions">Upload actions</string>
+    <string name="transfer_queue_expanded">Expanded</string>
+    <string name="transfer_queue_collapsed">Collapsed</string>
+    <string name="transfer_queue_pause_all">Pause all</string>
+    <string name="transfer_queue_resume_all">Resume all</string>
+    <string name="transfer_queue_cancel_downloads">Cancel all downloads?</string>
+    <string name="transfer_queue_cancel_uploads">Cancel all uploads?</string>
     <string name="label_library">Library</string>
     <string name="label_recent_updates">Updates</string>
     <string name="label_upcoming">Upcoming</string>
@@ -355,7 +369,7 @@
     <string name="pref_disallow_non_ascii_filenames">Disallow non-ASCII filenames</string>
     <string name="pref_disallow_non_ascii_filenames_details">Ensures compatibility with certain storage media that don't support Unicode. When this is enabled, you'll need to manually rename source and manga folders by replacing non-ASCII characters with their lowercase UTF-8 hexadecimal representations. Chapter files don't need to be renamed.</string>
     <string name="pref_enable_chapter_name_hash">Enable chapter name hash suffix</string>
-    <string name="pref_enable_chapter_name_hash_details">Ensures a unique hash suffix is added to chapter names to prevent naming conflicts. If disabled, chapters with identical names cannot be downloaded.</string>
+    <string name="pref_enable_chapter_name_hash_details">Add a hash suffix to chapter folder names. CBZ filenames use a suffix only when chapter names would conflict.</string>
 
       <!-- Extension section -->
     <string name="multi_lang">Multi</string>
@@ -598,6 +612,8 @@
     <string name="save_chapter_as_cbz">Save as CBZ archive</string>
     <string name="split_tall_images">Split tall images</string>
     <string name="split_tall_images_summary">Improves reader performance</string>
+    <string name="pref_download_low_power_mode">Low power mode</string>
+    <string name="pref_download_low_power_mode_summary">Reduces concurrent downloads and uploads to help limit heat. Transfers may take longer.</string>
     <string name="pref_download_concurrent_sources">Concurrent source downloads</string>
     <string name="pref_download_concurrent_pages">Concurrent page downloads</string>
     <string name="pref_download_concurrent_pages_summary">Pages downloaded simultaneously per source</string>
@@ -644,6 +660,7 @@
     <string name="app_settings">App settings</string>
     <string name="source_settings">Source settings</string>
     <string name="private_settings">Include sensitive settings (e.g., tracker login tokens)</string>
+    <string name="backup_cloud_storage_login">Include cloud storage login (WebDAV credentials and OneDrive token)</string>
     <string name="non_library_settings">All read entries</string>
     <string name="creating_backup">Creating backup</string>
     <string name="creating_backup_error">Backup failed</string>
@@ -1247,6 +1264,14 @@
     <string name="cloud_sync_release_storage">Free up space</string>
     <string name="cloud_sync_release_storage_result">Freed local storage for %1$d chapters.</string>
     <string name="cloud_sync_release_storage_partial">Freed local storage for %1$d chapters. Kept %2$d chapters whose cloud copies could not be verified or released.</string>
+    <string name="cloud_sync_release_storage_detailed">Freed %1$d chapters. Kept %2$d.\n%3$s</string>
+    <string name="cloud_sync_release_storage_remote_missing">Cloud copy missing (%1$d)</string>
+    <string name="cloud_sync_release_storage_remote_unavailable">Cloud lookup failed (%1$d)</string>
+    <string name="cloud_sync_release_storage_remote_mismatch">Cloud copy differs (%1$d)</string>
+    <string name="cloud_sync_release_storage_in_transfer">Queued for transfer (%1$d)</string>
+    <string name="cloud_sync_release_storage_local_changed">Local copy changed (%1$d)</string>
+    <string name="cloud_sync_release_storage_local_delete_failed">Could not remove local copy (%1$d)</string>
+    <string name="cloud_sync_release_storage_target_changed">Sync destination changed (%1$d)</string>
     <string name="cloud_sync_release_storage_empty">No synced local chapters to remove.</string>
     <string name="cloud_sync_release_storage_failed">Could not free up storage.</string>
     <string name="remote_sync">Remote sync</string>

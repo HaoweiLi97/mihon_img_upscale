@@ -34,11 +34,23 @@ class DownloadStore(
     private val uploads by lazy { uploadPreferences(context) }
 
     internal fun saveUpload(record: CloudUploadRecord) {
-        check(uploads.edit().putString(record.key, json.encodeToString(record)).commit())
+        saveUploads(listOf(record))
+    }
+
+    internal fun saveUploads(records: List<CloudUploadRecord>) {
+        val editor = uploads.edit()
+        records.forEach { editor.putString(it.key, json.encodeToString(it)) }
+        check(editor.commit())
     }
 
     internal fun removeUpload(key: String) {
-        check(uploads.edit().remove(key).commit())
+        removeUploads(listOf(key))
+    }
+
+    internal fun removeUploads(keys: List<String>) {
+        val editor = uploads.edit()
+        keys.forEach { editor.remove(it) }
+        check(editor.commit())
     }
 
     internal fun clearUploads() {
@@ -59,6 +71,8 @@ class DownloadStore(
                 manga,
                 chapter,
                 automaticSyncTarget = record.targetId.takeIf { record.automatic },
+                explicitCloudSync = !record.automatic,
+                explicitSyncTarget = record.targetId.takeUnless { record.automatic },
             )
         }.sortedBy { (record, _) -> record.order }
     }
@@ -75,6 +89,13 @@ class DownloadStore(
      */
     fun addAll(downloads: List<Download>) {
         preferences.edit {
+            downloads.forEach { putString(getKey(it), serialize(it)) }
+        }
+    }
+
+    internal fun replaceAll(downloads: List<Download>) {
+        preferences.edit {
+            clear()
             downloads.forEach { putString(getKey(it), serialize(it)) }
         }
     }
@@ -135,6 +156,7 @@ class DownloadStore(
             .sortedBy { it.order }
 
         val downloads = mutableListOf<Download>()
+        val restoredKeys = HashSet<String>()
         if (objs.isNotEmpty()) {
             val cachedManga = mutableMapOf<Long, Manga?>()
             for (obj in objs) {
@@ -143,15 +165,23 @@ class DownloadStore(
                     getManga.await(mangaId)
                 } ?: continue
                 val source = sourceManager.get(manga.source) as? HttpSource ?: continue
-                val chapter = getChapter.await(chapterId) ?: continue
-                val download = Download(source, manga, chapter, obj.automaticSyncTarget, obj.explicitCloudSync)
+                val chapter = getChapter.await(chapterId)?.takeIf { it.mangaId == mangaId } ?: continue
+                val download = Download(
+                    source,
+                    manga,
+                    chapter,
+                    obj.automaticSyncTarget,
+                    obj.explicitCloudSync,
+                    obj.explicitSyncTarget,
+                )
                 if (obj.failed && download.isCloudSync) download.status = Download.State.ERROR
                 downloads.add(download)
+                restoredKeys.add(getKey(download))
             }
         }
 
-        // Clear the store, downloads will be added again immediately.
-        clear()
+        // Valid records stay on disk while the in-memory queue is being restored.
+        preferences.edit { (preferences.all.keys - restoredKeys).forEach(::remove) }
         return downloads
     }
 
@@ -168,6 +198,7 @@ class DownloadStore(
             download.automaticSyncTarget,
             download.explicitCloudSync,
             failed = download.isCloudSync && download.status == Download.State.ERROR,
+            explicitSyncTarget = download.explicitSyncTarget,
         )
         return json.encodeToString(obj)
     }
@@ -208,6 +239,7 @@ private data class DownloadObject(
     val automaticSyncTarget: String? = null,
     val explicitCloudSync: Boolean = false,
     val failed: Boolean = false,
+    val explicitSyncTarget: String? = null,
 )
 
 @Serializable
@@ -225,6 +257,9 @@ internal data class CloudUploadRecord(
     val failed: Boolean = false,
     val automatic: Boolean = false,
     val temporaryArchive: Boolean = false,
+    val background: Boolean = automatic,
+    val retryAttempts: Int = 0,
+    val retryAfterMillis: Long = 0,
 ) {
     val isChapter: Boolean get() = contentHash == null
     val key: String get() = if (isChapter) "chapter:$chapterId" else "meta:$targetId:$mangaId:$remoteDirectory"

@@ -213,6 +213,7 @@ fun BaseSliderItem(
     titleStyle: TextStyle = MaterialTheme.typography.titleLarge,
     subtitleStyle: TextStyle = MaterialTheme.typography.bodySmall,
     pillColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    enabled: Boolean = true,
 ) {
     val haptic = LocalHapticFeedback.current
     Column(
@@ -246,6 +247,7 @@ fun BaseSliderItem(
         }
         Slider(
             value = value,
+            enabled = enabled,
             onValueChange = f@{
                 if (it == value) return@f
                 onChange(it)

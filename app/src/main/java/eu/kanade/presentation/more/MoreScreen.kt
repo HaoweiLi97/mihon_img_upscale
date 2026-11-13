@@ -74,7 +74,7 @@ fun MoreScreen(
             item {
                 val downloadQueueState = downloadQueueStateProvider()
                 TextPreferenceWidget(
-                    title = stringResource(MR.strings.label_download_queue),
+                    title = stringResource(MR.strings.label_transfer_queue),
                     subtitle = when (downloadQueueState) {
                         DownloadQueueState.Stopped -> null
                         is DownloadQueueState.Paused -> {

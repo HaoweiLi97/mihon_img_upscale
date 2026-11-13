@@ -13,7 +13,8 @@ class DownloadHeaderHolder(view: View, adapter: FlexibleAdapter<*>) : Expandable
 
     @SuppressLint("SetTextI18n")
     fun bind(item: DownloadHeaderItem) {
-        setDragHandleView(binding.reorder)
+        binding.reorder.visibility = if (item.isUpload) View.INVISIBLE else View.VISIBLE
+        if (!item.isUpload) setDragHandleView(binding.reorder)
         binding.title.text = "${item.name} (${item.size})"
     }
 
@@ -21,14 +22,21 @@ class DownloadHeaderHolder(view: View, adapter: FlexibleAdapter<*>) : Expandable
         super.onActionStateChanged(position, actionState)
         if (actionState == ItemTouchHelper.ACTION_STATE_DRAG) {
             binding.container.isDragged = true
-            mAdapter.collapseAll()
+            val adapter = mAdapter as DownloadAdapter
+            adapter.headerItems.filterIsInstance<DownloadHeaderItem>()
+                .filterNot { it.isUpload }
+                .asReversed()
+                .forEach { adapter.collapse(adapter.getGlobalPositionOf(it)) }
         }
     }
 
     override fun onItemReleased(position: Int) {
         super.onItemReleased(position)
         binding.container.isDragged = false
-        mAdapter.expandAll()
-        (mAdapter as DownloadAdapter).downloadItemListener.onItemReleased(position)
+        val adapter = mAdapter as DownloadAdapter
+        adapter.headerItems.filterIsInstance<DownloadHeaderItem>()
+            .filterNot { it.isUpload }
+            .forEach { adapter.expand(adapter.getGlobalPositionOf(it)) }
+        adapter.downloadItemListener.onItemReleased(position)
     }
 }

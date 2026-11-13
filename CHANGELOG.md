@@ -12,6 +12,21 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.22] - 2026-11-13
+
+### Added
+- Show a compact Android notification with the total number of transfer tasks and how many are running. Tap it to open the transfer queue. The notification can stay visible when idle.
+- Manage downloads and uploads independently in the transfer queue. Low power mode limits transfer concurrency.
+- Free local chapter storage after verifying the cloud copies. Backups can also include cloud storage sign-in details when explicitly selected.
+
+### Improved
+- Run manual and automatic cloud uploads in the background and retain queued work across connection interruptions.
+- Keep existing CBZ chapter downloads readable and resolve filename collisions without changing every archive name.
+- Make selection and display controls available when browsing sources.
+
+### Other
+- Increase Android versionCode to 54 and retain the existing Mihon Upscale signing identity for in-place upgrades.
+
 ## [v1.3.21] - 2026-11-12
 
 ### Added

@@ -62,6 +62,7 @@ object SettingsDownloadScreen : SearchableSettings {
         val allCategories by getCategories.subscribe().collectAsState(initial = emptyList())
 
         val downloadPreferences = remember { context.appGraph.downloadPreferences }
+        val lowPowerMode by downloadPreferences.lowPowerMode.collectAsState()
         val parallelSourceLimit by downloadPreferences.parallelSourceLimit.collectAsState()
         val parallelPageLimit by downloadPreferences.parallelPageLimit.collectAsState()
         val saveChaptersAsCBZ by downloadPreferences.saveChaptersAsCBZ.collectAsState()
@@ -69,6 +70,11 @@ object SettingsDownloadScreen : SearchableSettings {
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.downloadOnlyOverWifi,
                 title = stringResource(MR.strings.connected_to_wifi),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.showIdleTransferNotification,
+                title = stringResource(MR.strings.transfer_status_title),
+                subtitle = stringResource(MR.strings.pref_idle_transfer_notification_summary),
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.organizeDownloadsByCategory(),
@@ -90,16 +96,23 @@ object SettingsDownloadScreen : SearchableSettings {
                 title = stringResource(MR.strings.split_tall_images),
                 subtitle = stringResource(MR.strings.split_tall_images_summary),
             ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.lowPowerMode,
+                title = stringResource(MR.strings.pref_download_low_power_mode),
+                subtitle = stringResource(MR.strings.pref_download_low_power_mode_summary),
+            ),
             Preference.PreferenceItem.SliderPreference(
                 preference = downloadPreferences.parallelSourceLimit,
                 valueRange = 1..10,
                 title = stringResource(MR.strings.pref_download_concurrent_sources),
+                fixedValue = 1.takeIf { lowPowerMode },
             ),
             Preference.PreferenceItem.SliderPreference(
                 preference = downloadPreferences.parallelPageLimit,
                 valueRange = 1..15,
                 title = stringResource(MR.strings.pref_download_concurrent_pages),
                 subtitle = stringResource(MR.strings.pref_download_concurrent_pages_summary),
+                fixedValue = 1.takeIf { lowPowerMode },
             ),
             getDeleteChaptersGroup(
                 downloadPreferences = downloadPreferences,

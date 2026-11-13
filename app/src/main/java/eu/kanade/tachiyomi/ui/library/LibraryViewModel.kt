@@ -572,7 +572,7 @@ class LibraryViewModel(
         }
     }
 
-    private fun List<Chapter>.filterNotQueuedOrDownloaded(manga: Manga): List<Chapter> {
+    private suspend fun List<Chapter>.filterNotQueuedOrDownloaded(manga: Manga): List<Chapter> {
         val queuedDownloads = downloadManager.getQueuedDownloadsByChapterId()
         val downloadedChapterIds = downloadManager.getDownloadedChapterIds(this, manga)
         return fastFilterNot { it.id in queuedDownloads || it.id in downloadedChapterIds }

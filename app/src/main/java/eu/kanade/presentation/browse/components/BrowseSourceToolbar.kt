@@ -25,7 +25,6 @@ import mihon.icons.materialsymbols.roundedfilled.ViewModule
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.source.local.LocalSource
 
 @Composable
 fun BrowseSourceToolbar(
@@ -49,7 +48,6 @@ fun BrowseSourceToolbar(
 ) {
     // Avoid capturing unstable source in actions lambda
     val title = source?.name
-    val isLocalSource = source is LocalSource
     val isConfigurableSource = source is ConfigurableSource
 
     var selectingDisplayMode by remember { mutableStateOf(false) }
@@ -92,6 +90,13 @@ fun BrowseSourceToolbar(
                 actions = buildList {
                     add(
                         AppBar.Action(
+                            title = stringResource(MR.strings.action_select),
+                            icon = MaterialSymbols.Rounded.SelectAll,
+                            onClick = onEnterSelectionMode,
+                        ),
+                    )
+                    add(
+                        AppBar.Action(
                             title = stringResource(MR.strings.action_display_mode),
                             icon = when (displayMode) {
                                 LibraryDisplayMode.List -> MaterialSymbols.AutoMirroredRoundedFilled.ViewList
@@ -103,26 +108,6 @@ fun BrowseSourceToolbar(
                             onClick = { selectingDisplayMode = true },
                         ),
                     )
-                    if (isLocalSource) {
-                        add(
-                            AppBar.Action(
-                                title = stringResource(MR.strings.action_select),
-                                icon = MaterialSymbols.Rounded.SelectAll,
-                                onClick = onEnterSelectionMode,
-                            ),
-                        )
-                        add(
-                            AppBar.Action(
-                                title = stringResource(MR.strings.action_display_mode),
-                                icon = if (displayMode == LibraryDisplayMode.List) {
-                                    MaterialSymbols.AutoMirroredRoundedFilled.ViewList
-                                } else {
-                                    MaterialSymbols.RoundedFilled.ViewModule
-                                },
-                                onClick = { selectingDisplayMode = true },
-                            ),
-                        )
-                    }
                     if (isConfigurableSource) {
                         add(
                             AppBar.OverflowAction(

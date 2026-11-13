@@ -34,11 +34,11 @@ import eu.kanade.domain.track.interactor.RefreshTracks
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.model.AutoTrackState
 import eu.kanade.domain.track.service.TrackPreferences
-import eu.kanade.presentation.components.message
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.download.CloudStorageReleaseWorker
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.LibraryCloudSync
@@ -54,7 +54,6 @@ import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -184,21 +183,9 @@ class MangaViewModel(
         }
     }.distinctUntilChanged()
 
-    private var releaseStorageJob: Job? = null
-
     internal fun releaseCloudStorage() {
         val manga = successState?.manga ?: return
-        if (releaseStorageJob?.isActive == true) return
-        releaseStorageJob = viewModelScope.launchIO {
-            val message = try {
-                downloadManager.releaseCloudStorage(manga).message(context)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                context.stringResource(MR.strings.cloud_sync_release_storage_failed)
-            }
-            snackbarHostState.showSnackbar(message)
-        }
+        CloudStorageReleaseWorker.enqueue(context, mangaId = manga.id)
     }
 
     fun runCloudSyncAction(chapters: List<Chapter>? = null) {
@@ -705,7 +692,7 @@ class MangaViewModel(
         return downloadProgress[chapterId] ?: 0
     }
 
-    private fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
+    private suspend fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
         val isLocal = manga.isLocal()
         val queuedDownloads = if (isLocal) emptyMap() else downloadManager.getQueuedDownloadsByChapterId()
         val downloadedChapterIds = if (isLocal) emptySet() else downloadManager.getDownloadedChapterIds(this, manga)

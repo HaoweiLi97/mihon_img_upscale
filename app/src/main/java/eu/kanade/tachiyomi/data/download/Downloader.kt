@@ -32,8 +32,11 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,7 +59,9 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -75,16 +80,22 @@ import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.getChapterSort
+import tachiyomi.domain.download.service.CloudChapterUpload
 import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
+import java.net.ProtocolException
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import javax.net.ssl.SSLPeerUnverifiedException
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration.Companion.seconds
 
@@ -112,6 +123,8 @@ class Downloader(
     private val store: DownloadStore,
     private val notifier: DownloadNotifier,
     private val libraryCloudSync: LibraryCloudSync,
+    private val getDuplicateLibraryManga: GetDuplicateLibraryManga,
+    private val cloudUploadScheduler: CloudUploadScheduler,
 ) {
     /**
      * Queue where active downloads are kept.
@@ -137,13 +150,18 @@ class Downloader(
     @Volatile
     private var downloaderJob: Job? = null
     private val uploadLock = Mutex()
+    private val releaseLookupSlots = Semaphore(4)
     private val cloudUploadTasks = linkedMapOf<String, CloudUploadTask>()
     private val activeCloudUploadJobs = mutableMapOf<String, Job>()
+    private val cloudUploadRunnerLock = Mutex()
+    private val uploadQueueChanges = MutableStateFlow(0L)
+    private var cloudUploadWorkScheduled = false
     private val deletingRemoteMangas = ConcurrentHashMap.newKeySet<Long>()
     private val metaInfoLock = Mutex()
+    private val chapterArchiveLock = Mutex()
     private var cloudUploadOrder = 0L
     private val retriesRequested = MutableStateFlow(0)
-    private val runnableQueue = combine(queueState, libraryCloudSync.selection) { queue, _ ->
+    private val runnableQueue = combine(queueState, libraryCloudSync.selection, retriesRequested) { queue, _, _ ->
         queue.filter(::canTransfer)
     }.distinctUntilChanged()
 
@@ -176,19 +194,27 @@ class Downloader(
 
     init {
         scope.launch(Dispatchers.IO) {
+            restoreCloudUploadsJob.join()
+            downloadPreferences.lowPowerMode.changes().distinctUntilChanged().collect {
+                uploadLock.withLock { startCloudUploadsLocked() }
+            }
+        }
+
+        scope.launch(Dispatchers.IO) {
             libraryCloudSync.selection.filterNotNull()
                 .distinctUntilChanged { old, new -> old.rules == new.rules && old.mangaIds == new.mangaIds }
                 .collect { selected ->
                     restoreCloudUploadsJob.join()
                     uploadLock.withLock {
                         if (libraryCloudSync.currentRules() != selected.rules) return@withLock
-                        cloudUploadTasks.values.toList().filter { it.record.automatic }.forEach { task ->
+                        cloudUploadTasks.values.toList().forEach { task ->
                             val record = task.record
-                            if (!canTransfer(task.download)) {
+                            if (!canUpload(task, selected.rules.target)) {
                                 activeCloudUploadJobs[record.key]?.cancel()
-                                if (!selected.contains(task.download)) {
+                                if (record.automatic && !selected.retains(task.download)) {
                                     removeCloudUploadLocked(task)
                                 } else if (record.isChapter && !record.paused) {
+                                    task.download.uploadProgress = 0
                                     task.download.status = Download.State.PAUSED
                                 }
                             } else if (record.isChapter && !record.paused && record.key !in activeCloudUploadJobs) {
@@ -204,7 +230,16 @@ class Downloader(
                         if (libraryCloudSync.currentRules() != selected.rules) return@withLock
                         val shouldRestart = isRunning && queueState.value.any { !canTransfer(it) }
                         if (shouldRestart) pauseLocked()
-                        removeFromQueueIf { it.automaticSyncTarget != null && !selected.contains(it) }
+                        removeFromQueueIf { it.automaticSyncTarget != null && !selected.retains(it) }
+                        queueState.value.filter { it.isCloudSync }.forEach { download ->
+                            val transferable = canTransfer(download)
+                            if (!transferable && download.status == Download.State.QUEUE) {
+                                download.status = Download.State.PAUSED
+                            } else if (transferable && download.status == Download.State.PAUSED) {
+                                download.status = Download.State.QUEUE
+                            }
+                        }
+                        retriesRequested.update { it + 1 }
                         if (shouldRestart) {
                             isPaused = false
                             if (!startLocked()) stopLocked()
@@ -216,11 +251,14 @@ class Downloader(
 
     private fun canTransfer(download: Download): Boolean {
         if (download.isCloudSync && download.manga.id in deletingRemoteMangas) return false
-        return download.automaticSyncTarget?.let { libraryCloudSync.canTransfer(download.manga.id, it) } ?: true
+        download.automaticSyncTarget?.let { return libraryCloudSync.canTransfer(download.manga.id, it) }
+        if (!download.explicitCloudSync) return true
+        val target = cloudSyncTargetOrNull()?.id ?: return false
+        return download.explicitSyncTarget == null || download.explicitSyncTarget == target
     }
 
-    private fun CloudSyncSelection.contains(download: Download): Boolean =
-        rules.target == download.automaticSyncTarget && download.manga.id in mangaIds
+    private fun CloudSyncSelection.retains(download: Download): Boolean =
+        (rules.target == null || rules.target == download.automaticSyncTarget) && download.manga.id in mangaIds
 
     /**
      * Starts the downloader. It doesn't do anything if it's already running or there isn't anything
@@ -240,7 +278,9 @@ class Downloader(
 
     // Download jobs check these under the lock: by the time they get it, chapters may have been queued or the
     // downloader stopped and started again, and that newer run must not be stopped
-    private suspend fun stopIfFinished(owner: Job) = lock.withLock {
+    private suspend fun stopIfFinished(owner: Job) = lock.withLock { stopIfFinishedLocked(owner) }
+
+    private fun stopIfFinishedLocked(owner: Job) {
         if (downloaderJob === owner && owner.isActive && areAllDownloadsFinished()) stopLocked()
     }
 
@@ -259,11 +299,21 @@ class Downloader(
     /**
      * Removes everything from the queue.
      */
-    suspend fun clearQueue() = lock.withLock {
-        cancelDownloaderJob()
-
-        internalClearQueue()
-        notifier.dismissProgress()
+    suspend fun clearQueue() {
+        restoreDownloadsJob.join()
+        val interruptedDownload = lock.withLock {
+            val interrupted = downloaderJob
+            cancelDownloaderJob()
+            internalClearQueue()
+            isPaused = false
+            interrupted
+        }
+        withContext(NonCancellable) {
+            interruptedDownload?.join()
+            lock.withLock {
+                if (downloaderJob === interruptedDownload) notifier.onComplete()
+            }
+        }
     }
 
     internal suspend fun clearAllTransfers() = withContext(Dispatchers.IO) {
@@ -306,6 +356,7 @@ class Downloader(
         pending.forEach { if (it.status != Download.State.QUEUE) it.status = Download.State.QUEUE }
 
         isPaused = false
+        notifier.dismissProgress()
 
         launchDownloaderJob()
 
@@ -319,6 +370,7 @@ class Downloader(
             .forEach { it.status = if (it.isCloudSync) Download.State.QUEUE else Download.State.ERROR }
 
         if (reason != null) {
+            notifier.dismissProgress()
             notifier.onWarning(reason)
             return
         }
@@ -353,18 +405,35 @@ class Downloader(
             withContext(NonCancellable) { previousJob?.join() }
             val owner = coroutineContext.job
 
-            val activeDownloadsFlow = combine(
-                runnableQueue,
-                downloadPreferences.parallelSourceLimit.changes(),
-                retriesRequested,
-            ) { queue, limit, retry -> Triple(queue, limit, retry) }.transformLatest { (queue, parallelCount) ->
+            var appliedLowPowerMode: Boolean? = null
+            downloadPreferences.lowPowerMode.changes().distinctUntilChanged().collectLatest { lowPowerMode ->
+                if (appliedLowPowerMode != null) {
+                    // The previous workers have stopped. Keep their partial files and return their chapters to the queue.
+                    lock.withLock {
+                        queueState.value.filter { it.status == Download.State.DOWNLOADING }
+                            .forEach { it.status = Download.State.QUEUE }
+                    }
+                }
+                appliedLowPowerMode = lowPowerMode
+                runDownloads(owner, lowPowerMode)
+            }
+        }
+    }
+
+    private suspend fun runDownloads(owner: Job, lowPowerMode: Boolean) {
+        val activeDownloadsFlow = combine(
+            runnableQueue,
+            downloadPreferences.parallelSourceLimit.changes(),
+            retriesRequested,
+        ) { queue, limit, retry -> Triple(queue, limit, retry) }
+            .transformLatest { (queue, parallelCount) ->
                 while (true) {
                     val activeDownloads = queue.asSequence()
                         // Ignore completed downloads, leave them in the queue
                         .filter { it.status.value <= Download.State.UPLOADING.value }
                         .groupBy { it.source }
                         .toList()
-                        .take(parallelCount)
+                        .take(if (lowPowerMode) 1 else parallelCount)
                         .map { (_, downloads) -> downloads.first() }
                     emit(activeDownloads)
 
@@ -377,48 +446,50 @@ class Downloader(
                     activeDownloadsErroredFlow.first()
                 }
             }
-                .distinctUntilChanged()
+            .distinctUntilChanged()
 
-            // Use supervisorScope to cancel child jobs when the downloader job is cancelled
-            supervisorScope {
-                val sourceJobs = mutableMapOf<HttpSource, Job>()
-                val downloadJobs = ConcurrentHashMap<Download, Job>()
+        supervisorScope {
+            val sourceJobs = mutableMapOf<HttpSource, Job>()
+            val downloadJobs = ConcurrentHashMap<Download, Job>()
 
-                // A source runs several of its chapters at once, so a removed one is stopped by itself
-                launch {
-                    queueState.collect { queue ->
-                        downloadJobs.keys.filter { it !in queue }.forEach { downloadJobs.remove(it)?.cancel() }
-                    }
+            launch {
+                queueState.collect { queue ->
+                    downloadJobs.keys.filter { it !in queue }.forEach { downloadJobs.remove(it)?.cancel() }
+                }
+            }
+
+            activeDownloadsFlow.collectLatest { activeDownloads ->
+                val activeSources = activeDownloads.map { it.source }
+                val sourceJobsToStop = sourceJobs.filter { it.key !in activeSources }
+                sourceJobsToStop.forEach { (source, job) ->
+                    job.cancel()
+                    sourceJobs.remove(source)
+                }
+                if (lowPowerMode && sourceJobsToStop.isNotEmpty()) {
+                    // Blocking file writes from the old source must finish before starting the next source.
+                    withContext(NonCancellable) { sourceJobsToStop.values.forEach { it.join() } }
+                    currentCoroutineContext().ensureActive()
                 }
 
-                activeDownloadsFlow.collectLatest { activeDownloads ->
-                    val activeSources = activeDownloads.map { it.source }
-                    val sourceJobsToStop = sourceJobs.filter { it.key !in activeSources }
-                    sourceJobsToStop.forEach { (source, job) ->
-                        job.cancel()
-                        sourceJobs.remove(source)
-                    }
-
-                    val sourcesToStart = activeSources.filter { it !in sourceJobs }
-                    sourcesToStart.forEach { source ->
-                        sourceJobs[source] = launchSourceJob(source, downloadJobs, owner)
-                    }
+                val sourcesToStart = activeSources.filter { it !in sourceJobs }
+                sourcesToStart.forEach { source ->
+                    sourceJobs[source] = launchSourceJob(source, downloadJobs, owner, lowPowerMode)
                 }
             }
         }
     }
 
     /**
-     * Downloads the queued chapters of [source] in queue order. They share the source's page slots, and the next
-     * chapter starts once every page of the current one has a slot, so slots don't sit idle while a chapter's last
-     * pages finish and it's archived.
+     * Downloads chapters in queue order with shared page slots. In low power mode each chapter finishes before
+     * the next starts. Otherwise, the next chapter starts once every page of the current one has a slot.
      */
     private fun CoroutineScope.launchSourceJob(
         source: HttpSource,
         downloadJobs: MutableMap<Download, Job>,
         owner: Job,
+        lowPowerMode: Boolean,
     ) = launch(Dispatchers.IO) {
-        val slots = Semaphore(downloadPreferences.parallelPageLimit.get())
+        val slots = Semaphore(if (lowPowerMode) 1 else downloadPreferences.parallelPageLimit.get())
         while (true) {
             // A canceled job can mark a chapter as downloading after it's been reset, so that counts as waiting too
             val download = combine(runnableQueue, retriesRequested) { queue, _ ->
@@ -439,7 +510,7 @@ class Downloader(
                 // A job canceled before it starts never reaches its finally block
                 pagesStarted.complete(Unit)
             }
-            pagesStarted.await()
+            if (lowPowerMode) job.join() else pagesStarted.await()
         }
     }
 
@@ -453,12 +524,7 @@ class Downloader(
             // Removed from the queue between being picked and starting
             if (download !in queueState.value || !canTransfer(download)) return@launch
 
-            downloadChapter(download, slots, pagesStarted)
-
-            // Remove successful download from queue
-            if (download.status == Download.State.DOWNLOADED) {
-                removeFromQueue(download)
-            }
+            downloadChapter(download, slots, pagesStarted, owner)
             stopIfFinished(owner)
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
@@ -483,7 +549,13 @@ class Downloader(
         downloaderJob?.cancel()
     }
 
-    private fun failDownload(download: Download) {
+    private suspend fun failDownload(download: Download) = lock.withLock {
+        coroutineContext.ensureActive()
+        if (queueState.value.none { it === download }) return@withLock
+        if (!canTransfer(download)) {
+            download.status = Download.State.QUEUE
+            return@withLock
+        }
         if (download.isCloudSync) store.setFailed(download, true)
         download.status = Download.State.ERROR
     }
@@ -531,6 +603,7 @@ class Downloader(
         autoStart: Boolean,
         automaticTarget: String? = null,
         explicitCloudSync: Boolean = false,
+        explicitTarget: String? = null,
     ): Boolean {
         if (chapters.isEmpty()) return false
 
@@ -549,7 +622,7 @@ class Downloader(
                 // Filter out those already enqueued.
                 .filter { it.id !in queuedChapterIds }
                 // Create a download for each one.
-                .map { Download(source, manga, it, automaticTarget, explicitCloudSync) }
+                .map { Download(source, manga, it, automaticTarget, explicitCloudSync, explicitTarget) }
                 .toList()
         }
 
@@ -661,10 +734,12 @@ class Downloader(
     }
 
     internal suspend fun releaseCloudStorage(manga: Manga, targetId: String?): CloudStorageReleaseResult {
-        val target = cloudSyncTargetOrNull()?.takeIf { it.id == targetId } ?: return CloudStorageReleaseResult()
+        if (targetId == null) return CloudStorageReleaseResult()
+        val target = cloudSyncTargetOrNull()?.takeIf { it.id == targetId }
         val source = sourceManager.get(manga.source) as? HttpSource ?: return CloudStorageReleaseResult()
         val uploaded = downloadPreferences.cloudUploadedChapterIds().get()
-        val chapters = getChaptersByMangaId.await(manga.id).filter { "${target.id}:${it.id}" in uploaded }
+        val allChapters = getChaptersByMangaId.await(manga.id)
+        val chapters = allChapters.filter { "$targetId:${it.id}" in uploaded }
         if (chapters.isEmpty()) return CloudStorageReleaseResult()
 
         restoreDownloadsJob.join()
@@ -686,57 +761,197 @@ class Downloader(
         }
         if (candidates.isEmpty()) return CloudStorageReleaseResult()
 
-        val remoteDirectory = cloudRemoteDirectory(manga, source, target)
-        val remoteSizes = if (candidates.size > 1) {
-            try {
-                val fileNames = candidates.mapTo(HashSet()) { it.remoteName }
-                cloudSyncService.storage(target.config).listRemoteFileSizes(remoteDirectory, fileNames)
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                logcat(LogPriority.WARN, error) { "Could not verify remote files for manga ${manga.id}" }
-                return CloudStorageReleaseResult(kept = candidates.size)
-            }
-        } else {
-            null
+        if (target == null || cloudSyncTargetOrNull() != target) {
+            return CloudStorageReleaseResult(
+                kept = candidates.size,
+                reasons = mapOf(CloudStorageReleaseReason.TargetChanged to candidates.size),
+            )
         }
+
+        val queuedIds = lock.withLock {
+            uploadLock.withLock {
+                (
+                    queueState.value.map { it.chapter.id } +
+                        cloudUploadTasks.values.filter { it.record.isChapter }.map { it.record.chapterId }
+                    ).toSet()
+            }
+        }
+        val reasons = mutableMapOf<CloudStorageReleaseReason, Int>()
+        val pending = candidates.filterNot {
+            it.chapter.id in queuedIds || manga.id in deletingRemoteMangas
+        }
+        val busyCount = candidates.size - pending.size
+        if (busyCount > 0) reasons[CloudStorageReleaseReason.InTransfer] = busyCount
+        val remoteChecks = checkReleaseCopies(manga, source, target, allChapters, pending)
         val released = mutableListOf<Chapter>()
         try {
-            for (candidate in candidates) {
-                val (chapter, file, remoteName, isDirectory, size, modified) = candidate
-                val deleted = try {
-                    val remoteSize = remoteSizes?.get(remoteName)
-                    val verifiedSize = if (remoteSizes == null || (remoteName in remoteSizes && remoteSize == null)) {
-                        cloudSyncService.storage(target.config).remoteFileSize(remoteDirectory, remoteName)
-                    } else {
-                        remoteSize
-                    }
-                    verifiedSize != null && (isDirectory || verifiedSize == size) && lock.withLock {
+            for (candidate in pending) {
+                val (chapter, file, _, isDirectory, size, modified) = candidate
+                val remoteReason = remoteChecks.getValue(chapter.id)
+                val reason = if (cloudSyncTargetOrNull() != target) CloudStorageReleaseReason.TargetChanged else remoteReason
+                val finalReason = reason ?: try {
+                    lock.withLock {
                         uploadLock.withLock {
-                            val queued = queueState.value.any { it.chapter.id == chapter.id } ||
-                                "chapter:${chapter.id}" in cloudUploadTasks
-                            !queued && manga.id !in deletingRemoteMangas && cloudSyncTargetOrNull()?.id == target.id &&
-                                downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id) &&
-                                file.length() == size && file.lastModified() == modified && file.delete()
+                            when {
+                                cloudSyncTargetOrNull() != target -> CloudStorageReleaseReason.TargetChanged
+                                manga.id in deletingRemoteMangas ||
+                                    queueState.value.any { it.chapter.id == chapter.id } ||
+                                    "chapter:${chapter.id}" in cloudUploadTasks -> CloudStorageReleaseReason.InTransfer
+                                !downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id) ||
+                                    file.isDirectory != isDirectory || file.length() != size ||
+                                    file.lastModified() != modified -> CloudStorageReleaseReason.LocalChanged
+                                !file.delete() -> CloudStorageReleaseReason.LocalDeleteFailed
+                                else -> null
+                            }
                         }
                     }
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     logcat(LogPriority.WARN, error) { "Could not release storage for chapter ${chapter.id}" }
-                    false
+                    CloudStorageReleaseReason.LocalDeleteFailed
                 }
-                if (deleted) released += chapter
+                if (finalReason == null) {
+                    released += chapter
+                } else {
+                    reasons[finalReason] = reasons.getOrDefault(finalReason, 0) + 1
+                }
             }
         } finally {
             if (released.isNotEmpty()) {
                 withContext(NonCancellable) {
                     // A chapter can still have a local copy in another download layout.
-                    val remainingIds = provider.findDownloadedChapterIds(released, manga, source)
+                    val remainingIds = provider.findDownloadedChapters(released, mangaDirs).keys
                     val removed = released.filterNot { it.id in remainingIds }
                     if (removed.isNotEmpty()) cache.removeChapters(removed, manga)
                 }
             }
         }
-        return CloudStorageReleaseResult(released.size, candidates.size - released.size)
+        return CloudStorageReleaseResult(released.size, candidates.size - released.size, reasons)
+    }
+
+    private suspend fun checkReleaseCopies(
+        manga: Manga,
+        source: HttpSource,
+        target: CloudSyncTarget,
+        chapters: List<Chapter>,
+        candidates: List<CloudStorageCandidate>,
+    ): Map<Long, CloudStorageReleaseReason?> {
+        if (candidates.isEmpty()) return emptyMap()
+
+        val uploads = downloadPreferences.cloudChapterUploads(manga.id, target.id)
+        val folders = downloadPreferences.remoteSyncMangaFolders().get()
+        val prefix = "${target.id}:${manga.id}:"
+        val historicalDirectories = folders.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }
+        val legacy = candidates.filterNot { it.chapter.id in uploads }
+        val legacyDirectories = if (legacy.isEmpty()) {
+            emptyList()
+        } else {
+            historicalDirectories + cloudRemoteDirectory(manga, source, target)
+        }
+        val directories = (candidates.mapNotNull { uploads[it.chapter.id]?.directory } + legacyDirectories).distinct()
+        val legacyNames = if (legacy.isEmpty()) {
+            emptyMap()
+        } else {
+            provider.getChapterLookupNames(legacy.map { it.chapter }, chapters)
+        }
+        val storage = cloudSyncService.storage(target.config)
+        val results = mutableMapOf<Long, CloudStorageReleaseReason?>()
+        candidates.forEach { results[it.chapter.id] = CloudStorageReleaseReason.RemoteMissing }
+
+        for (directory in directories) {
+            if (cloudSyncTargetOrNull() != target) {
+                results.replaceAll { _, reason -> reason?.let { CloudStorageReleaseReason.TargetChanged } }
+                break
+            }
+            val checks = candidates.mapNotNull { candidate ->
+                val chapterId = candidate.chapter.id
+                if (results[chapterId] == null) return@mapNotNull null
+                val upload = uploads[chapterId]
+                if (upload?.directory != directory && (upload != null || directory !in legacyDirectories)) {
+                    return@mapNotNull null
+                }
+                val name = upload?.fileName ?: candidate.remoteName
+                if (!isCloudArchiveName(name) || (upload == null && name !in legacyNames.getValue(chapterId))) {
+                    if (results[chapterId] == CloudStorageReleaseReason.RemoteMissing) {
+                        results[chapterId] = CloudStorageReleaseReason.RemoteMismatch
+                    }
+                    return@mapNotNull null
+                }
+                CloudReleaseLookup(candidate, name, upload?.size)
+            }
+            if (checks.isEmpty()) continue
+            if (!isInSyncDestination(directory, target) ||
+                isRemoteMangaFolderShared(directory, target.id, prefix, folders)
+            ) {
+                checks.forEach {
+                    val id = it.candidate.chapter.id
+                    if (results[id] == CloudStorageReleaseReason.RemoteMissing) {
+                        results[id] = CloudStorageReleaseReason.RemoteMismatch
+                    }
+                }
+                continue
+            }
+            for ((id, reason) in lookupReleaseDirectory(storage, directory, checks)) {
+                if (reason != CloudStorageReleaseReason.RemoteMissing &&
+                    (reason != CloudStorageReleaseReason.RemoteMismatch ||
+                        results[id] != CloudStorageReleaseReason.RemoteUnavailable)
+                ) {
+                    results[id] = reason
+                }
+            }
+        }
+        return results
+    }
+
+    private suspend fun lookupReleaseDirectory(
+        storage: CloudStorage,
+        directory: String,
+        checks: List<CloudReleaseLookup>,
+    ): List<Pair<Long, CloudStorageReleaseReason?>> {
+        val names = checks.mapTo(HashSet()) { it.name }
+        val listing = try {
+            if (names.size == 1) {
+                null
+            } else {
+                releaseLookup { storage.listRemoteFileSizes(directory, names) }
+            }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            logcat(LogPriority.WARN, error) { "Could not list cloud files for storage release" }
+            return checks.map { it.candidate.chapter.id to CloudStorageReleaseReason.RemoteUnavailable }
+        }
+
+        return coroutineScope {
+            checks.map { check ->
+                async {
+                    val id = check.candidate.chapter.id
+                    if (listing != null && check.name !in listing) {
+                        return@async id to CloudStorageReleaseReason.RemoteMissing
+                    }
+                    val size = try {
+                        listing?.get(check.name) ?: releaseLookup { storage.lookupRemoteFileSize(directory, check.name) }
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        logcat(LogPriority.WARN, error) { "Could not verify cloud file for chapter $id" }
+                        return@async id to CloudStorageReleaseReason.RemoteUnavailable
+                    }
+                    id to when {
+                        size == null -> CloudStorageReleaseReason.RemoteMissing
+                        size <= 0 || (check.uploadedSize != null && size != check.uploadedSize) ||
+                            (!check.candidate.isDirectory && size != check.candidate.size) -> {
+                            CloudStorageReleaseReason.RemoteMismatch
+                        }
+                        else -> null
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
+    private suspend fun <T> releaseLookup(block: suspend () -> T): T = releaseLookupSlots.withPermit {
+        val response = withTimeoutOrNull(15.seconds) { CloudReleaseResponse(block()) }
+            ?: throw IOException("Cloud metadata request timed out")
+        response.value
     }
 
     internal suspend fun queueChaptersForCloudSync(
@@ -751,7 +966,11 @@ class Downloader(
         val source = sourceManager.get(manga.source) as? HttpSource
             ?: return CloudSyncQueueResult(failed = uniqueChapters.size)
         val target = cloudSyncTargetOrNull() ?: return CloudSyncQueueResult(failed = uniqueChapters.size)
-        if (automaticTarget != null && automaticTarget != target.id) return CloudSyncQueueResult()
+        if (automaticTarget != null &&
+            (automaticTarget != target.id || !libraryCloudSync.canTransfer(manga.id, target.id))
+        ) {
+            return CloudSyncQueueResult()
+        }
         val retriedDownloads = if (automaticTarget == null) {
             val ids = uniqueChapters.mapTo(HashSet()) { it.id }
             retryCloudTransfers { it.manga.id == manga.id && it.chapter.id in ids }
@@ -759,6 +978,14 @@ class Downloader(
             0
         }
         restoreCloudUploadsJob.join()
+        val initialPending = if (automaticTarget == null) {
+            queueState.value.filter { download ->
+                download.manga.id == manga.id && download.explicitCloudSync && canTransfer(download) &&
+                    (download.status == Download.State.QUEUE || download.status == Download.State.PAUSED)
+            }.mapTo(HashSet()) { it.chapter.id }
+        } else {
+            emptySet()
+        }
         val uploaded = downloadPreferences.cloudUploadedChapterIds().get()
         val alreadyUploading = if (automaticTarget != null) {
             uploadLock.withLock {
@@ -777,6 +1004,24 @@ class Downloader(
         }
         val mangaDirs = provider.findMangaDirs(manga.title, source)
         val localFiles = provider.findDownloadedChapters(pending, mangaDirs)
+        if (target.config is WebDavConfig) {
+            try {
+                // Keep the existing upload conflict check when there are local bytes to compare.
+                discoverWebDavChapters(
+                    manga,
+                    source,
+                    target,
+                    uniqueChapters,
+                    pending.filterNot { it.id in localFiles },
+                    automaticTarget != null,
+                )
+            } catch (error: IOException) {
+                if (automaticTarget != null) throw error
+                logcat(LogPriority.WARN, error) { "Could not scan WebDAV for manga ${manga.id}" }
+                return CloudSyncQueueResult(failed = pending.size, skipped = uniqueChapters.size - pending.size)
+            }
+        }
+        if (cloudSyncTargetOrNull() != target) return CloudSyncQueueResult()
 
         var uploadsQueued = 0
         var skipped = uniqueChapters.size - pending.size
@@ -791,6 +1036,7 @@ class Downloader(
                 chapter,
                 automaticTarget,
                 explicitCloudSync = automaticTarget == null,
+                explicitSyncTarget = target.id.takeIf { automaticTarget == null },
             )
             if (!canTransfer(download)) return@forEach
             val downloadedChapter = localFiles[chapter.id]
@@ -827,7 +1073,14 @@ class Downloader(
             }
         }
 
-        val shouldStart = queueChapters(manga, chaptersToDownload, autoStart, automaticTarget, automaticTarget == null)
+        val shouldStart = queueChapters(
+            manga,
+            chaptersToDownload,
+            autoStart,
+            automaticTarget,
+            explicitCloudSync = automaticTarget == null,
+            explicitTarget = target.id.takeIf { automaticTarget == null },
+        )
         val queuedChapterIds = queueState.value.mapTo(mutableSetOf()) { it.chapter.id }
         val downloadsQueued = chaptersToDownload.count { it.id in queuedChapterIds }
         val unqueued = chaptersToDownload.size - downloadsQueued
@@ -836,7 +1089,11 @@ class Downloader(
         } else {
             failed += unqueued
         }
-        if (shouldStart || (autoStart && retriedDownloads > 0 && !isRunning)) DownloadWorker.start(context)
+        if (shouldStart ||
+            (autoStart && !isRunning && (retriedDownloads > 0 || chaptersToDownload.any { it.id in initialPending }))
+        ) {
+            DownloadWorker.start(context)
+        }
 
         directUploadDownload?.let { download ->
             mangaDirs.firstOrNull()?.let { updateMetaInfo(download, it, target) }
@@ -850,14 +1107,97 @@ class Downloader(
         )
     }
 
+    private suspend fun discoverWebDavChapters(
+        manga: Manga,
+        source: HttpSource,
+        target: CloudSyncTarget,
+        chapters: List<Chapter>,
+        missing: List<Chapter>,
+        automatic: Boolean,
+    ) {
+        if (missing.isEmpty() || manga.id in deletingRemoteMangas) return
+
+        val allChapters = chapters + getChaptersByMangaId.await(manga.id)
+        val candidates = provider.getChapterLookupNames(missing, allChapters)
+            .mapValues { (_, names) -> names.filter { it.endsWith(".cbz") } }
+            .filterValues { it.isNotEmpty() }.toMutableMap()
+        if (candidates.isEmpty()) return
+
+        val prefix = "${target.id}:${manga.id}:"
+        val currentDirectory = cloudRemoteDirectory(manga, source, target)
+        val recordedFolders = downloadPreferences.remoteSyncMangaFolders().get()
+        val directories = buildSet {
+            add(currentDirectory)
+            recordedFolders.filter { it.startsWith(prefix) }.forEach { add(it.removePrefix(prefix)) }
+        }.filter { folder ->
+            isInSyncDestination(folder, target) &&
+                !isRemoteMangaFolderShared(folder, target.id, prefix, recordedFolders)
+        }
+        if (directories.isEmpty()) return
+
+        val storage = cloudSyncService.storage(target.config)
+        val discovered = buildMap {
+            for (directory in directories) {
+                val names = candidates.values.flatten().toSet()
+                val listing = storage.listRemoteFileSizes(directory, names) ?: continue
+                val files = listing.filter { (name, size) ->
+                    (size ?: storage.remoteFileSize(directory, name))?.let { it > 0 } == true
+                }.keys
+                val matches = candidates.filterValues { names -> names.any { it in files } }.keys
+                if (matches.isEmpty()) continue
+                put(directory, matches)
+                candidates.keys.removeAll(matches)
+                if (candidates.isEmpty()) break
+            }
+        }
+        if (discovered.isEmpty()) return
+
+        val sharedDirectories = getDuplicateLibraryManga(manga).map { it.manga }.filter { other ->
+            val title = provider.getMangaDirName(other.title)
+            discovered.keys.any { it.substringAfterLast('/').equals(title, ignoreCase = true) }
+        }.map { other -> cloudRemoteDirectory(other, sourceManager.getOrStub(other.source), target) }
+        uploadLock.withLock {
+            if (manga.id in deletingRemoteMangas || cloudSyncTargetOrNull() != target ||
+                (automatic && !libraryCloudSync.canTransfer(manga.id, target.id))
+            ) {
+                return@withLock
+            }
+            val latestFolders = downloadPreferences.remoteSyncMangaFolders().get()
+            for ((folder, ids) in discovered) {
+                if (sharedDirectories.any { it.equals(folder, ignoreCase = true) }) continue
+                if (isRemoteMangaFolderShared(folder, target.id, prefix, latestFolders)) continue
+                downloadPreferences.markRemoteSyncMangaFolder(manga.id, target.id, folder)
+                downloadPreferences.markChaptersUploadedToCloud(ids, target.id)
+            }
+        }
+    }
+
+    private fun isRemoteMangaFolderShared(folder: String, target: String, ownPrefix: String, folders: Set<String>) =
+        folders.any {
+            it.startsWith("$target:") && !it.startsWith(ownPrefix) &&
+                it.substringAfter(':').substringAfter(':').equals(folder, ignoreCase = true)
+        }
+
+    private fun isInSyncDestination(folder: String, target: CloudSyncTarget): Boolean {
+        val root = normalizePath(target.destination).trimEnd('/')
+        return folder.startsWith("$root/") && folder != "$root/" &&
+            folder.split('/').none { it == "." || it == ".." } && normalizePath(folder) == folder
+    }
+
     /**
      * Downloads a chapter.
      *
      * @param download the chapter to be downloaded.
      * @param slots the page download slots of the chapter's source.
      * @param pagesStarted completed once every page has a slot.
+     * @param owner the downloader job that owns this chapter.
      */
-    private suspend fun downloadChapter(download: Download, slots: Semaphore, pagesStarted: CompletableDeferred<Unit>) {
+    private suspend fun downloadChapter(
+        download: Download,
+        slots: Semaphore,
+        pagesStarted: CompletableDeferred<Unit>,
+        owner: Job,
+    ) {
         val mangaDir = provider.getMangaDir(download.manga, download.source).getOrElse { e ->
             failDownload(download)
             notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)
@@ -876,29 +1216,36 @@ class Downloader(
             return
         }
 
-        val chapterDirname = provider.getChapterDirName(
-            download.chapter.name,
-            download.chapter.scanlator,
-            download.chapter.url,
-        )
+        val asCbz = downloadPreferences.saveChaptersAsCBZ.get()
+        val outputName = provider.chapterOutputName(download.chapter, asCbz)
+        val chapterDirname = if (asCbz) outputName.removeSuffix(".cbz") else outputName
 
         // Being stopped after the download is moved into place but before it's indexed leaves a finished download
         // on disk that is still queued, and downloading it again would save a second copy next to it
-        val existingChapter = mangaDir.findFile("$chapterDirname.cbz") ?: mangaDir.findFile(chapterDirname)
+        val existingChapter = provider.getChapterLookupNames(download.chapter).firstNotNullOfOrNull(mangaDir::findFile)
         if (existingChapter != null) {
             mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
-            cache.addChapter(chapterDirname, mangaDir, download.manga)
-            finishChapterDownload(download, mangaDir, existingChapter)
+            existingChapter.name?.let { name ->
+                cache.addChapter(
+                    if (existingChapter.isFile) name.removeSuffix(".cbz") else name,
+                    mangaDir,
+                    download.manga,
+                )
+            }
+            finishChapterDownload(download, mangaDir, existingChapter, owner)
             return
         }
 
         try {
+            if (asCbz && mangaDir.findFile(outputName) != null) {
+                throw IOException("Chapter download target already exists: $outputName")
+            }
             download.status = Download.State.DOWNLOADING
             val syncedArchive = downloadSyncedChapter(download, mangaDir, "$chapterDirname.cbz")
             if (syncedArchive != null) {
                 mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
                 cache.addChapter(chapterDirname, mangaDir, download.manga)
-                finishChapterDownload(download, mangaDir, syncedArchive)
+                finishChapterDownload(download, mangaDir, syncedArchive, owner)
                 return
             }
 
@@ -934,7 +1281,6 @@ class Downloader(
                         }
 
                         getOrDownloadImage(page, download, tmpDir)
-                        notifier.onProgressChange(download)
                     }.invokeOnCompletion { slots.release() }
                 }
                 pagesStarted.complete(Unit)
@@ -955,7 +1301,7 @@ class Downloader(
             )
 
             // Only rename the directory if it's downloaded
-            val downloadedChapter = if (downloadPreferences.saveChaptersAsCBZ.get()) {
+            val downloadedChapter = if (asCbz) {
                 archiveChapter(mangaDir, chapterDirname, tmpDir)
             } else {
                 tmpDir.renameTo(chapterDirname)
@@ -965,7 +1311,7 @@ class Downloader(
 
             DiskUtil.createNoMediaFile(tmpDir, context)
 
-            finishChapterDownload(download, mangaDir, downloadedChapter)
+            finishChapterDownload(download, mangaDir, downloadedChapter, owner)
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             // If the page list threw, it will resume here
@@ -978,6 +1324,7 @@ class Downloader(
     private suspend fun downloadSyncedChapter(download: Download, mangaDir: UniFile, fileName: String): UniFile? {
         if (!downloadPreferences.cloudSyncPreferRemoteDownloads().get()) return null
         val target = cloudSyncTargetOrNull() ?: return null
+        if (download.cloudSyncTarget != null && download.cloudSyncTarget != target.id) return null
         val chapter = download.chapter
         if (!downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id)) return null
 
@@ -987,18 +1334,27 @@ class Downloader(
         try {
             val downloaded = try {
                 val prefix = "${target.id}:${download.manga.id}:"
+                val recordedFolders = downloadPreferences.remoteSyncMangaFolders().get()
                 val directories = buildSet {
                     add(cloudRemoteDirectory(download, target))
-                    downloadPreferences.remoteSyncMangaFolders().get()
+                    recordedFolders
                         .filter { it.startsWith(prefix) }
                         .forEach { add(it.removePrefix(prefix)) }
+                }.filter { folder ->
+                    isInSyncDestination(folder, target) &&
+                        !isRemoteMangaFolderShared(folder, target.id, prefix, recordedFolders)
                 }
-                val names = provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
-                    .filter { it.endsWith(".cbz") }
-                    .distinct()
-                val found = names.any { name ->
+                val names = provider.getChapterLookupNames(chapter).filter(::isCloudArchiveName)
+                val storage = cloudSyncService.storage(target.config)
+                val upload = downloadPreferences.cloudChapterUploads(download.manga.id, target.id)[chapter.id]
+                val foundAtUploadPath = upload != null && isInSyncDestination(upload.directory, target) &&
+                    !isRemoteMangaFolderShared(upload.directory, target.id, prefix, recordedFolders) &&
+                    isCloudArchiveName(upload.fileName) &&
+                    storage.downloadCbz(upload.directory, upload.fileName, tempFile)
+                val found = foundAtUploadPath || names.any { name ->
                     directories.any { directory ->
-                        cloudSyncService.storage(target.config).downloadCbz(directory, name, tempFile)
+                        (directory != upload?.directory || name != upload.fileName) &&
+                            storage.downloadCbz(directory, name, tempFile)
                     }
                 }
                 found && tempFile.archiveReader(context).use { reader ->
@@ -1010,7 +1366,7 @@ class Downloader(
                 false
             }
             coroutineContext.ensureActive()
-            if (!downloaded || cloudSyncTargetOrNull()?.id != target.id) return null
+            if (!downloaded || cloudSyncTargetOrNull() != target || !canTransfer(download)) return null
 
             return finalizeDownloadFile(tempFile, mangaDir, fileName)
         } finally {
@@ -1205,17 +1561,20 @@ class Downloader(
     /**
      * Archive the chapter pages as a CBZ.
      */
-    private fun archiveChapter(
+    private suspend fun archiveChapter(
         mangaDir: UniFile,
         dirname: String,
         tmpDir: UniFile,
-    ): UniFile {
+    ): UniFile = withChapterArchiveLock {
         val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")!!
         writeChapterArchive(zip, tmpDir)
         val archive = finalizeDownloadFile(zip, mangaDir, "$dirname.cbz")
         tmpDir.delete()
-        return archive
+        archive
     }
+
+    private suspend inline fun <T> withChapterArchiveLock(action: () -> T): T =
+        if (downloadPreferences.lowPowerMode.get()) chapterArchiveLock.withLock(action = action) else action()
 
     private fun writeChapterArchive(zip: UniFile, chapterDir: UniFile) {
         ZipWriter(context, zip).use { writer ->
@@ -1253,7 +1612,7 @@ class Downloader(
         val archive = mangaDir.createFile("$name.sync.${UUID.randomUUID()}$TMP_DIR_SUFFIX") ?: return false
         var queued = false
         try {
-            writeChapterArchive(archive, chapterDir)
+            withChapterArchiveLock { writeChapterArchive(archive, chapterDir) }
             queued = enqueueDownloadedChapterUpload(download, archive, target, "$name.cbz", temporaryArchive = true)
             return queued
         } finally {
@@ -1261,10 +1620,12 @@ class Downloader(
         }
     }
 
-    private suspend fun finishChapterDownload(download: Download, mangaDir: UniFile, chapterFile: UniFile) {
+    private suspend fun finishChapterDownload(download: Download, mangaDir: UniFile, chapterFile: UniFile, owner: Job) {
+        if (!canTransfer(download)) return
         val scopedUploads = libraryCloudSync.hasConfiguredScope() && !download.explicitCloudSync
         val target = cloudSyncTargetOrNull()?.takeIf {
-            !scopedUploads || libraryCloudSync.canTransfer(download.manga.id, it.id)
+            (download.cloudSyncTarget == null || download.cloudSyncTarget == it.id) &&
+                (!scopedUploads || libraryCloudSync.canTransfer(download.manga.id, it.id))
         }
         val upload = if (target != null && scopedUploads) {
             download.copy(automaticSyncTarget = target.id)
@@ -1282,7 +1643,7 @@ class Downloader(
             }
         }
         updateMetaInfo(upload, mangaDir, target)
-        download.status = Download.State.DOWNLOADED
+        completeDownload(download, owner)
     }
 
     private suspend fun updateMetaInfo(download: Download, mangaDir: UniFile, target: CloudSyncTarget?) {
@@ -1304,6 +1665,7 @@ class Downloader(
                             fileName = META_INFO_FILE_NAME,
                             contentHash = snapshot.sha256(),
                             automatic = download.automaticSyncTarget != null,
+                            background = !download.explicitCloudSync,
                         ),
                         download,
                     )
@@ -1336,6 +1698,7 @@ class Downloader(
                 deleteAfterUpload = !temporaryArchive && downloadPreferences.cloudSyncDeleteAfterUpload().get(),
                 automatic = download.automaticSyncTarget != null,
                 temporaryArchive = temporaryArchive,
+                background = !download.explicitCloudSync,
             ),
             download.copy(),
         )
@@ -1385,7 +1748,12 @@ class Downloader(
     private suspend fun enqueueCloudUpload(record: CloudUploadRecord, download: Download): Boolean {
         restoreCloudUploadsJob.join()
         return uploadLock.withLock {
-            if (record.mangaId in deletingRemoteMangas || !canTransfer(download)) return@withLock false
+            coroutineContext.ensureActive()
+            if (record.mangaId in deletingRemoteMangas ||
+                cloudSyncTargetOrNull()?.id != record.targetId || !canTransfer(download)
+            ) {
+                return@withLock false
+            }
             val existing = cloudUploadTasks[record.key]
             if (existing != null) {
                 // A paused upload stays in the queue until explicitly resumed or canceled.
@@ -1404,56 +1772,159 @@ class Downloader(
 
     private fun publishCloudUploadQueue() {
         _uploadQueueState.value = cloudUploadTasks.values.filter { it.record.isChapter }.map { it.download }
+        uploadQueueChanges.update { it + 1 }
+    }
+
+    private fun canUpload(task: CloudUploadTask, target: String?): Boolean =
+        task.record.targetId == target && task.record.mangaId !in deletingRemoteMangas &&
+            canTransfer(task.download) &&
+            (!task.record.background || !downloadPreferences.cloudSyncAutomaticPaused().get()) &&
+            (!task.record.background || task.record.automatic || !libraryCloudSync.hasConfiguredScope() ||
+                libraryCloudSync.canTransfer(task.record.mangaId, task.record.targetId))
+
+    internal suspend fun runCloudUploads(
+        networkAllowed: () -> Boolean,
+        now: () -> Long = System::currentTimeMillis,
+    ): Boolean {
+        restoreCloudUploadsJob.join()
+        libraryCloudSync.selection.filterNotNull().first()
+        return cloudUploadRunnerLock.withLock {
+            coroutineScope {
+                val owner = SupervisorJob(coroutineContext.job)
+                val workerScope = CoroutineScope(coroutineContext + owner)
+                try {
+                    while (true) {
+                        val revision = uploadLock.withLock {
+                            cloudUploadWorkScheduled = true
+                            val target = cloudSyncTargetOrNull()?.id
+                            val pending = cloudUploadTasks.values.filter {
+                                !it.record.paused && canUpload(it, target)
+                            }
+                            if (pending.isEmpty()) {
+                                cloudUploadWorkScheduled = false
+                                return@coroutineScope false
+                            }
+                            if (!networkAllowed()) return@coroutineScope true
+
+                            pending.asSequence()
+                                .filter {
+                                    it.record.retryAfterMillis <= now() && it.record.key !in activeCloudUploadJobs
+                                }
+                                .take(availableCloudUploadSlots())
+                                .forEach { startCloudUploadLocked(it, workerScope, now, networkAllowed) }
+
+                            if (activeCloudUploadJobs.isEmpty()) return@coroutineScope true
+                            uploadQueueChanges.value
+                        }
+                        // Wake on a completed upload, a queue edit, or a change in the limit/scope.
+                        uploadQueueChanges.first { it != revision }
+                    }
+                    @Suppress("UNREACHABLE_CODE")
+                    false
+                } finally {
+                    withContext(NonCancellable) {
+                        owner.cancel()
+                        owner.join()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun startCloudUploadsLocked() {
+        if (!scope.isActive) return
+        val target = cloudSyncTargetOrNull()?.id
+        val hasPendingUploads = cloudUploadTasks.values.any { !it.record.paused && canUpload(it, target) }
+        if (hasPendingUploads && !cloudUploadWorkScheduled) {
+            cloudUploadWorkScheduled = true
+            cloudUploadScheduler.enqueue(downloadPreferences.downloadOnlyOverWifi.get())
+        }
+        cloudUploadTasks.values.filter {
+            it.record.isChapter && !it.record.paused && !canUpload(it, target)
+        }.forEach {
+            it.download.uploadProgress = 0
+            it.download.status = Download.State.PAUSED
+        }
+        uploadQueueChanges.update { it + 1 }
+    }
+
+    private fun availableCloudUploadSlots(): Int {
+        val limit = if (downloadPreferences.lowPowerMode.get()) {
+            DownloadPreferences.LOW_POWER_CLOUD_UPLOAD_LIMIT
+        } else {
+            downloadPreferences.parallelCloudUploadLimit().get().coerceIn(1, MAX_PARALLEL_CLOUD_UPLOADS)
+        }
+        return (limit - activeCloudUploadJobs.size).coerceAtLeast(0)
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun startCloudUploadsLocked() {
-        if (!scope.isActive) return
-        val limit = downloadPreferences.parallelCloudUploadLimit().get().coerceIn(1, MAX_PARALLEL_CLOUD_UPLOADS)
-        cloudUploadTasks.values.asSequence()
-            .filter {
-                !it.record.paused && it.record.mangaId !in deletingRemoteMangas &&
-                    it.record.key !in activeCloudUploadJobs && canTransfer(it.download)
-            }
-            .take((limit - activeCloudUploadJobs.size).coerceAtLeast(0))
-            .forEach { task ->
-                if (task.record.isChapter) task.download.status = Download.State.UPLOADING
-                // Even a task canceled before dispatch must release its slot in the worker's finally block.
-                val job = scope.launch(Dispatchers.IO, start = CoroutineStart.ATOMIC) { processCloudUploadTask(task) }
-                activeCloudUploadJobs[task.record.key] = job
-                job.start()
-            }
+    private fun startCloudUploadLocked(
+        task: CloudUploadTask,
+        owner: CoroutineScope,
+        now: () -> Long,
+        networkAllowed: () -> Boolean = { true },
+    ) {
+        if (task.record.isChapter) task.download.status = Download.State.UPLOADING
+        // A canceled child must still release its slot even if it never begins transferring.
+        val job = owner.launch(Dispatchers.IO, start = CoroutineStart.ATOMIC) {
+            processCloudUploadTask(task, now, networkAllowed)
+        }
+        activeCloudUploadJobs[task.record.key] = job
     }
 
-    suspend fun resumeCloudUpload(chapterId: Long) = withContext(Dispatchers.IO) {
+    suspend fun resumeCloudUpload(chapterId: Long) = resumeCloudUploads(chapterId)
+
+    internal suspend fun resumeCloudUploads(chapterId: Long? = null) = withContext(Dispatchers.IO) {
+        restoreCloudUploadsJob.join()
         uploadLock.withLock {
-            val task = cloudUploadTasks["chapter:$chapterId"] ?: return@withLock
-            if (!task.record.paused) return@withLock
-            if (cloudSyncTargetOrNull()?.id != task.record.targetId) {
+            val target = cloudSyncTargetOrNull()?.id
+            val (resumable, otherTarget) = chapterUploadsLocked(chapterId)
+                .filter { it.record.paused || it.record.retryAfterMillis > 0 }
+                .partition { it.record.targetId == target }
+            otherTarget.firstOrNull()?.let { task ->
                 reportCloudUploadError(task.download, CloudUploadTargetChangedException())
-                return@withLock
             }
-            setCloudUploadPaused(task, false)
+            if (resumable.isEmpty()) return@withLock
+            setCloudUploadsPaused(resumable, false)
             startCloudUploadsLocked()
         }
     }
 
-    suspend fun pauseCloudUpload(chapterId: Long) = withContext(Dispatchers.IO) {
+    suspend fun pauseCloudUpload(chapterId: Long) = pauseCloudUploads(chapterId)
+
+    internal suspend fun pauseCloudUploads(chapterId: Long? = null) = withContext(Dispatchers.IO) {
+        restoreCloudUploadsJob.join()
         uploadLock.withLock {
-            val task = cloudUploadTasks["chapter:$chapterId"] ?: return@withLock
-            if (task.record.paused) return@withLock
-            setCloudUploadPaused(task, true)
-            activeCloudUploadJobs[task.record.key]?.cancel()
+            val tasks = chapterUploadsLocked(chapterId).filterNot { it.record.paused }
+            if (tasks.isEmpty()) return@withLock
+            setCloudUploadsPaused(tasks, true)
+            tasks.forEach { activeCloudUploadJobs[it.record.key]?.cancel() }
         }
     }
 
-    suspend fun cancelCloudUpload(chapterId: Long) = withContext(Dispatchers.IO) {
-        uploadLock.withLock {
-            val task = cloudUploadTasks["chapter:$chapterId"] ?: return@withLock
-            activeCloudUploadJobs[task.record.key]?.cancel()
-            removeCloudUploadLocked(task)
+    suspend fun cancelCloudUpload(chapterId: Long) = cancelCloudUploads(chapterId)
+
+    internal suspend fun cancelCloudUploads(chapterId: Long? = null) = withContext(Dispatchers.IO) {
+        restoreCloudUploadsJob.join()
+        val (jobs, temporaryFiles) = uploadLock.withLock {
+            val records = chapterUploadsLocked(chapterId).map { it.record }
+            if (records.isEmpty()) return@withContext
+            store.removeUploads(records.map { it.key })
+            val active = records.mapNotNull { activeCloudUploadJobs[it.key]?.also(Job::cancel) }
+            records.forEach { cloudUploadTasks.remove(it.key) }
             publishCloudUploadQueue()
+            active to records.filter { it.temporaryArchive }.map { it.fileUri }
         }
+        withContext(NonCancellable) {
+            jobs.forEach { it.join() }
+            temporaryFiles.forEach { uri -> UniFile.fromUri(context, uri.toUri())?.delete() }
+        }
+    }
+
+    private fun chapterUploadsLocked(chapterId: Long?): List<CloudUploadTask> {
+        if (chapterId != null) return listOfNotNull(cloudUploadTasks["chapter:$chapterId"])
+        // The upload queue only exposes chapter transfers. Metadata uploads run in the background.
+        return cloudUploadTasks.values.filter { it.record.isChapter }
     }
 
     private fun removeCloudUploadLocked(task: CloudUploadTask) {
@@ -1466,23 +1937,32 @@ class Downloader(
     }
 
     private fun setCloudUploadPaused(task: CloudUploadTask, paused: Boolean, failed: Boolean = false) {
-        val record = task.record.copy(paused = paused, failed = failed)
+        val record = task.record.copy(paused = paused, failed = failed, retryAttempts = 0, retryAfterMillis = 0)
         store.saveUpload(record)
         task.updateRecord(record)
     }
 
-    private suspend fun processCloudUploadTask(task: CloudUploadTask) {
+    private fun setCloudUploadsPaused(tasks: List<CloudUploadTask>, paused: Boolean) {
+        val records = tasks.map { it.record.copy(paused = paused, failed = false, retryAttempts = 0, retryAfterMillis = 0) }
+        store.saveUploads(records)
+        tasks.zip(records).forEach { (task, record) -> task.updateRecord(record) }
+    }
+
+    private suspend fun processCloudUploadTask(task: CloudUploadTask, now: () -> Long, networkAllowed: () -> Boolean) {
         val owner = coroutineContext.job
         val record = task.record
+        val target = cloudSyncTargetOrNull()?.takeIf { it.id == record.targetId }
         var file: UniFile? = null
         var failure: Exception? = null
+        var attempted = false
         try {
             owner.ensureActive()
+            if (!networkAllowed()) return
+            val config = target?.config ?: return
+            attempted = true
             file = UniFile.fromUri(context, record.fileUri.toUri())?.takeIf { it.isFile }
                 ?: error("Local upload file is unavailable: ${record.fileName}")
             val uploadFile = file
-            val config = cloudSyncTargetOrNull()?.takeIf { it.id == record.targetId }?.config
-                ?: throw CloudUploadTargetChangedException()
             val storage = cloudSyncService.storage(config)
             if (record.isChapter) {
                 storage.uploadCbz(
@@ -1508,13 +1988,19 @@ class Downloader(
             withContext(NonCancellable) {
                 uploadLock.withLock {
                     activeCloudUploadJobs.remove(record.key)
-                    if (owner.isActive && cloudUploadTasks[record.key] === task && !task.record.paused) {
+                    val currentTarget = cloudSyncTargetOrNull()
+                    if (attempted && owner.isActive && cloudUploadTasks[record.key] === task && !task.record.paused &&
+                        (failure == null || networkAllowed()) &&
+                        target == currentTarget && canUpload(task, currentTarget?.id)
+                    ) {
                         try {
-                            finishCloudUpload(task, file, failure)
+                            finishCloudUpload(task, file, failure, now)
                         } catch (error: Exception) {
                             task.updateRecord(task.record.copy(paused = true, failed = true))
                             reportCloudUploadError(task.download, error)
                         }
+                    } else if (task.record.isChapter && cloudUploadTasks[record.key] === task && !task.record.paused) {
+                        task.updateRecord(task.record)
                     }
                     publishCloudUploadQueue()
                     startCloudUploadsLocked()
@@ -1523,16 +2009,35 @@ class Downloader(
         }
     }
 
-    private suspend fun finishCloudUpload(task: CloudUploadTask, file: UniFile?, failure: Exception?) {
+    private suspend fun finishCloudUpload(task: CloudUploadTask, file: UniFile?, failure: Exception?, now: () -> Long) {
         val record = task.record
         val download = task.download
         if (failure != null) {
+            if ((record.background || failure is IOException) && failure.isRetryableCloudUploadFailure()) {
+                val attempts = (record.retryAttempts + 1).coerceAtMost(8)
+                val backoff = (10L shl (attempts - 1)).coerceAtMost(15 * 60)
+                val requested = (failure as? CloudStorageHttpException)?.retryAfterSeconds ?: 0
+                val waiting = record.copy(
+                    retryAttempts = attempts,
+                    retryAfterMillis = now() + maxOf(backoff, requested.coerceIn(0, 24 * 60 * 60)) * 1000,
+                )
+                store.saveUpload(waiting)
+                task.updateRecord(waiting)
+                logcat(LogPriority.WARN, failure) { "Cloud upload will retry for ${download.manga.title}" }
+                return
+            }
             reportCloudUploadError(download, failure)
             if (record.isChapter) {
                 setCloudUploadPaused(task, paused = true, failed = true)
                 return
             }
         } else if (record.isChapter) {
+            downloadPreferences.recordCloudChapterUpload(
+                record.mangaId,
+                record.chapterId,
+                record.targetId,
+                CloudChapterUpload(record.remoteDirectory, record.fileName, file?.length()?.takeIf { it > 0 }),
+            )
             downloadPreferences.markChaptersUploadedToCloud(listOf(record.chapterId), record.targetId)
             downloadPreferences.markRemoteSyncMangaFolder(record.mangaId, record.targetId, record.remoteDirectory)
         } else {
@@ -1601,6 +2106,7 @@ class Downloader(
     ): UniFile {
         val chapters = getChaptersByMangaId.await(manga.id, applyScanlatorFilter = false)
             .sortedWith(getChapterSort(manga))
+        val outputNames = provider.chapterOutputNames(chapters, downloadPreferences.saveChaptersAsCBZ.get())
         val coverAsset = resolveMetaInfoCoverAsset(manga, source)
         val manifest = MetaInfoManifest(
             schemaVersion = 1,
@@ -1624,7 +2130,7 @@ class Downloader(
                     scanlator = chapter.scanlator,
                     url = source.getChapterUrl(chapter.toSChapter()).trim(),
                     sourceOrder = chapter.sourceOrder,
-                    file = provider.chapterOutputName(chapter, downloadPreferences.saveChaptersAsCBZ.get()),
+                    file = outputNames.getValue(chapter.id),
                 )
             },
         )
@@ -1713,18 +2219,17 @@ class Downloader(
         }
     }
 
-    private fun removeFromQueue(download: Download) {
-        _queueState.update {
-            store.remove(download)
-            if (
-                download.status == Download.State.DOWNLOADING ||
-                download.status == Download.State.UPLOADING ||
-                download.status == Download.State.QUEUE
-            ) {
-                download.status = Download.State.NOT_DOWNLOADED
-            }
-            it - download
+    private suspend fun completeDownload(download: Download, owner: Job) = lock.withLock {
+        coroutineContext.ensureActive()
+        if (queueState.value.none { it === download }) return@withLock
+        if (!canTransfer(download)) {
+            download.status = Download.State.QUEUE
+            return@withLock
         }
+        download.status = Download.State.DOWNLOADED
+        store.remove(download)
+        _queueState.update { it - download }
+        stopIfFinishedLocked(owner)
     }
 
     private inline fun removeFromQueueIf(predicate: (Download) -> Boolean) {
@@ -1780,20 +2285,22 @@ class Downloader(
             val kept = downloads.mapTo(HashSet()) { it.chapter.id }
             queue.forEach { download ->
                 if (download.chapter.id !in kept &&
-                    (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE)
+                    (
+                        download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE ||
+                            download.status == Download.State.PAUSED
+                        )
                 ) {
                     download.status = Download.State.NOT_DOWNLOADED
                 }
             }
             downloads.forEach {
-                if (it.chapter.id == retryChapterId && it.status == Download.State.ERROR) {
+                if (it.chapter.id == retryChapterId && it.status == Download.State.ERROR && canTransfer(it)) {
                     retryDownload(it)
                 } else if (!it.isCloudSync || it.status != Download.State.ERROR) {
-                    it.status = Download.State.QUEUE
+                    it.status = if (canTransfer(it)) Download.State.QUEUE else Download.State.PAUSED
                 }
             }
-            store.clear()
-            store.addAll(downloads)
+            store.replaceAll(downloads)
             downloads
         }
     }
@@ -1878,6 +2385,17 @@ private data class CloudStorageCandidate(
     val modified: Long,
 )
 
+private data class CloudReleaseLookup(
+    val candidate: CloudStorageCandidate,
+    val name: String,
+    val uploadedSize: Long?,
+)
+
+private data class CloudReleaseResponse<T>(val value: T)
+
+private fun isCloudArchiveName(name: String): Boolean =
+    name.endsWith(".cbz", ignoreCase = true) && '/' !in name && '\\' !in name
+
 internal enum class CloudSyncChapterAction {
     Skip,
     Download,
@@ -1920,6 +2438,13 @@ private class CloudUploadTask(record: CloudUploadRecord, val download: Download)
 
 private class CloudUploadTargetChangedException :
     IllegalStateException("Switch back to the original cloud storage and destination to resume this upload")
+
+private fun Exception.isRetryableCloudUploadFailure(): Boolean = when (this) {
+    is CloudStorageHttpException -> status == 408 || status == 429 || status in 500..599
+    is FileNotFoundException, is ProtocolException, is SSLPeerUnverifiedException -> false
+    is IOException -> true
+    else -> false
+}
 
 @Serializable
 private data class MetaInfoManifest(

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
@@ -33,7 +34,9 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
+import cafe.adriel.voyager.navigator.Navigator
 import com.hippo.unifile.UniFile
+import dev.zacsweers.metrox.viewmodel.LocalMetroViewModelFactory
 import eu.kanade.core.preference.asState
 import eu.kanade.presentation.library.components.LibraryContent
 import eu.kanade.presentation.library.components.LibrarySyncActions
@@ -57,20 +60,28 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.download.DownloadAdapter
 import eu.kanade.tachiyomi.ui.download.DownloadHeaderItem
 import eu.kanade.tachiyomi.ui.download.DownloadItem
+import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
+import eu.kanade.tachiyomi.ui.download.DownloadQueueViewModel
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.util.lang.Hash.md5
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import mihon.app.di.AppGraph
+import mihon.app.di.MihonViewModelFactory
 import mihon.core.metro.metroGraph
 import okhttp3.Request
 import okhttp3.Response
@@ -97,6 +108,7 @@ import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
 import tachiyomi.domain.manga.interactor.GetLibraryManga
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
@@ -109,12 +121,14 @@ import tachiyomi.domain.track.repository.TrackRepository
 import tachiyomi.i18n.MR
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.lang.reflect.Proxy
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -165,6 +179,7 @@ class WebDavDownloadIntegrationTest {
     private val mangaRepo = testRepository<MangaRepository> { method, args ->
         when (method) {
             "getMangaById" -> manga.takeIf { it.id == args[0] }
+            "getDuplicateLibraryManga" -> emptyList<Any>()
             "getLibraryMangaAsFlow" -> flowOf(
                 listOf(
                     LibraryManga(
@@ -257,8 +272,94 @@ class WebDavDownloadIntegrationTest {
     }
 
     @Test
+    fun lowPowerModeSerializesPageDownloads() = runBlocking {
+        assertTrue(downloads.lowPowerMode.get())
+        source.pagesPerChapter = 2
+        val firstImage = server.blockNextImage()
+        val firstMetadata = DavTestServer.BlockedRequest()
+        source.beforeFirstMetadata = {
+            firstMetadata.started.countDown()
+            firstMetadata.release.await()
+        }
+
+        try {
+            val (_, downloader) = createDownloader()
+            downloader.queueChapters(manga, chapters, autoStart = false)
+            assertTrue(downloader.start())
+
+            await { firstImage.started.count == 0L }
+            delay(500)
+            assertEquals("A second page must wait for the first one", 1, server.images.get())
+            firstImage.release.countDown()
+
+            await { firstMetadata.started.count == 0L }
+            delay(500)
+            assertEquals("The second chapter must wait for the first one to finish", 2, server.images.get())
+            firstMetadata.release.countDown()
+
+            await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+            assertEquals(4, server.images.get())
+            val archives = root.walkTopDown().filter { it.extension == "cbz" }.toList()
+            assertEquals(2, archives.size)
+            archives.forEach { archive ->
+                ZipFile(archive).use {
+                    assertTrue(it.getEntry("001.png") != null)
+                    assertTrue(it.getEntry("002.png") != null)
+                }
+            }
+        } finally {
+            firstImage.release.countDown()
+            firstMetadata.release.countDown()
+        }
+    }
+
+    @Test
+    fun lowPowerModeLimitsCloudUploads() = runBlocking {
+        downloads.lowPowerMode.set(true)
+        downloads.parallelCloudUploadLimit().set(3)
+        val uploadChapters = chapters +
+            chapters.last().copy(id = 42013L, url = "/chapter-3", name = "Chapter 3", sourceOrder = -3)
+        val (_, downloader) = createDownloader(processUploads = true)
+        downloader.queueChapters(manga, uploadChapters, autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        assertEquals(3, root.walkTopDown().count { it.extension == "cbz" })
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        val blockedUploads = List(2) { server.blockNextUpload(commitOnRelease = true) }
+        try {
+            val queued = downloader.queueChaptersForCloudSync(manga, uploadChapters, autoStart = false)
+            assertEquals(3, queued.uploadsQueued)
+            await { blockedUploads.all { it.started.count == 0L } }
+            assertEquals(
+                listOf(Download.State.UPLOADING, Download.State.UPLOADING, Download.State.QUEUE),
+                downloader.uploadQueueState.value.map(Download::status),
+            )
+            val queuedChapter = uploadChapters.last()
+
+            downloads.lowPowerMode.set(false)
+            await { downloads.isChapterUploadedToCloud(queuedChapter.id, target) }
+            assertTrue(uploadChapters.dropLast(1).none { downloads.isChapterUploadedToCloud(it.id, target) })
+            blockedUploads.forEach { it.release.countDown() }
+
+            await {
+                uploadChapters.all { downloads.isChapterUploadedToCloud(it.id, target) } &&
+                    downloader.uploadQueueState.value.isEmpty()
+            }
+        } finally {
+            blockedUploads.forEach { it.release.countDown() }
+        }
+    }
+
+    @Test
     fun normalDownloadAndPausedAndInterruptedUploadsSurviveQueueReconstruction() = runBlocking {
-        var (scope, downloader) = createDownloader()
+        downloads.lowPowerMode.set(false)
+        var (scope, downloader) = createDownloader(processUploads = true)
         // This fixture rejects meta.info generation. Both ordinary chapters must still complete.
         downloader.queueChapters(manga, chapters, autoStart = false)
         assertTrue(downloader.start())
@@ -293,7 +394,7 @@ class WebDavDownloadIntegrationTest {
         scope.coroutineContext.job.cancelAndJoin()
         blocked.release.countDown()
 
-        val restored = createDownloader()
+        val restored = createDownloader(processUploads = true)
         scope = restored.scope
         downloader = restored.downloader
         await { downloader.uploadQueueState.value.singleOrNull()?.status == Download.State.PAUSED }
@@ -320,7 +421,7 @@ class WebDavDownloadIntegrationTest {
         await { interrupted.started.count == 0L }
         scope.coroutineContext.job.cancelAndJoin()
         interrupted.release.countDown()
-        downloader = createDownloader().downloader
+        downloader = createDownloader(processUploads = true).downloader
         await {
             downloads.isChapterUploadedToCloud(second.id, originalTarget) && downloader.uploadQueueState.value.isEmpty()
         }
@@ -334,7 +435,7 @@ class WebDavDownloadIntegrationTest {
         assertEquals(1, downloader.queueChaptersForCloudSync(manga, listOf(first), autoStart = false).uploadsQueued)
         await { downloader.uploadQueueState.value.singleOrNull()?.status == Download.State.ERROR }
         scopes.last().coroutineContext.job.cancelAndJoin()
-        downloader = createDownloader().downloader
+        downloader = createDownloader(processUploads = true).downloader
         await { downloader.uploadQueueState.value.singleOrNull()?.status == Download.State.ERROR }
         server.files.remove(conflictPath)
         downloader.resumeCloudUpload(first.id)
@@ -365,6 +466,7 @@ class WebDavDownloadIntegrationTest {
         fun localArchives() = root.walkTopDown().filter { it.extension == "cbz" }.toList()
 
         downloadChapter()
+        assertFalse(downloader.runCloudUploads(networkAllowed = { true }))
         await {
             downloads.isChapterUploadedToCloud(chapter.id, target) && downloader.uploadQueueState.value.isEmpty()
         }
@@ -447,6 +549,7 @@ class WebDavDownloadIntegrationTest {
         val queued = downloader.queueChaptersForCloudSync(manga, chapters, autoStart = false, automaticTarget = target)
         assertEquals(1, queued.uploadsQueued)
         assertEquals(1, queued.downloadsQueued)
+        val firstUploadRun = async { downloader.runCloudUploads(networkAllowed = { true }) }
         await { blocked.started.count == 0L }
         fixture.sync.setCategoryPaused(8L, true)
         await {
@@ -460,6 +563,7 @@ class WebDavDownloadIntegrationTest {
 
         fixture.scope.coroutineContext.job.cancelAndJoin()
         blocked.release.countDown()
+        firstUploadRun.await()
         fixture = createDownloader()
         downloader = fixture.downloader
         await {
@@ -470,7 +574,7 @@ class WebDavDownloadIntegrationTest {
         fixture.sync.setCategoryPaused(8L, false)
         await { fixture.sync.canTransfer(manga.id, target) }
         assertTrue(downloader.start())
-        await {
+        awaitCloudUploads(downloader) {
             chapters.all { downloads.isChapterUploadedToCloud(it.id, target) } &&
                 downloader.queueState.value.isEmpty() && downloader.uploadQueueState.value.isEmpty()
         }
@@ -478,15 +582,40 @@ class WebDavDownloadIntegrationTest {
         assertEquals(2, server.images.get())
         assertEquals(mapOf(8L to CloudSyncStatus.Complete), fixture.statuses())
 
-        val localArchive = root.walkTopDown().single { it.extension == "cbz" }
-        val remoteChapterTwo = server.files.keys.single { URI(it).path.substringAfterLast('/') == localArchive.name }
+        val originalArchive = root.walkTopDown().single { it.extension == "cbz" }
+        val remoteChapterTwo = server.files.keys.single { URI(it).path.substringAfterLast('/') == originalArchive.name }
         val bytes = checkNotNull(server.files.remove(remoteChapterTwo))
-        assertEquals(CloudStorageReleaseResult(released = 1, kept = 1), downloader.releaseCloudStorage(manga, target))
+        val chapter = chapters.last()
+        val plainName = "${chapter.name}.cbz"
+        val alternateName = if (originalArchive.name == plainName) {
+            "${chapter.name}_${md5(chapter.url).take(6)}.cbz"
+        } else {
+            plainName
+        }
+        val localArchive = File(originalArchive.parentFile, alternateName)
+        assertTrue(originalArchive.renameTo(localArchive))
+        val uploadedDirectory = URI(remoteChapterTwo).path.substringBeforeLast('/')
+        val conflictingAlias = URI(null, null, "$uploadedDirectory/$alternateName", null).rawPath
+        server.files[conflictingAlias] = bytes
+
+        downloads.organizeDownloadsByCategory().set(false)
+        server.releaseLookups.clear()
+        assertEquals(
+            CloudStorageReleaseResult(
+                released = 1,
+                kept = 1,
+                reasons = mapOf(CloudStorageReleaseReason.RemoteMissing to 1),
+            ),
+            downloader.releaseCloudStorage(manga, target),
+        )
         assertEquals(listOf("PROPFIND"), server.releaseLookups.toList())
         assertFalse(legacyPage.exists())
         assertTrue(localArchive.isFile)
         server.files[remoteChapterTwo] = byteArrayOf(1)
-        assertEquals(CloudStorageReleaseResult(kept = 1), downloader.releaseCloudStorage(manga, target))
+        assertEquals(
+            CloudStorageReleaseResult(kept = 1, reasons = mapOf(CloudStorageReleaseReason.RemoteMismatch to 1)),
+            downloader.releaseCloudStorage(manga, target),
+        )
         assertTrue(localArchive.isFile)
         server.files[remoteChapterTwo] = bytes
         assertEquals(CloudStorageReleaseResult(released = 1), downloader.releaseCloudStorage(manga, target))
@@ -494,7 +623,6 @@ class WebDavDownloadIntegrationTest {
         assertArrayEquals(bytes, server.files[remoteChapterTwo])
 
         preferences.getStringSet("remote_sync_sources", emptySet()).set(setOf(manga.source.toString()))
-        downloads.organizeDownloadsByCategory().set(false)
         assertEquals(setOf(8L), fixture.sync.currentRules().categories)
         assertEquals(mapOf(8L to CloudSyncStatus.Complete), fixture.statuses())
 
@@ -522,6 +650,279 @@ class WebDavDownloadIntegrationTest {
         assertEquals(listOf(remoteFolder), server.deletedCollections.toList())
         assertEquals(setOf("/target/another-manga/keep.cbz"), server.files.keys)
         assertTrue(chapters.none { downloads.isChapterUploadedToCloud(it.id, target) })
+    }
+
+    @Test
+    fun releaseStorageQueriesWebDavFallbacksConcurrentlyAndReportsFailures() = runBlocking {
+        val (_, downloader) = createDownloader(processUploads = true)
+        downloader.queueChapters(manga, chapters, autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        val archives = root.walkTopDown().filter { it.extension == "cbz" }.sortedBy { it.name }.toList()
+        assertEquals(2, archives.size)
+        val (releasableArchive, retainedArchive) = archives
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        assertEquals(2, downloader.queueChaptersForCloudSync(manga, chapters, autoStart = false).uploadsQueued)
+        await {
+            chapters.all { downloads.isChapterUploadedToCloud(it.id, target) } &&
+                downloader.uploadQueueState.value.isEmpty()
+        }
+
+        server.releaseLookups.clear()
+        server.fileListingFailure = 405
+        val bothHeadsStarted = CountDownLatch(2)
+        val releaseHeads = CountDownLatch(1)
+        server.beforeHead = { path ->
+            bothHeadsStarted.countDown()
+            releaseHeads.await()
+            if (URI(path).path.substringAfterLast('/') == retainedArchive.name) 503 else null
+        }
+        val release = async { downloader.releaseCloudStorage(manga, target) }
+        try {
+            await("The two HEAD requests should overlap") { bothHeadsStarted.count == 0L }
+        } finally {
+            releaseHeads.countDown()
+        }
+
+        assertEquals(
+            CloudStorageReleaseResult(
+                released = 1,
+                kept = 1,
+                reasons = mapOf(CloudStorageReleaseReason.RemoteUnavailable to 1),
+            ),
+            release.await(),
+        )
+        assertEquals(listOf("PROPFIND", "HEAD", "HEAD"), server.releaseLookups.toList())
+        assertFalse(releasableArchive.exists())
+        assertTrue(retainedArchive.isFile)
+    }
+
+    @Test
+    fun disconnectPreservesCloudTransfersAcrossRestart() = runBlocking {
+        var fixture = createDownloader(processUploads = true)
+        var downloader = fixture.downloader
+        val uploadChapter = chapters.first()
+        val pendingChapter = chapters.last()
+        downloader.queueChapters(manga, listOf(uploadChapter), autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        val localArchive = root.walkTopDown().single { it.extension == "cbz" }
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncDeleteAfterUpload().set(true)
+        downloads.remoteSyncCategories().set(setOf("8"))
+        downloads.cloudSyncEnabled().set(true)
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        await { fixture.sync.canTransfer(manga.id, target) }
+
+        val blockedUpload = server.blockNextUpload(commitOnRelease = true)
+        downloader.queueChaptersForCloudSync(manga, listOf(uploadChapter), autoStart = false)
+        await { blockedUpload.started.count == 0L }
+        downloader.queueChaptersForCloudSync(manga, listOf(pendingChapter), false, target)
+        assertEquals(pendingChapter.id, downloader.queueState.value.single().chapter.id)
+
+        downloads.cloudSyncEnabled().set(false)
+        await {
+            !fixture.sync.canTransfer(manga.id, target) &&
+                downloader.uploadQueueState.value.singleOrNull()?.status == Download.State.PAUSED
+        }
+        blockedUpload.release.countDown()
+        await { server.files.isNotEmpty() }
+        assertFalse(downloader.start())
+        assertTrue(localArchive.isFile)
+        assertFalse(downloads.isChapterUploadedToCloud(uploadChapter.id, target))
+
+        fixture.scope.coroutineContext.job.cancelAndJoin()
+        fixture = createDownloader()
+        downloader = fixture.downloader
+        await {
+            downloader.queueState.value.size == 1 &&
+                downloader.uploadQueueState.value.singleOrNull()?.status == Download.State.PAUSED
+        }
+        assertEquals(pendingChapter.id, downloader.queueState.value.single().chapter.id)
+        assertEquals(1, server.conditionedPuts.get())
+        assertTrue(localArchive.isFile)
+
+        downloads.cloudSyncEnabled().set(true)
+        await { fixture.sync.canTransfer(manga.id, target) }
+        assertTrue(downloader.start())
+        awaitCloudUploads(downloader) {
+            chapters.all { downloads.isChapterUploadedToCloud(it.id, target) } &&
+                downloader.queueState.value.isEmpty() && downloader.uploadQueueState.value.isEmpty()
+        }
+        assertFalse(localArchive.exists())
+    }
+
+    @Test
+    fun automaticUploadsWaitForNetworkAndRecoverAfterQueueReconstruction() = runBlocking {
+        var fixture = createDownloader()
+        val chapter = chapters.first()
+        fixture.downloader.queueChapters(manga, listOf(chapter), autoStart = false)
+        assertTrue(fixture.downloader.start())
+        await { fixture.downloader.queueState.value.isEmpty() && !fixture.downloader.isRunning }
+        val archive = root.walkTopDown().single { it.extension == "cbz" }
+        val contents = archive.readBytes()
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        downloads.remoteSyncCategories().set(setOf("8"))
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        await { fixture.sync.canTransfer(manga.id, target) }
+        assertEquals(
+            1,
+            fixture.downloader.queueChaptersForCloudSync(
+                manga,
+                listOf(chapter),
+                autoStart = false,
+                automaticTarget = target,
+            ).uploadsQueued,
+        )
+
+        var networkAllowed = false
+        var clock = System.currentTimeMillis()
+        suspend fun runUploadWorker() = withTimeout(20_000) {
+            fixture.downloader.runCloudUploads(networkAllowed = { networkAllowed }, now = { clock })
+        }
+
+        assertTrue(runUploadWorker())
+        assertEquals(0, server.conditionedPuts.get())
+        assertFalse(downloads.isChapterUploadedToCloud(chapter.id, target))
+
+        networkAllowed = true
+        server.disconnectNextPut = true
+        assertTrue(runUploadWorker())
+        assertEquals(1, server.conditionedPuts.get())
+        assertFalse(downloads.isChapterUploadedToCloud(chapter.id, target))
+        assertTrue(archive.isFile)
+
+        fixture.scope.coroutineContext.job.cancelAndJoin()
+        fixture = createDownloader()
+        await { fixture.sync.canTransfer(manga.id, target) }
+        await { fixture.downloader.uploadQueueState.value.singleOrNull()?.chapter?.id == chapter.id }
+        assertTrue(runUploadWorker())
+        assertEquals(1, server.conditionedPuts.get())
+
+        clock += 60_000
+        server.failNextPut = true
+        assertTrue(runUploadWorker())
+        assertEquals(2, server.conditionedPuts.get())
+        assertFalse(downloads.isChapterUploadedToCloud(chapter.id, target))
+
+        clock += 60_000
+        assertFalse(runUploadWorker())
+        assertEquals(3, server.conditionedPuts.get())
+        assertTrue(downloads.isChapterUploadedToCloud(chapter.id, target))
+        assertTrue(fixture.downloader.uploadQueueState.value.isEmpty())
+        assertArrayEquals(contents, server.files.values.single())
+    }
+
+    @Test
+    fun manualUploadRetriesAfterConnectionDrops() = runBlocking {
+        var fixture = createDownloader(processUploads = false)
+        val chapter = chapters.first()
+        fixture.downloader.queueChapters(manga, listOf(chapter), autoStart = false)
+        assertTrue(fixture.downloader.start())
+        await { fixture.downloader.queueState.value.isEmpty() && !fixture.downloader.isRunning }
+        val archive = root.walkTopDown().single { it.extension == "cbz" }
+        val contents = archive.readBytes()
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        assertEquals(
+            1,
+            fixture.downloader.queueChaptersForCloudSync(manga, listOf(chapter), autoStart = false).uploadsQueued,
+        )
+
+        var clock = System.currentTimeMillis()
+        suspend fun runUploadWorker() = withTimeout(20_000) {
+            fixture.downloader.runCloudUploads(networkAllowed = { true }, now = { clock })
+        }
+
+        server.disconnectNextPut = true
+        assertTrue(runUploadWorker())
+        assertEquals(1, server.conditionedPuts.get())
+        assertEquals(Download.State.QUEUE, fixture.downloader.uploadQueueState.value.single().status)
+        assertFalse(downloads.isChapterUploadedToCloud(chapter.id, target))
+        assertTrue(archive.isFile)
+
+        fixture.scope.coroutineContext.job.cancelAndJoin()
+        fixture = createDownloader(processUploads = false)
+        assertTrue(runUploadWorker())
+        val restored = fixture.downloader.uploadQueueState.value.single()
+        assertEquals(chapter.id, restored.chapter.id)
+        assertEquals(Download.State.QUEUE, restored.status)
+        assertEquals(1, server.conditionedPuts.get())
+
+        clock += 60_000
+        assertFalse(runUploadWorker())
+        assertEquals(2, server.conditionedPuts.get())
+        assertTrue(downloads.isChapterUploadedToCloud(chapter.id, target))
+        assertTrue(fixture.downloader.uploadQueueState.value.isEmpty())
+        assertArrayEquals(contents, server.files.values.single())
+    }
+
+    @Test
+    fun interruptedAutomaticUploadReusesACloudCopyCommittedBeforeCancellation() = runBlocking {
+        var fixture = createDownloader()
+        val chapter = chapters.first()
+        fixture.downloader.queueChapters(manga, listOf(chapter), autoStart = false)
+        assertTrue(fixture.downloader.start())
+        await { fixture.downloader.queueState.value.isEmpty() && !fixture.downloader.isRunning }
+        val archive = root.walkTopDown().single { it.extension == "cbz" }
+        val contents = archive.readBytes()
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        downloads.remoteSyncCategories().set(setOf("8"))
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        await { fixture.sync.canTransfer(manga.id, target) }
+        fixture.downloader.queueChaptersForCloudSync(
+            manga,
+            listOf(chapter),
+            autoStart = false,
+            automaticTarget = target,
+        )
+        val blocked = server.blockNextUpload(commitOnRelease = true)
+        val worker = async { fixture.downloader.runCloudUploads(networkAllowed = { true }) }
+        try {
+            await { blocked.started.count == 0L }
+            worker.cancelAndJoin()
+        } finally {
+            blocked.release.countDown()
+        }
+
+        await { server.files.isNotEmpty() }
+        assertTrue(archive.isFile)
+        assertFalse(downloads.isChapterUploadedToCloud(chapter.id, target))
+        assertArrayEquals(contents, server.files.values.single())
+        fixture.scope.coroutineContext.job.cancelAndJoin()
+
+        fixture = createDownloader()
+        await { fixture.sync.canTransfer(manga.id, target) }
+        assertFalse(fixture.downloader.runCloudUploads(networkAllowed = { true }))
+        assertTrue(downloads.isChapterUploadedToCloud(chapter.id, target))
+        assertTrue(fixture.downloader.uploadQueueState.value.isEmpty())
+        assertEquals(2, server.conditionedPuts.get())
+        assertArrayEquals(contents, server.files.values.single())
     }
 
     @Test
@@ -558,8 +959,86 @@ class WebDavDownloadIntegrationTest {
         server.rejectImages = false
         assertEquals(1, fixture.downloader.retryCloudTransfers { it.chapter.id == chapter.id })
         assertTrue(fixture.downloader.start())
-        await { downloads.isChapterUploadedToCloud(chapter.id, target) }
+        awaitCloudUploads(fixture.downloader) { downloads.isChapterUploadedToCloud(chapter.id, target) }
         assertEquals(2, server.images.get())
+    }
+
+    @Test
+    fun bulkQueueActionsAffectOnlyTheirTransferDirection() = runBlocking {
+        downloads.lowPowerMode.set(false)
+        val downloader = createDownloader(processUploads = true).downloader
+        val uploadChapters = listOf(
+            chapters.first(),
+            chapters.first().copy(id = 42013L, url = "/chapter-3", name = "Chapter 3", sourceOrder = -3),
+        )
+        val downloadChapter = chapters.last()
+        downloader.queueChapters(manga, uploadChapters, autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        val localArchives = root.walkTopDown().filter { it.extension == "cbz" }.toList()
+        assertEquals(2, localArchives.size)
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        downloads.parallelCloudUploadLimit().set(1)
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+
+        fun uploadStates() = downloader.uploadQueueState.value.map(Download::status)
+        val activeUploads = listOf(Download.State.UPLOADING, Download.State.QUEUE)
+        val firstUpload = server.blockNextUpload()
+        val queued = downloader.queueChaptersForCloudSync(manga, uploadChapters, autoStart = false)
+        assertEquals(2, queued.uploadsQueued)
+        await { firstUpload.started.count == 0L }
+
+        suspend fun startBlockedDownload(): DavTestServer.BlockedRequest {
+            val request = server.blockNextImage()
+            assertTrue(downloader.start())
+            await { request.started.count == 0L }
+            return request
+        }
+
+        downloader.queueChapters(manga, listOf(downloadChapter), autoStart = false)
+        val firstDownload = startBlockedDownload()
+        downloader.pause()
+        firstDownload.release.countDown()
+        assertFalse(downloader.isRunning)
+        assertEquals(Download.State.QUEUE, downloader.queueState.value.single().status)
+        assertEquals(activeUploads, uploadStates())
+
+        val secondDownload = startBlockedDownload()
+        downloader.pauseCloudUploads()
+        firstUpload.release.countDown()
+        assertEquals(List(2) { Download.State.PAUSED }, uploadStates())
+        assertTrue(downloader.isRunning)
+        assertEquals(Download.State.DOWNLOADING, downloader.queueState.value.single().status)
+
+        val secondUpload = server.blockNextUpload()
+        downloader.resumeCloudUploads()
+        await { secondUpload.started.count == 0L }
+        assertEquals(activeUploads, uploadStates())
+        assertEquals(Download.State.DOWNLOADING, downloader.queueState.value.single().status)
+
+        downloader.clearQueue()
+        secondDownload.release.countDown()
+        assertTrue(downloader.queueState.value.isEmpty())
+        assertEquals(activeUploads, uploadStates())
+
+        downloader.queueChapters(manga, listOf(downloadChapter), autoStart = false)
+        val thirdDownload = startBlockedDownload()
+        downloader.cancelCloudUploads()
+        secondUpload.release.countDown()
+        assertTrue(downloader.uploadQueueState.value.isEmpty())
+        assertTrue(downloader.isRunning)
+        assertEquals(Download.State.DOWNLOADING, downloader.queueState.value.single().status)
+        thirdDownload.release.countDown()
+
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        assertTrue(localArchives.all(File::isFile))
+        assertEquals(3, root.walkTopDown().count { it.extension == "cbz" })
+        assertTrue(uploadChapters.none { downloads.isChapterUploadedToCloud(it.id, target) })
     }
 
     @Test
@@ -583,9 +1062,11 @@ class WebDavDownloadIntegrationTest {
         val queued = fixture.downloader.queueChaptersForCloudSync(manga, chapters, false, target)
         assertEquals(1, queued.uploadsQueued)
         assertEquals(1, queued.downloadsQueued)
+        val firstUploadRun = async { fixture.downloader.runCloudUploads(networkAllowed = { true }) }
         await { blocked.started.count == 0L }
         fixture.downloader.clearAllTransfers()
         blocked.release.countDown()
+        firstUploadRun.await()
         assertTrue(fixture.downloader.queueState.value.isEmpty())
         assertTrue(fixture.downloader.uploadQueueState.value.isEmpty())
         assertTrue(localArchive.isFile)
@@ -598,7 +1079,9 @@ class WebDavDownloadIntegrationTest {
         assertEquals(1, resubmitted.uploadsQueued)
         assertEquals(1, resubmitted.downloadsQueued)
         assertTrue(fixture.downloader.start())
-        await { chapters.all { downloads.isChapterUploadedToCloud(it.id, target) } }
+        awaitCloudUploads(fixture.downloader) {
+            chapters.all { downloads.isChapterUploadedToCloud(it.id, target) }
+        }
     }
 
     @Test
@@ -613,6 +1096,64 @@ class WebDavDownloadIntegrationTest {
         val config = WebDavConfig("${server.url}/dav", "user", "pass")
         val directories = graph.cloudSyncService.storage(config).listDirectories("/target")
         assertEquals(setOf("/target/A+B", "/target/Nested%2Fname"), directories.map { it.path }.toSet())
+    }
+
+    @Test
+    fun automaticScanRecognizesExistingWebDavChapterArchives() = runBlocking {
+        val libraryPreferences = LibraryPreferences(preferences)
+        libraryPreferences.enableChapterNameHash.set(true)
+        val (_, downloader, sync) = createDownloader(libraryPreferences)
+        val first = chapters.first()
+        downloader.queueChapters(manga, listOf(first), autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+
+        val archive = root.walkTopDown().single { it.extension == "cbz" }
+        assertEquals("Chapter 1.cbz", archive.name)
+        val bytes = archive.readBytes()
+        val remoteFolder = cloudRemoteDirectoryPath("/target", null, source.toString(), manga.title)
+        val legacyArchiveName = archive.nameWithoutExtension + "_" + md5(first.url).take(6) + ".cbz"
+        val remotePath = URI(null, null, "$remoteFolder/$legacyArchiveName", null).rawPath
+        server.files[remotePath] = bytes
+        server.files[URI(null, null, "$remoteFolder/Chapter 2.cbz", null).rawPath] = byteArrayOf()
+        assertTrue(archive.delete())
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        downloads.remoteSyncCategories().set(setOf("5"))
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        await { sync.canTransfer(manga.id, target) }
+
+        server.fileListingFailure = 503
+        val failure = runCatching {
+            downloader.queueChaptersForCloudSync(manga, chapters, autoStart = false, automaticTarget = target)
+        }.exceptionOrNull()
+        assertTrue(failure is IOException)
+        assertFalse(downloads.isChapterUploadedToCloud(first.id, target))
+        assertTrue(downloader.queueState.value.isEmpty())
+        server.fileListingFailure = null
+
+        val result = downloader.queueChaptersForCloudSync(manga, chapters, autoStart = false, automaticTarget = target)
+        assertEquals(CloudSyncQueueResult(downloadsQueued = 1, skipped = 1), result)
+        assertEquals(chapters.last().id, downloader.queueState.value.single().chapter.id)
+        assertTrue(downloads.isChapterUploadedToCloud(first.id, target))
+        assertFalse(downloads.isChapterUploadedToCloud(chapters.last().id, target))
+        assertEquals(setOf("$target:${manga.id}:$remoteFolder"), downloads.remoteSyncMangaFolders().get())
+        assertEquals(listOf("PROPFIND", "PROPFIND"), server.releaseLookups.toList())
+        assertTrue(server.fileGets.isEmpty())
+        assertEquals(0, server.conditionedPuts.get())
+
+        downloader.clearQueue()
+        server.rejectImages = true
+        downloader.queueChapters(manga, listOf(first), autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        assertArrayEquals(bytes, root.walkTopDown().single { it.extension == "cbz" }.readBytes())
+        assertEquals(1, server.images.get())
+        assertEquals(0, server.conditionedPuts.get())
     }
 
     @Test
@@ -890,6 +1431,112 @@ class WebDavDownloadIntegrationTest {
     }
 
     @Test
+    fun transferSectionsCollapseIndependentlyAndKeepTheirActions() = runBlocking {
+        val fixture = createDownloader(processUploads = true)
+        val downloader = fixture.downloader
+        val (uploadChapter, downloadChapter) = chapters
+        downloader.queueChapters(manga, listOf(uploadChapter), autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        val blocked = server.blockNextUpload()
+        val queued = downloader.queueChaptersForCloudSync(manga, chapters, autoStart = false)
+        assertEquals(1, queued.uploadsQueued)
+        assertEquals(1, queued.downloadsQueued)
+        await { blocked.started.count == 0L }
+        downloader.pauseCloudUploads()
+        blocked.release.countDown()
+
+        val factory = MihonViewModelFactory(
+            viewModelProviders = mapOf(DownloadQueueViewModel::class to { DownloadQueueViewModel(fixture.manager) }),
+            assistedFactoryProviders = emptyMap(),
+            manualAssistedFactoryProviders = emptyMap(),
+        )
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.ready = true
+                activity.setContentView(
+                    ComposeView(activity).apply {
+                        setContent {
+                            TachiyomiPreviewTheme {
+                                CompositionLocalProvider(LocalMetroViewModelFactory provides factory) {
+                                    Navigator(DownloadQueueScreen)
+                                }
+                            }
+                        }
+                    },
+                )
+            }
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.uiAutomation
+            val downloadHeader = app.stringResource(MR.strings.pref_category_downloads)
+            val uploadHeader = app.stringResource(MR.strings.transfer_queue_uploads)
+            val uploadActions = app.stringResource(MR.strings.transfer_queue_upload_actions)
+            val downloadActions = app.stringResource(MR.strings.transfer_queue_download_actions)
+            val cancelAll = app.stringResource(MR.strings.action_cancel_all)
+            val sort = app.stringResource(MR.strings.action_sort)
+            val byChapter = app.stringResource(MR.strings.action_order_by_chapter_number)
+            val ascending = app.stringResource(MR.strings.action_asc)
+            fun findAction(label: String) = automation.rootInActiveWindow?.findNode {
+                it.contentDescription?.toString() == label
+            }
+            fun tap(node: AccessibilityNodeInfo?) {
+                val bounds = Rect().also { checkNotNull(node).getBoundsInScreen(it) }
+                instrumentation.tap(bounds)
+            }
+
+            await("Both chapters must be visible when the screen opens") {
+                findText(downloadChapter.name) != null && findText(uploadChapter.name) != null
+            }
+            await("Both sections must expose their own actions") {
+                findAction(downloadActions) != null && findAction(uploadActions) != null
+            }
+            captureQueueIfRequested("transfer-sections")
+            tap(findText(uploadHeader))
+            await("Collapsing uploads must leave downloads visible") {
+                findText(uploadChapter.name) == null && findText(downloadChapter.name) != null
+            }
+            assertTrue(findAction(uploadActions) != null)
+            tap(findAction(uploadActions))
+            await("Upload actions must open while uploads are collapsed") { findText(cancelAll) != null }
+            assertNull(findText(sort))
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("The upload actions menu must close") { findText(cancelAll) == null }
+
+            tap(findText(downloadHeader))
+            await("Collapsing downloads must leave both sections collapsed") {
+                findText(downloadChapter.name) == null && findText(uploadChapter.name) == null
+            }
+            assertTrue(findAction(downloadActions) != null)
+            captureQueueIfRequested("transfer-sections-collapsed")
+            tap(findAction(downloadActions))
+            await("Download actions must include sort while downloads are collapsed") {
+                findText(cancelAll) != null && findText(sort) != null
+            }
+            tap(findText(sort))
+            await("Sort must include sorting by chapter number") { findText(byChapter) != null }
+            tap(findText(byChapter))
+            await("Chapter number must have an ascending sort option") { findText(ascending) != null }
+            tap(findText(ascending))
+            await("Selecting ascending sort must close the menu") { findText(ascending) == null }
+
+            tap(findText(uploadHeader))
+            await("Reopening uploads must leave downloads collapsed") {
+                findText(uploadChapter.name) != null && findText(downloadChapter.name) == null
+            }
+            tap(findText(downloadHeader))
+            await("Reopening downloads must make both chapters visible") {
+                findText(downloadChapter.name) != null && findText(uploadChapter.name) != null
+            }
+        }
+    }
+
+    @Test
     fun uploadRowsShowDistinctStatesAndContextualActions() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val selected = AtomicInteger()
@@ -945,7 +1592,7 @@ class WebDavDownloadIntegrationTest {
             rows.zip(actions).forEach { (download, action) ->
                 selected.set(0)
                 scenario.onActivity {
-                    val id = DownloadItem.stableId(download.chapter.id, isUpload = true).toLong()
+                    val id = DownloadItem.stableId(download.chapter.id, isUpload = true)
                     val holder = checkNotNull(list.findViewHolderForItemId(id))
                     val progress = holder.itemView.findViewById<View>(R.id.download_progress)
                     assertEquals(
@@ -1032,17 +1679,32 @@ class WebDavDownloadIntegrationTest {
         val scope: CoroutineScope,
         val downloader: Downloader,
         val sync: LibraryCloudSync,
+        val manager: DownloadManager,
     ) {
         suspend fun statuses() = withTimeout(20_000) {
             sync.statuses(downloader.queueState, downloader.uploadQueueState).first { it.isNotEmpty() }
         }
     }
 
-    private fun createDownloader(): DownloaderFixture {
+    private fun createDownloader(
+        libraryPreferences: LibraryPreferences = graph.libraryPreferences,
+        processUploads: Boolean = false,
+    ): DownloaderFixture {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
+        val uploadRequests = if (processUploads) Channel<Unit>(Channel.CONFLATED) else null
         val manager = StorageManager(scope, context, storage)
-        val provider = DownloadProvider(context, manager, graph.libraryPreferences, downloads, graph.getCategories)
-        val store = DownloadStore(context, sourceManager, graph.json, GetManga(mangaRepo), GetChapter(chapterRepo))
+        val provider = DownloadProvider(
+            context,
+            manager,
+            libraryPreferences,
+            downloads,
+            graph.getCategories,
+            GetChaptersByMangaId(chapterRepo),
+        )
+        val cache = DownloadCache(scope, context, provider, sourceManager, manager)
+        val getManga = GetManga(mangaRepo)
+        val getChapter = GetChapter(chapterRepo)
+        val store = DownloadStore(context, sourceManager, graph.json, getManga, getChapter)
         val sync = LibraryCloudSync(
             scope,
             context,
@@ -1054,7 +1716,7 @@ class WebDavDownloadIntegrationTest {
             scope,
             context,
             provider,
-            DownloadCache(scope, context, provider, sourceManager, manager),
+            cache,
             sourceManager,
             ChapterCache(context, graph.json),
             graph.coverCache,
@@ -1067,8 +1729,27 @@ class WebDavDownloadIntegrationTest {
             store,
             DownloadNotifier(context, graph.securityPreferences),
             sync,
+            GetDuplicateLibraryManga(mangaRepo),
+            CloudUploadScheduler { uploadRequests?.trySend(Unit) },
         )
-        return DownloaderFixture(scope, downloader, sync)
+        if (uploadRequests != null) {
+            scope.launch {
+                uploadRequests.consumeAsFlow().collect { downloader.runCloudUploads(networkAllowed = { true }) }
+            }
+        }
+        val downloadManager = DownloadManager(
+            context,
+            provider,
+            cache,
+            graph.getCategories,
+            getManga,
+            getChapter,
+            sourceManager,
+            downloads,
+            downloader,
+            DownloadPendingDeleter(context, graph.json),
+        )
+        return DownloaderFixture(scope, downloader, sync, downloadManager)
     }
 
     private suspend fun await(
@@ -1081,6 +1762,15 @@ class WebDavDownloadIntegrationTest {
             }
         } catch (error: TimeoutCancellationException) {
             throw AssertionError(description, error)
+        }
+    }
+
+    private suspend fun awaitCloudUploads(downloader: Downloader, condition: () -> Boolean) {
+        withTimeout(20_000) {
+            while (!condition()) {
+                downloader.runCloudUploads(networkAllowed = { true })
+                if (!condition()) delay(25)
+            }
         }
     }
 
@@ -1097,13 +1787,18 @@ class WebDavDownloadIntegrationTest {
         override val lang = "en"
         override val supportsLatest = false
         val metaInfoFailures = AtomicInteger()
+        var pagesPerChapter = 1
+        var beforeFirstMetadata: (() -> Unit)? = null
 
         override fun getMangaUrl(manga: SManga): String {
-            metaInfoFailures.incrementAndGet()
+            if (metaInfoFailures.incrementAndGet() == 1) beforeFirstMetadata?.invoke()
             error("Fixture metadata failure")
         }
-        override suspend fun getPageList(chapter: SChapter): List<Page> =
-            listOf(Page(index = 0, imageUrl = "$baseUrl/image${chapter.url}"))
+
+        override suspend fun getPageList(chapter: SChapter): List<Page> = List(pagesPerChapter) { index ->
+            val pagePath = if (pagesPerChapter == 1) chapter.url else "${chapter.url}/$index"
+            Page(index = index, imageUrl = "$baseUrl/image$pagePath")
+        }
 
         override fun popularMangaRequest(page: Int): Request = error("Unexpected request")
         override fun popularMangaParse(response: Response): MangasPage = error("Unexpected response")
@@ -1135,11 +1830,19 @@ private class DavTestServer : AutoCloseable {
 
     @Volatile var failNextPut = false
 
+    @Volatile var disconnectNextPut = false
+
     @Volatile var rejectImages = false
+
+    @Volatile var fileListingFailure: Int? = null
+
+    @Volatile var beforeHead: ((String) -> Int?)? = null
 
     @Volatile var directoryListing: String? = null
 
-    @Volatile private var blockedUpload: BlockedUpload? = null
+    private val blockedUploads = ConcurrentLinkedQueue<BlockedRequest>()
+
+    @Volatile private var blockedImage: BlockedRequest? = null
 
     private val listener = thread(name = "WebDAV fixture") {
         while (!server.isClosed) {
@@ -1148,7 +1851,10 @@ private class DavTestServer : AutoCloseable {
         }
     }
 
-    fun blockNextUpload() = BlockedUpload().also { blockedUpload = it }
+    fun blockNextUpload(commitOnRelease: Boolean = false) =
+        BlockedRequest(commitOnRelease).also { blockedUploads.add(it) }
+
+    fun blockNextImage() = BlockedRequest().also { blockedImage = it }
 
     private fun handle(socket: Socket) {
         socket.soTimeout = 10_000
@@ -1164,6 +1870,11 @@ private class DavTestServer : AutoCloseable {
         val body = input.readByteArray(headers["content-length"]?.toLong() ?: 0)
         if (path.startsWith("/image/")) {
             images.incrementAndGet()
+            blockedImage?.let { blocked ->
+                blockedImage = null
+                blocked.started.countDown()
+                blocked.release.await()
+            }
             if (rejectImages) {
                 respond(socket, 503)
                 return
@@ -1184,6 +1895,10 @@ private class DavTestServer : AutoCloseable {
             }
             "HEAD" -> {
                 releaseLookups += method
+                beforeHead?.invoke(path)?.let { code ->
+                    respond(socket, code)
+                    return
+                }
                 files[path]?.let { respond(socket, 200, it, headOnly = true) } ?: respond(socket, 404)
             }
             "MKCOL" -> respond(socket, 201)
@@ -1191,6 +1906,10 @@ private class DavTestServer : AutoCloseable {
                 val listing = if ("getcontentlength" in body.decodeToString()) {
                     check(headers["depth"] == "1")
                     releaseLookups += method
+                    fileListingFailure?.let { failure ->
+                        respond(socket, failure)
+                        return
+                    }
                     files.entries.filter { (file, _) -> file.substringBeforeLast('/') + "/" == path }
                         .joinToString(
                             separator = "",
@@ -1228,12 +1947,18 @@ private class DavTestServer : AutoCloseable {
             "PUT" -> {
                 check(headers["if-none-match"] == "*")
                 conditionedPuts.incrementAndGet()
-                val blocked = blockedUpload
+                val blocked = blockedUploads.poll()
                 if (blocked != null) {
-                    blockedUpload = null
                     blocked.started.countDown()
                     blocked.release.await()
-                    respond(socket, 503)
+                    val code = if (blocked.commitOnRelease) {
+                        if (files.putIfAbsent(path, body) == null) 201 else 412
+                    } else {
+                        503
+                    }
+                    respond(socket, code)
+                } else if (disconnectNextPut) {
+                    disconnectNextPut = false
                 } else if (failNextPut) {
                     failNextPut = false
                     respond(socket, 503)
@@ -1280,7 +2005,7 @@ private class DavTestServer : AutoCloseable {
         handlers.shutdownNow()
     }
 
-    class BlockedUpload {
+    class BlockedRequest(val commitOnRelease: Boolean = false) {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
     }

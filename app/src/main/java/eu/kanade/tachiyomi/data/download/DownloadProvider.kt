@@ -19,6 +19,7 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.interactor.GetCategories
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -41,6 +42,7 @@ class DownloadProvider(
     private val libraryPreferences: LibraryPreferences,
     private val downloadPreferences: DownloadPreferences,
     private val getCategories: GetCategories,
+    private val getChaptersByMangaId: GetChaptersByMangaId,
 ) {
 
     private val downloadsDir: UniFile?
@@ -162,24 +164,16 @@ class DownloadProvider(
     /**
      * Returns the download directory for a chapter if it exists.
      *
-     * @param chapterName the name of the chapter to query.
-     * @param chapterScanlator scanlator of the chapter to query
-     * @param mangaTitle the title of the manga to query.
+     * @param chapter the chapter to query.
+     * @param manga the manga of the chapter.
      * @param source the source of the chapter.
      */
     suspend fun findChapterDir(
-        chapterName: String,
-        chapterScanlator: String?,
-        chapterUrl: String,
-        mangaTitle: String,
+        chapter: Chapter,
+        manga: Manga,
         source: Source,
     ): UniFile? = withContext(Dispatchers.IO) {
-        findMangaDirs(mangaTitle, source).asSequence()
-            .flatMap { mangaDir ->
-                getValidChapterDirNames(chapterName, chapterScanlator, chapterUrl).asSequence()
-                    .mapNotNull(mangaDir::findFile)
-            }
-            .firstOrNull()
+        findDownloadedChapters(listOf(chapter), findMangaDirs(manga.title, source))[chapter.id]
     }
 
     /**
@@ -195,7 +189,7 @@ class DownloadProvider(
         source: Source,
     ): Pair<List<UniFile>, List<UniFile>> = withContext(Dispatchers.IO) {
         val mangaDirs = findMangaDirs(manga.title, source)
-        mangaDirs to mangaDirs.flatMap { findChapterDirs(chapters, it).values }.distinctBy { it.uri }
+        mangaDirs to findDownloadedChapters(chapters, mangaDirs).values.distinctBy { it.uri }
     }
 
     /**
@@ -210,15 +204,20 @@ class DownloadProvider(
         manga: Manga,
         source: Source,
     ): Set<Long> = withContext(Dispatchers.IO) {
-        findMangaDirs(manga.title, source).flatMap { findChapterDirs(chapters, it).keys }.toSet()
+        findDownloadedChapters(chapters, findMangaDirs(manga.title, source)).keys
     }
 
     internal suspend fun findDownloadedChapters(
         chapters: List<Chapter>,
         mangaDirs: List<UniFile>,
-    ): Map<Long, UniFile> = buildMap {
-        mangaDirs.forEach { dir ->
-            findChapterDirs(chapters, dir).forEach { (id, file) -> putIfAbsent(id, file) }
+    ): Map<Long, UniFile> {
+        if (chapters.isEmpty() || mangaDirs.isEmpty()) return emptyMap()
+
+        val chapterNames = getChapterLookupNames(chapters, getChaptersByMangaId.await(chapters.first().mangaId))
+        return buildMap {
+            mangaDirs.forEach { dir ->
+                findChapterDirs(chapterNames, dir).forEach { (id, file) -> putIfAbsent(id, file) }
+            }
         }
     }
 
@@ -234,29 +233,27 @@ class DownloadProvider(
      * @param chapters the chapters to query.
      * @param mangaDir the download directory of the chapters' manga.
      */
-    private suspend fun findChapterDirs(chapters: List<Chapter>, mangaDir: UniFile): Map<Long, UniFile> {
+    private suspend fun findChapterDirs(chapterNames: Map<Long, List<String>>, mangaDir: UniFile): Map<Long, UniFile> {
         val isDocumentTree = mangaDir.uri.scheme == ContentResolver.SCHEME_CONTENT
-        if (isDocumentTree && chapters.size >= LIST_CHAPTER_DIRS_MIN_CHAPTERS) {
+        if (isDocumentTree && chapterNames.size >= LIST_CHAPTER_DIRS_MIN_CHAPTERS) {
             val chapterDirs = mangaDir.listFiles().orEmpty()
                 .filter { it.name != null }
                 .associateByTo(sortedMapOf(String.CASE_INSENSITIVE_ORDER)) { it.name!! }
-            return chapters
-                .mapNotNull { chapter -> chapter.findDir { chapterDirs[it] }?.let { chapter.id to it } }
+            return chapterNames.entries
+                .mapNotNull { (id, names) -> names.firstNotNullOfOrNull { chapterDirs[it] }?.let { id to it } }
                 .toMap()
         }
         return coroutineScope {
-            chapters
-                .map { chapter ->
-                    async(chapterDirLookupDispatcher) { chapter.findDir(mangaDir::findFile)?.let { chapter.id to it } }
+            chapterNames.entries
+                .map { (id, names) ->
+                    async(chapterDirLookupDispatcher) {
+                        names.firstNotNullOfOrNull(mangaDir::findFile)?.let { id to it }
+                    }
                 }
                 .awaitAll()
                 .filterNotNull()
                 .toMap()
         }
-    }
-
-    private fun Chapter.findDir(find: (String) -> UniFile?): UniFile? {
-        return getValidChapterDirNames(name, scanlator, url).firstNotNullOfOrNull(find)
     }
 
     /**
@@ -284,14 +281,52 @@ class DownloadProvider(
     }
 
     /**
-     * Returns the chapter directory name for a chapter.
-     *
-     * @param chapterName the name of the chapter to query.
-     * @param chapterScanlator scanlator of the chapter to query.
-     * @param chapterUrl url of the chapter to query.
+     * Returns the output names for the chapters of a manga.
+     * CBZ files use a plain name unless multiple chapters would use the same name.
      */
-    fun chapterOutputName(chapter: Chapter, asCbz: Boolean): String =
-        getChapterDirName(chapter.name, chapter.scanlator, chapter.url) + if (asCbz) ".cbz" else ""
+    internal fun chapterOutputNames(chapters: List<Chapter>, asCbz: Boolean): Map<Long, String> {
+        val names = chapters.associate { chapter ->
+            chapter.id to if (asCbz) {
+                getChapterDirName(chapter.name, chapter.scanlator, chapter.url, enableChapterNameHash = false)
+            } else {
+                getChapterDirName(chapter.name, chapter.scanlator, chapter.url)
+            }
+        }
+        if (!asCbz) return names
+
+        val counts = names.values.groupingBy(String::lowercase).eachCount()
+        return chapters.associate { chapter ->
+            val plain = names.getValue(chapter.id)
+            val name = if (counts.getValue(plain.lowercase()) > 1) {
+                getChapterDirName(chapter.name, chapter.scanlator, chapter.url, enableChapterNameHash = true)
+            } else {
+                plain
+            }
+            chapter.id to "$name.cbz"
+        }
+    }
+
+    internal suspend fun chapterOutputName(chapter: Chapter, asCbz: Boolean): String {
+        val chapters = if (asCbz) getChaptersByMangaId.await(chapter.mangaId) else emptyList()
+        return chapterOutputNames((listOf(chapter) + chapters).distinctBy { it.url }, asCbz).getValue(chapter.id)
+    }
+
+    internal suspend fun getChapterLookupNames(chapter: Chapter): List<String> =
+        getChapterLookupNames(listOf(chapter), getChaptersByMangaId.await(chapter.mangaId)).getValue(chapter.id)
+
+    internal suspend fun getChapterLookupNames(chapters: List<Chapter>, mangaId: Long): Map<Long, List<String>> =
+        getChapterLookupNames(chapters, getChaptersByMangaId.await(mangaId))
+
+    internal fun getChapterLookupNames(chapters: List<Chapter>, allChapters: List<Chapter>): Map<Long, List<String>> {
+        val namesByUrl = (chapters + allChapters).distinctBy { it.url }.associate { chapter ->
+            chapter.url to getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
+        }
+        val nameCounts = namesByUrl.values.flatMap { names -> names.map(String::lowercase).distinct() }
+            .groupingBy { it }.eachCount()
+        return chapters.associate { chapter ->
+            chapter.id to namesByUrl.getValue(chapter.url).filter { nameCounts[it.lowercase()] == 1 }
+        }
+    }
 
     fun getChapterDirName(
         chapterName: String,

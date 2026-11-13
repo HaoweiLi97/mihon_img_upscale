@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
+import eu.kanade.tachiyomi.data.download.OneDriveAuth
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -55,6 +56,7 @@ class BackupCreator(
     private val extensionStoresBackupCreator: ExtensionStoresBackupCreator,
     private val sourcesBackupCreator: SourcesBackupCreator,
     private val backupFileValidator: BackupFileValidator,
+    private val oneDriveAuth: OneDriveAuth,
 ) {
     @AssistedFactory
     fun interface Factory {
@@ -108,6 +110,11 @@ class BackupCreator(
                             backupPreferences = backupAppPreferences(options),
                             backupExtensionStores = backupExtensionStores(options),
                             backupSourcePreferences = backupSourcePreferences(options),
+                            oneDriveSession = if (options.appSettings && options.cloudStorageLogin) {
+                                oneDriveAuth.exportSessionForBackup()
+                            } else {
+                                null
+                            },
                         ),
                     )
                     if (writer.isEmpty) {
@@ -150,7 +157,10 @@ class BackupCreator(
     private fun backupAppPreferences(options: BackupOptions): List<BackupPreference> {
         if (!options.appSettings) return emptyList()
 
-        return preferenceBackupCreator.createApp(includePrivatePreferences = options.privateSettings)
+        return preferenceBackupCreator.createApp(
+            includePrivatePreferences = options.privateSettings,
+            includeCloudStorageLogin = options.cloudStorageLogin,
+        )
     }
 
     private suspend fun backupExtensionStores(options: BackupOptions): List<BackupExtensionStore> {

@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.data.backup.models.BackupOneDriveSession
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -34,6 +35,36 @@ import kotlin.io.path.createTempDirectory
 @RunWith(AndroidJUnit4::class)
 class OneDriveStorageIntegrationTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Test
+    fun optedInBackupRestoresOneDriveSessionIntoKeystore() = runBlocking {
+        val dir = createTempDirectory(context.cacheDir.toPath(), "onedrive-backup").toFile()
+        val wrapped = object : ContextWrapper(context) {
+            override fun getNoBackupFilesDir() = dir
+        }
+        val prefs = DownloadPreferences(AndroidPreferenceStore(context.getSharedPreferences(dir.name, 0)))
+        try {
+            val client = UUID.randomUUID().toString()
+            val auth = OneDriveAuth(wrapped, prefs)
+            auth.restoreSessionFromBackup(BackupOneDriveSession("drive-a", client, "test-token", "/Manga"))
+
+            val restarted = OneDriveAuth(wrapped, prefs)
+            val exported = checkNotNull(restarted.exportSessionForBackup())
+            assertEquals("drive-a", exported.driveId)
+            assertEquals(client, exported.clientId)
+            assertEquals("test-token", exported.refreshToken)
+            assertEquals("/Manga", exported.destination)
+            assertFalse(File(dir, "onedrive-session").readBytes().decodeToString().contains("test-token"))
+            assertEquals("/Manga", prefs.cloudSyncDestination(CloudSyncStorage.OneDrive).get())
+
+            restarted.disconnect()
+            assertNull(restarted.exportSessionForBackup())
+            assertEquals("/Manga", prefs.cloudSyncDestination(CloudSyncStorage.OneDrive).get())
+        } finally {
+            dir.deleteRecursively()
+            context.deleteSharedPreferences(dir.name)
+        }
+    }
 
     @Test
     fun microsoftLoginUsesPkceAndRejectsAnUnsolicitedCallback() = runBlocking {
@@ -167,6 +198,58 @@ class OneDriveStorageIntegrationTest {
             assertFalse(remote.downloadCbz("/漫画", "missing.cbz", uniFile))
             assertArrayEquals(data, file.readBytes())
         }
+    }
+
+    @Test
+    fun fileSizeLookupDistinguishesMissingFilesFromUnavailableMetadata() = runBlocking {
+        val remote = OneDriveStorage(
+            "drive-a",
+            api = client { request ->
+                when (request.url.pathSegments.last()) {
+                    "Missing.cbz" -> response(request, 404)
+                    "Denied.cbz" -> response(request, 403)
+                    "Directory.cbz" -> response(request, 200, """{"folder":{},"size":100}""")
+                    "Unknown.cbz" -> response(request, 200, """{"file":{}}""")
+                    "Empty.cbz" -> response(request, 200, """{"file":{},"size":0}""")
+                    else -> error("Unexpected request: $request")
+                }
+            },
+        ) { "token" }
+
+        assertNull(remote.lookupRemoteFileSize("/Books", "Missing.cbz"))
+        assertNull(remote.lookupRemoteFileSize("/Books", "Directory.cbz"))
+        assertTrue(runCatching { remote.lookupRemoteFileSize("/Books", "Denied.cbz") }.isFailure)
+        assertTrue(runCatching { remote.lookupRemoteFileSize("/Books", "Unknown.cbz") }.isFailure)
+        assertEquals(0L, remote.lookupRemoteFileSize("/Books", "Empty.cbz"))
+    }
+
+    @Test
+    fun bulkFileSizeLookupMatchesCaseAliasesAcrossPages() = runBlocking {
+        val directoryPath = "/v1.0/drives/drive-a/root:/Books:/children"
+        val remote = OneDriveStorage(
+            "drive-a",
+            api = client { request ->
+                check(request.url.encodedPath == directoryPath)
+                when (request.url.queryParameter("page")) {
+                    null -> response(
+                        request,
+                        200,
+                        """
+                        {
+                          "value":[{"name":"chapter.cbz","file":{},"size":32}],
+                          "@odata.nextLink":"https://graph.microsoft.com$directoryPath?page=2"
+                        }
+                        """.trimIndent(),
+                    )
+                    "2" -> response(request, 200, """{"value":[{"name":"Empty.cbz","file":{},"size":0}]}""")
+                    else -> error("Unexpected request: $request")
+                }
+            },
+        ) { "token" }
+
+        val names = setOf("Chapter.cbz", "chapter.cbz", "Empty.cbz", "Missing.cbz")
+        val files = remote.listRemoteFileSizes("/Books", names)
+        assertEquals(mapOf("Chapter.cbz" to 32L, "chapter.cbz" to 32L, "Empty.cbz" to 0L), files)
     }
 
     @Test

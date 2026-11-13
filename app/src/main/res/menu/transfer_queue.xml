@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/pause_transfers"
+        android:title="@string/transfer_queue_pause_all" />
+
+    <item
+        android:id="@+id/resume_transfers"
+        android:title="@string/transfer_queue_resume_all" />
+
+    <item
+        android:id="@+id/sort_transfers"
+        android:title="@string/action_sort">
+        <menu>
+            <item
+                android:id="@+id/sort_transfers_date"
+                android:title="@string/action_order_by_upload_date">
+                <menu>
+                    <item
+                        android:id="@+id/sort_transfers_newest"
+                        android:title="@string/action_newest" />
+                    <item
+                        android:id="@+id/sort_transfers_oldest"
+                        android:title="@string/action_oldest" />
+                </menu>
+            </item>
+            <item
+                android:id="@+id/sort_transfers_chapter"
+                android:title="@string/action_order_by_chapter_number">
+                <menu>
+                    <item
+                        android:id="@+id/sort_transfers_asc"
+                        android:title="@string/action_asc" />
+                    <item
+                        android:id="@+id/sort_transfers_desc"
+                        android:title="@string/action_desc" />
+                </menu>
+            </item>
+        </menu>
+    </item>
+
+    <item
+        android:id="@+id/cancel_transfers"
+        android:title="@string/action_cancel_all" />
+
+</menu>

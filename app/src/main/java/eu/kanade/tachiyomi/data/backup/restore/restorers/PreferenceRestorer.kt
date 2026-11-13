@@ -20,6 +20,7 @@ import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.plusAssign
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.download.service.CloudSyncStorage
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 
@@ -28,16 +29,58 @@ class PreferenceRestorer(
     private val context: Context,
     private val getCategories: GetCategories,
     private val preferenceStore: PreferenceStore,
+    private val downloadPreferences: DownloadPreferences,
 ) {
     suspend fun restoreApp(
         preferences: List<BackupPreference>,
         backupCategories: List<BackupCategory>?,
+        restoringOneDriveLogin: Boolean,
     ) {
+        val preferencesByKey = preferences.associateBy { it.key }
+        val oneDriveId = downloadPreferences.cloudSyncOneDriveId().get()
+        val fingerprintKey = downloadPreferences.cloudSyncOneDriveAccountFingerprint().key()
+        val backupFingerprint = (preferencesByKey[fingerprintKey]?.value as? StringPreferenceValue)?.value
+        val currentFingerprint = downloadPreferences.cloudSyncTargetId(CloudSyncStorage.OneDrive, oneDriveId, "/", "")
+        val keepOneDriveTarget = !restoringOneDriveLogin && currentFingerprint != null &&
+            backupFingerprint != currentFingerprint
+        val webDavUrl = downloadPreferences.cloudSyncUrl()
+        val webDavUsername = downloadPreferences.cloudSyncUsername()
+        val webDavPassword = downloadPreferences.cloudSyncPassword()
+        val webDavEnabled = downloadPreferences.cloudSyncEnabled()
+        val backupUrl = (preferencesByKey[webDavUrl.key()]?.value as? StringPreferenceValue)?.value
+        val backupUsername = (preferencesByKey[webDavUsername.key()]?.value as? StringPreferenceValue)?.value
+        val backupPassword = (preferencesByKey[webDavPassword.key()]?.value as? StringPreferenceValue)?.value
+        val hasWebDavLogin = !backupUrl.isNullOrBlank() && !backupUsername.isNullOrBlank() &&
+            !backupPassword.isNullOrBlank()
+        val keepWebDavTarget = !hasWebDavLogin && webDavPassword.get().isNotBlank() &&
+            (
+                backupUrl?.trimEnd('/') != webDavUrl.get().trimEnd('/') ||
+                    backupUsername != webDavUsername.get()
+                )
+        val excludedKeys = buildSet {
+            if (keepOneDriveTarget || restoringOneDriveLogin) {
+                add(fingerprintKey)
+                add(downloadPreferences.cloudSyncDestination(CloudSyncStorage.OneDrive).key())
+            }
+            if (keepWebDavTarget) {
+                add(webDavUrl.key())
+                addAll(DownloadPreferences.cloudStorageLoginPreferenceKeys)
+                add(downloadPreferences.cloudSyncDestination(CloudSyncStorage.WebDav).key())
+            }
+            add(webDavEnabled.key())
+            add(downloadPreferences.cloudSyncOneDriveId().key())
+        }
+        val backupWebDavEnabled = (preferencesByKey[webDavEnabled.key()]?.value as? BooleanPreferenceValue)?.value
+        val wasWebDavEnabled = webDavEnabled.get()
+        if (hasWebDavLogin && wasWebDavEnabled) webDavEnabled.set(false)
         restorePreferences(
-            preferences,
+            preferences.filterNot { it.key in excludedKeys },
             preferenceStore,
             backupCategories,
         )
+        if (!keepWebDavTarget && (backupWebDavEnabled != null || hasWebDavLogin)) {
+            webDavEnabled.set(backupWebDavEnabled ?: wasWebDavEnabled)
+        }
 
         LibraryUpdateWorker.setupTask(context)
         BackupCreateWorker.setupTask(context)
@@ -125,12 +168,18 @@ class PreferenceRestorer(
         if (key !in categoryPreferences) return false
 
         val ids = value.mapNotNull {
-            backupCategoriesById[it]?.name?.let { name ->
-                categoriesByName[name]?.id?.toString()
+            if (it == Category.UNCATEGORIZED_ID.toString() &&
+                key in DownloadPreferences.cloudSyncCategoryPreferenceKeys
+            ) {
+                it
+            } else {
+                backupCategoriesById[it]?.name?.let { name ->
+                    categoriesByName[name]?.id?.toString()
+                }
             }
         }
 
-        if (ids.isNotEmpty()) {
+        if (ids.isNotEmpty() || (value.isEmpty() && key in DownloadPreferences.cloudSyncCategoryPreferenceKeys)) {
             preferenceStore.getStringSet(key) += ids
         }
         return true

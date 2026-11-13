@@ -14,6 +14,7 @@ data class BackupOptions(
     val extensionStores: Boolean = true,
     val sourceSettings: Boolean = true,
     val privateSettings: Boolean = false,
+    val cloudStorageLogin: Boolean = false,
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
@@ -27,6 +28,7 @@ data class BackupOptions(
         extensionStores,
         sourceSettings,
         privateSettings,
+        cloudStorageLogin,
     )
 
     fun canCreate() = libraryEntries || categories || appSettings || extensionStores || sourceSettings
@@ -91,6 +93,12 @@ data class BackupOptions(
                 setter = { options, enabled -> options.copy(privateSettings = enabled) },
                 enabled = { it.appSettings || it.sourceSettings },
             ),
+            Entry(
+                label = MR.strings.backup_cloud_storage_login,
+                getter = BackupOptions::cloudStorageLogin,
+                setter = { options, enabled -> options.copy(cloudStorageLogin = enabled) },
+                enabled = { it.appSettings },
+            ),
         )
 
         fun fromBooleanArray(array: BooleanArray) = BackupOptions(
@@ -104,6 +112,7 @@ data class BackupOptions(
             extensionStores = array[7],
             sourceSettings = array[8],
             privateSettings = array[9],
+            cloudStorageLogin = array.getOrElse(10) { false },
         )
     }
 

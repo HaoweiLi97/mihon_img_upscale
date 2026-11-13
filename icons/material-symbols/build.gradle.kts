@@ -73,6 +73,7 @@ androidComponents {
                     "rounded/close",
                     "rounded/drag_handle",
                     "rounded/eyeglasses_2",
+                    "rounded/keyboard_arrow_down",
                     "rounded/more_vert",
                     "rounded/refresh",
                     "rounded/share",

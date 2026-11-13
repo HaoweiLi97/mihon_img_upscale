@@ -1,13 +1,10 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -20,6 +17,9 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -38,7 +38,9 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.app.di.appGraph
@@ -51,6 +53,7 @@ import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.interactor.GetLibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.source.local.isLocal
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
@@ -121,15 +124,17 @@ class LibraryCloudSync(
 
     internal suspend fun releaseCategoryStorage(
         categoryId: Long,
+        targetId: String? = currentRules().target,
     ): CloudStorageReleaseResult = withContext(Dispatchers.IO) {
-        val rules = currentRules()
-        val target = rules.target ?: return@withContext CloudStorageReleaseResult()
+        val target = targetId ?: return@withContext CloudStorageReleaseResult()
         val manager = context.appGraph.downloadManager
-        getLibraryManga.await()
-            .filter { categoryId in it.categories && !it.manga.isLocal() }
-            .fold(CloudStorageReleaseResult()) { result, entry ->
-                result + manager.releaseCloudStorage(entry.manga, target)
-            }
+        val entries = getLibraryManga.await().filter { categoryId in it.categories && !it.manga.isLocal() }
+        val slots = Semaphore(3)
+        coroutineScope {
+            entries.map { entry ->
+                async { slots.withPermit { manager.releaseCloudStorage(entry.manga, target) } }
+            }.awaitAll().fold(CloudStorageReleaseResult(), CloudStorageReleaseResult::plus)
+        }
     }
 
     internal fun hasConfiguredScope(): Boolean = preferences.remoteSyncCategories().isSet()
@@ -155,7 +160,7 @@ class LibraryCloudSync(
             graph.downloadManager.retryAutomaticCloudSync(mangaIds, target)
             scheduleScan(
                 WorkManager.getInstance(context),
-                networkConstraints(preferences.downloadOnlyOverWifi.get()),
+                CloudUploadWorker.constraints(preferences.downloadOnlyOverWifi.get()),
                 ExistingWorkPolicy.REPLACE,
             )
         }
@@ -173,13 +178,24 @@ class LibraryCloudSync(
     }
 
     internal fun canTransfer(mangaId: Long, target: String): Boolean {
-        if (preferences.cloudSyncAutomaticPaused().get()) return false
+        if (preferences.cloudSyncAutomaticPaused().get() || preferences.activeCloudSyncTarget()?.id != target) {
+            return false
+        }
         val selected = selection.value ?: return false
         return selected.rules.target == target && !selected.rules.paused && mangaId in selected.activeMangaIds
     }
 
     fun start() {
         val workManager = WorkManager.getInstance(context)
+        var previousWifiOnly = preferences.downloadOnlyOverWifi.get()
+        preferences.downloadOnlyOverWifi.changes().distinctUntilChanged()
+            .onEach { wifiOnly ->
+                if (previousWifiOnly != wifiOnly) {
+                    CloudUploadWorker.updateNetworkConstraint(context, wifiOnly)
+                    previousWifiOnly = wifiOnly
+                }
+            }
+            .launchIn(scope)
         var previousSettings: Pair<CloudSyncRules, Boolean>? = null
         combine(selection.filterNotNull(), preferences.downloadOnlyOverWifi.changes()) { selected, wifiOnly ->
             selected.takeIf { it.rules.active }?.let {
@@ -201,7 +217,7 @@ class LibraryCloudSync(
                 val previous = previousSettings
                 val startImmediately = previous == null || previous.first.target != rules.target ||
                     previous.second != wifiOnly || !previous.first.activeCategories.containsAll(rules.activeCategories)
-                val constraints = networkConstraints(wifiOnly)
+                val constraints = CloudUploadWorker.constraints(wifiOnly)
                 val policy = if (previous != null && previous != settings) {
                     ExistingWorkPolicy.REPLACE
                 } else {
@@ -237,6 +253,7 @@ class LibraryCloudSync(
         val downloader = graph.downloadManager
         val entries = getLibraryManga.await().filter { rules.includes(it) && rules.isUnpaused(it) }
         val failures = preferences.remoteSyncScanFailures()
+        var connectionError: IOException? = null
         for (entry in entries) {
             if (currentRules() != rules) return@withLock
             val manga = entry.manga
@@ -262,24 +279,31 @@ class LibraryCloudSync(
                 if (result.failed > 0 && currentRules() == rules) failures.getAndSet { it + failureKey }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                failures.getAndSet { it + failureKey }
+                if (currentRules() != rules) return@withLock
+                if (error is IOException) {
+                    connectionError = connectionError ?: error
+                } else {
+                    failures.getAndSet { it + failureKey }
+                }
                 logcat(LogPriority.WARN, error) { "Could not sync library manga ${manga.id}" }
             }
         }
         if (currentRules() == rules) {
             val hasDownloads = downloader.queueState.value.any {
-                it.automaticSyncTarget == target && it.status == Download.State.QUEUE &&
+                it.automaticSyncTarget == target &&
+                    (it.status == Download.State.QUEUE || it.status == Download.State.PAUSED) &&
                     canTransfer(it.manga.id, target)
             }
             if (hasDownloads) {
                 downloader.startAutomaticDownloads()
             }
+            connectionError?.let { throw it }
             val latest = getLibraryManga.await().filter { rules.includes(it) && rules.isUnpaused(it) }
                 .map(LibraryManga::chapterVersion)
             if (latest != entries.map(LibraryManga::chapterVersion)) {
                 scheduleScan(
                     WorkManager.getInstance(context),
-                    networkConstraints(preferences.downloadOnlyOverWifi.get()),
+                    CloudUploadWorker.constraints(preferences.downloadOnlyOverWifi.get()),
                     ExistingWorkPolicy.APPEND_OR_REPLACE,
                     delaySeconds = CHAPTER_CHANGE_SCAN_DELAY_SECONDS,
                 )
@@ -401,20 +425,6 @@ class LibraryCloudSync(
         .flowOn(Dispatchers.IO)
         .distinctUntilChanged()
 
-    private fun networkConstraints(wifiOnly: Boolean): Constraints {
-        val builder = Constraints.Builder()
-        if (wifiOnly) {
-            val request = NetworkRequest.Builder()
-                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                .build()
-            builder.setRequiredNetworkRequest(request, NetworkType.CONNECTED)
-        } else {
-            builder.setRequiredNetworkType(NetworkType.CONNECTED)
-        }
-        return builder.build()
-    }
-
     private fun scheduleScan(
         workManager: WorkManager,
         constraints: Constraints,
@@ -483,14 +493,38 @@ internal fun cloudCoverStatus(synced: Boolean, local: Boolean, running: Boolean)
     else -> CloudCoverStatus.CloudOnly
 }
 
-internal data class CloudStorageReleaseResult(val released: Int = 0, val kept: Int = 0) {
-    operator fun plus(other: CloudStorageReleaseResult) =
-        CloudStorageReleaseResult(released + other.released, kept + other.kept)
+internal enum class CloudStorageReleaseReason {
+    RemoteMissing,
+    RemoteUnavailable,
+    RemoteMismatch,
+    InTransfer,
+    LocalChanged,
+    LocalDeleteFailed,
+    TargetChanged,
+}
+
+internal data class CloudStorageReleaseResult(
+    val released: Int = 0,
+    val kept: Int = 0,
+    val reasons: Map<CloudStorageReleaseReason, Int> = emptyMap(),
+) {
+    operator fun plus(other: CloudStorageReleaseResult): CloudStorageReleaseResult {
+        val mergedReasons = reasons.toMutableMap()
+        other.reasons.forEach { (reason, count) ->
+            mergedReasons[reason] = (mergedReasons[reason] ?: 0) + count
+        }
+        return CloudStorageReleaseResult(released + other.released, kept + other.kept, mergedReasons)
+    }
 }
 
 class LibraryCloudSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        applicationContext.appGraph.libraryCloudSync.syncLibrary()
-        Result.success()
+        try {
+            applicationContext.appGraph.libraryCloudSync.syncLibrary()
+            Result.success()
+        } catch (error: IOException) {
+            logcat(LogPriority.WARN, error) { "Cloud sync scan will retry after a connection error" }
+            Result.retry()
+        }
     }
 }

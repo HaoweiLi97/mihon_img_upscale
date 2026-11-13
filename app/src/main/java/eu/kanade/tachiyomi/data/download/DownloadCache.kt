@@ -132,21 +132,17 @@ class DownloadCache(
      * Returns the ids of the downloaded chapters among the given chapters of one manga.
      *
      * @param chapters the chapters to query, all of the same manga.
-     * @param mangaTitle the title of the manga to query.
-     * @param sourceId the id of the source of the chapters.
+     * @param manga the manga of the chapters.
      */
-    fun getDownloadedChapterIds(chapters: List<Chapter>, mangaTitle: String, sourceId: Long): Set<Long> {
+    suspend fun getDownloadedChapterIds(chapters: List<Chapter>, manga: Manga): Set<Long> {
         renewCache()
 
-        val mangaDir = rootDownloadsDir.sourceDirs[sourceId]?.mangaDirs?.get(provider.getMangaDirName(mangaTitle))
-        if (mangaDir == null || mangaDir.chapterDirs.isEmpty()) return emptySet()
+        val mangaDir = rootDownloadsDir.sourceDirs[manga.source]?.mangaDirs?.get(provider.getMangaDirName(manga.title))
+        if (chapters.isEmpty() || mangaDir == null || mangaDir.chapterDirs.isEmpty()) return emptySet()
 
-        return chapters
-            .filter { chapter ->
-                provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
-                    .any { it in mangaDir.chapterDirs }
-            }
-            .mapTo(HashSet()) { it.id }
+        return provider.getChapterLookupNames(chapters, manga.id).filterValues { names ->
+            names.any { it in mangaDir.chapterDirs }
+        }.keys
     }
 
     /**
@@ -271,14 +267,7 @@ class DownloadCache(
      * @param manga the manga of the chapter.
      */
     suspend fun removeChapter(chapter: Chapter, manga: Manga) {
-        rootDownloadsDirMutex.withLock {
-            val sourceDir = rootDownloadsDir.sourceDirs[manga.source] ?: return
-            val mangaDir = sourceDir.mangaDirs[provider.getMangaDirName(manga.title)] ?: return
-            mangaDir.chapterDirs -=
-                provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url).toSet()
-        }
-
-        notifyChanges()
+        removeChapters(listOf(chapter), manga)
     }
 
     /**
@@ -288,12 +277,11 @@ class DownloadCache(
      * @param manga the manga of the chapter.
      */
     suspend fun removeChapters(chapters: List<Chapter>, manga: Manga) {
+        val names = provider.getChapterLookupNames(chapters, manga.id).values.flatten().toSet()
         rootDownloadsDirMutex.withLock {
             val sourceDir = rootDownloadsDir.sourceDirs[manga.source] ?: return
             val mangaDir = sourceDir.mangaDirs[provider.getMangaDirName(manga.title)] ?: return
-            mangaDir.chapterDirs -= chapters
-                .flatMap { provider.getValidChapterDirNames(it.name, it.scanlator, it.url) }
-                .toSet()
+            mangaDir.chapterDirs -= names
         }
 
         notifyChanges()

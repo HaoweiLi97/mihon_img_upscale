@@ -124,5 +124,6 @@ class CategoryDownloadProviderTest {
         libraryPreferences = libraryPreferences,
         downloadPreferences = downloadPreferences,
         getCategories = getCategories,
+        getChaptersByMangaId = mockk(),
     )
 }

@@ -40,6 +40,9 @@ object Notifications {
     const val ID_DOWNLOAD_CHAPTER_PAUSED = -203
     const val CHANNEL_DOWNLOADER_ERROR = "downloader_error_channel"
     const val ID_DOWNLOAD_CHAPTER_ERROR = -202
+    const val CHANNEL_CLOUD_SYNC_PROGRESS = "cloud_sync_progress_channel"
+    const val CHANNEL_TRANSFER_STATUS = "transfer_status_channel"
+    const val ID_TRANSFER_STATUS = -207
 
     /**
      * Notification channel and ids used by the library updater.
@@ -140,6 +143,16 @@ object Notifications {
                 },
                 buildNotificationChannel(CHANNEL_DOWNLOADER_ERROR, IMPORTANCE_LOW) {
                     setName(context.stringResource(MR.strings.channel_errors))
+                    setGroup(GROUP_DOWNLOADER)
+                    setShowBadge(false)
+                },
+                buildNotificationChannel(CHANNEL_CLOUD_SYNC_PROGRESS, IMPORTANCE_LOW) {
+                    setName(context.stringResource(MR.strings.cloud_sync))
+                    setGroup(GROUP_DOWNLOADER)
+                    setShowBadge(false)
+                },
+                buildNotificationChannel(CHANNEL_TRANSFER_STATUS, IMPORTANCE_LOW) {
+                    setName(context.stringResource(MR.strings.transfer_status_title))
                     setGroup(GROUP_DOWNLOADER)
                     setShowBadge(false)
                 },

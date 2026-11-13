@@ -6,12 +6,14 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.notification.TransferTaskCounts
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
@@ -64,6 +66,8 @@ class DownloadManager(
     suspend fun downloaderStop(reason: String? = null) = downloader.stop(reason)
     val isDownloaderRunning
         get() = DownloadWorker.isRunningFlow(context)
+    internal val isDownloadQueueRunning
+        get() = downloader.isRunning
 
     /**
      * Starts the download worker, which runs the downloader.
@@ -86,7 +90,6 @@ class DownloadManager(
      */
     suspend fun clearQueue() {
         downloader.clearQueue()
-        downloader.stop()
     }
 
     suspend fun clearAllTransfers() = downloader.clearAllTransfers()
@@ -181,6 +184,9 @@ class DownloadManager(
         }
     }
 
+    internal suspend fun runCloudUploads(networkAllowed: () -> Boolean): Boolean =
+        downloader.runCloudUploads(networkAllowed)
+
     internal suspend fun retryAutomaticCloudSync(mangaIds: Set<Long>, target: String) {
         downloader.retryCloudTransfers { download ->
             download.automaticSyncTarget == target && download.manga.id in mangaIds
@@ -210,7 +216,7 @@ class DownloadManager(
      * @return the list of pages from the chapter.
      */
     suspend fun buildPageList(source: Source, manga: Manga, chapter: Chapter): List<Page> {
-        val chapterDir = provider.findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.title, source)
+        val chapterDir = provider.findChapterDir(chapter, manga, source)
         val files = withContext(Dispatchers.IO) {
             chapterDir?.listFiles().orEmpty()
                 .filter { it.isFile && ImageUtil.isImage(it.name) { it.openInputStream() } }
@@ -232,8 +238,8 @@ class DownloadManager(
      * @param chapters the chapters to query, all of [manga].
      * @param manga the manga of the chapters.
      */
-    fun getDownloadedChapterIds(chapters: List<Chapter>, manga: Manga): Set<Long> {
-        return cache.getDownloadedChapterIds(chapters, manga.title, manga.source)
+    suspend fun getDownloadedChapterIds(chapters: List<Chapter>, manga: Manga): Set<Long> {
+        return cache.getDownloadedChapterIds(chapters, manga)
     }
 
     /**
@@ -257,19 +263,16 @@ class DownloadManager(
     /**
      * Returns true if the chapter is present on disk, bypassing the directory cache.
      *
-     * @param chapterName the name of the chapter to query.
-     * @param chapterScanlator scanlator of the chapter to query
-     * @param mangaTitle the title of the manga to query.
+     * @param chapter the chapter to query.
+     * @param manga the manga of the chapter.
      * @param source the source of the chapter.
      */
     suspend fun isChapterDownloadedOnDisk(
-        chapterName: String,
-        chapterScanlator: String?,
-        chapterUrl: String,
-        mangaTitle: String,
+        chapter: Chapter,
+        manga: Manga,
         source: Source,
     ): Boolean {
-        return provider.findChapterDir(chapterName, chapterScanlator, chapterUrl, mangaTitle, source) != null
+        return provider.findChapterDir(chapter, manga, source) != null
     }
 
     /**
@@ -311,6 +314,18 @@ class DownloadManager(
 
     suspend fun cancelCloudUpload(chapterId: Long) {
         downloader.cancelCloudUpload(chapterId)
+    }
+
+    suspend fun resumeCloudUploads() {
+        downloader.resumeCloudUploads()
+    }
+
+    suspend fun pauseCloudUploads() {
+        downloader.pauseCloudUploads()
+    }
+
+    suspend fun cancelCloudUploads() {
+        downloader.cancelCloudUploads()
     }
 
     /**
@@ -467,7 +482,7 @@ class DownloadManager(
      * @param newChapter the target chapter with the new name.
      */
     suspend fun renameChapter(source: Source, manga: Manga, oldChapter: Chapter, newChapter: Chapter) {
-        val oldNames = provider.getValidChapterDirNames(oldChapter.name, oldChapter.scanlator, oldChapter.url)
+        val oldNames = provider.getChapterLookupNames(oldChapter)
         // Assume there's only 1 version of the chapter name formats present
         val mangaDirAndDownload = provider.findMangaDirs(manga.title, source).asSequence()
             .mapNotNull { mangaDir ->
@@ -479,12 +494,14 @@ class DownloadManager(
             .firstOrNull() ?: return
         val (mangaDir, oldDownload) = mangaDirAndDownload
 
-        var newName = provider.getChapterDirName(newChapter.name, newChapter.scanlator, newChapter.url)
-        if (oldDownload.isFile && oldDownload.extension == "cbz") {
-            newName += ".cbz"
-        }
+        val newName = provider.chapterOutputName(
+            newChapter,
+            asCbz =
+            oldDownload.isFile && oldDownload.extension == "cbz",
+        )
 
         if (oldDownload.name == newName) return
+        if (mangaDir.findFile(newName)?.uri?.let { it != oldDownload.uri } == true) return
 
         if (oldDownload.renameTo(newName)) {
             cache.removeChapter(oldChapter, manga)
@@ -523,6 +540,22 @@ class DownloadManager(
         .flatMapLatest { queue ->
             queue.map { download -> download.statusFlow.map { download } }.merge()
         }
+
+    internal fun transferTaskCounts(): Flow<TransferTaskCounts> =
+        kotlinx.coroutines.flow.combine(queueState, uploadQueueState) { downloads, uploads -> downloads + uploads }
+            .flatMapLatest { queue ->
+                if (queue.isEmpty()) {
+                    kotlinx.coroutines.flow.flowOf(TransferTaskCounts(0, 0))
+                } else {
+                    kotlinx.coroutines.flow.combine(queue.map(Download::statusFlow)) { states ->
+                        TransferTaskCounts(
+                            total = states.count { it != Download.State.DOWNLOADED },
+                            active = states.count { it == Download.State.DOWNLOADING || it == Download.State.UPLOADING },
+                        )
+                    }
+                }
+            }
+            .distinctUntilChanged()
 
     fun progressFlow(): Flow<Download> = kotlinx.coroutines.flow.combine(queueState, uploadQueueState) {
             downloads,

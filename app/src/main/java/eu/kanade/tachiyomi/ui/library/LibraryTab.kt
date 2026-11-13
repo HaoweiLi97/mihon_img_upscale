@@ -34,7 +34,6 @@ import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
-import eu.kanade.presentation.components.message
 import eu.kanade.presentation.library.DeleteLibraryMangaDialog
 import eu.kanade.presentation.library.LibrarySettingsDialog
 import eu.kanade.presentation.library.components.LibraryContent
@@ -45,6 +44,7 @@ import eu.kanade.presentation.manga.components.LocalMangaCoverSyncStatuses
 import eu.kanade.presentation.more.onboarding.GETTING_STARTED_URL
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.download.CloudStorageReleaseWorker
 import eu.kanade.tachiyomi.data.library.LibraryUpdateWorker
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
@@ -53,7 +53,6 @@ import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.system.workManager
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -109,7 +108,9 @@ data object LibraryTab : Tab {
         val coverStatuses by viewModel.coverSyncStatuses.collectAsStateWithLifecycle()
 
         val snackbarHostState = remember { SnackbarHostState() }
-        var releasingStorage by remember { mutableStateOf(false) }
+        val releasingCategories by remember(context) {
+            CloudStorageReleaseWorker.activeCategories(context.applicationContext)
+        }.collectAsStateWithLifecycle(initialValue = emptySet())
         var mangasToSync by remember { mutableStateOf<List<Manga>?>(null) }
 
         val onClickRefresh: suspend (Category?) -> Boolean = { category ->
@@ -214,24 +215,14 @@ data object LibraryTab : Tab {
                             syncActions = LibrarySyncActions(
                                 pausedCategories = syncSelection?.rules?.pausedCategories.orEmpty(),
                                 enabled = syncSelection?.rules?.target != null,
-                                releasingStorage = releasingStorage,
+                                releasingStorage = state.activeCategory?.id in releasingCategories,
                                 onPauseChanged = libraryCloudSync::setCategoryPaused,
                                 onReleaseStorage = { id ->
-                                    if (!releasingStorage) {
-                                        releasingStorage = true
-                                        scope.launch {
-                                            val message = try {
-                                                libraryCloudSync.releaseCategoryStorage(id).message(context)
-                                            } catch (error: CancellationException) {
-                                                throw error
-                                            } catch (_: Exception) {
-                                                context.stringResource(MR.strings.cloud_sync_release_storage_failed)
-                                            } finally {
-                                                releasingStorage = false
-                                            }
-                                            snackbarHostState.showSnackbar(message)
-                                        }
-                                    }
+                                    CloudStorageReleaseWorker.enqueue(
+                                        context,
+                                        categoryId = id,
+                                        targetId = syncSelection?.rules?.target,
+                                    )
                                 },
                             ),
                             onChangeCurrentPage = viewModel::updateActiveCategoryIndex,

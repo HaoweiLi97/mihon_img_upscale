@@ -507,13 +507,7 @@ class ReaderViewModel(
             val manga = manga ?: return
             val dbChapter = chapter.chapter
             val source = state.value.source ?: return
-            val isDownloaded = downloadManager.isChapterDownloadedOnDisk(
-                dbChapter.name,
-                dbChapter.scanlator,
-                dbChapter.url,
-                manga.title,
-                source,
-            )
+            val isDownloaded = downloadManager.isChapterDownloadedOnDisk(dbChapter, manga, source)
             if (isDownloaded) {
                 chapter.state = ReaderChapter.State.Wait
             }

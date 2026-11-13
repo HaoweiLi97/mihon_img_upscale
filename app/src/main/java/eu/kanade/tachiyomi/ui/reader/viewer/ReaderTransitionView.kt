@@ -47,13 +47,7 @@ class ReaderTransitionView @JvmOverloads constructor(context: Context, attrs: At
                     } ?: false,
                 isGoingToChapterOnDisk = goingToChapter?.let {
                     {
-                        downloadManager.isChapterDownloadedOnDisk(
-                            chapterName = it.name,
-                            chapterScanlator = it.scanlator,
-                            chapterUrl = it.url,
-                            mangaTitle = manga.title,
-                            source = source,
-                        )
+                        downloadManager.isChapterDownloadedOnDisk(it, manga, source)
                     }
                 },
             )

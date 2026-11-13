@@ -33,12 +33,14 @@ import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -61,8 +63,10 @@ import androidx.core.util.Consumer
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import androidx.interpolator.view.animation.LinearOutSlowInInterpolator
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.work.WorkInfo
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.NavigatorDisposeBehavior
@@ -75,13 +79,16 @@ import eu.kanade.presentation.components.AppStateBanners
 import eu.kanade.presentation.components.DownloadedOnlyBannerBackgroundColor
 import eu.kanade.presentation.components.IncognitoModeBannerBackgroundColor
 import eu.kanade.presentation.components.IndexingBannerBackgroundColor
+import eu.kanade.presentation.components.message
 import eu.kanade.presentation.more.AppMigratingScreen
 import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.DefaultNavigatorScreenTransition
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.download.CloudStorageReleaseWorker
 import eu.kanade.tachiyomi.data.download.DownloadCache
+import eu.kanade.tachiyomi.data.download.toCloudStorageReleaseResult
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -129,6 +136,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
+import java.util.UUID
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -212,6 +220,7 @@ class MainActivity : BaseActivity() {
             }
 
             val context = LocalContext.current
+            CloudStorageReleaseResults(context)
 
             var incognito by remember { mutableStateOf(false) }
             val downloadOnly by preferences.downloadedOnly.collectAsState()
@@ -329,6 +338,34 @@ class MainActivity : BaseActivity() {
                 chapterCache.clear()
             }
         }
+    }
+
+    @Composable
+    private fun CloudStorageReleaseResults(context: Context) {
+        val releaseJobs by remember(context) {
+            CloudStorageReleaseWorker.workInfos(context.applicationContext)
+        }.collectAsStateWithLifecycle(initialValue = emptyList())
+        var lastAcknowledged by remember { mutableStateOf<UUID?>(null) }
+        val result = remember(releaseJobs, lastAcknowledged) {
+            CloudStorageReleaseWorker.unacknowledged(context, releaseJobs).firstOrNull()
+        } ?: return
+        val acknowledge = {
+            CloudStorageReleaseWorker.acknowledge(context, result.id, releaseJobs)
+            lastAcknowledged = result.id
+        }
+        val summary = if (result.state == WorkInfo.State.SUCCEEDED) {
+            result.outputData.toCloudStorageReleaseResult().message(context)
+        } else {
+            stringResource(MR.strings.cloud_sync_release_storage_failed)
+        }
+        AlertDialog(
+            onDismissRequest = acknowledge,
+            title = { Text(stringResource(MR.strings.cloud_sync_release_storage)) },
+            text = { Text(summary) },
+            confirmButton = {
+                TextButton(onClick = acknowledge) { Text(stringResource(MR.strings.action_ok)) }
+            },
+        )
     }
 
     override fun onProvideAssistContent(outContent: AssistContent) {

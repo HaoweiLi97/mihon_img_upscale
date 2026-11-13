@@ -39,6 +39,11 @@ internal interface CloudStorage {
     suspend fun remoteFileSha256OrNull(remoteDirectory: String, fileName: String): String?
     suspend fun downloadCbz(remoteDirectory: String, fileName: String, file: UniFile): Boolean
     suspend fun remoteFileSize(remoteDirectory: String, fileName: String): Long?
+
+    /** Returns null for a missing file. A failed lookup or an unknown size throws. */
+    suspend fun lookupRemoteFileSize(remoteDirectory: String, fileName: String): Long?
+
+    /** A null listing or size requires a fallback lookup. An absent key means no matching file was listed. */
     suspend fun listRemoteFileSizes(remoteDirectory: String, fileNames: Set<String>): Map<String, Long?>?
     suspend fun deleteMangaCollection(directory: String)
 }
@@ -102,6 +107,12 @@ internal data class CloudSyncDirectory(
 
 internal class CloudUploadConflictException(fileName: String) :
     IllegalStateException("Cloud storage already contains a different file named $fileName")
+
+internal class CloudStorageHttpException(
+    val status: Int,
+    message: String,
+    val retryAfterSeconds: Long? = null,
+) : IllegalStateException(message)
 
 fun normalizePath(path: String): String {
     val normalized = path

@@ -2,7 +2,9 @@ package eu.kanade.tachiyomi.data.backup.restore.restorers
 
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
+import eu.kanade.tachiyomi.data.backup.models.BackupCloudSyncState
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
+import eu.kanade.tachiyomi.data.backup.models.cloudSyncTargetPattern
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import tachiyomi.domain.backup.model.RestoredHistory
@@ -10,6 +12,7 @@ import tachiyomi.domain.backup.model.RestoredManga
 import tachiyomi.domain.backup.repository.RestoreRepository
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.download.service.CloudChapterUpload
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.interactor.GetMangaByUrlAndSourceId
@@ -75,16 +78,53 @@ class MangaRestorer(
             }
         }
         backupMangas.forEach { backup ->
-            val targetId = backup.cloudSyncTargetId ?: return@forEach
-            val manga = getMangaByUrlAndSourceId.await(backup.url, backup.source) ?: return@forEach
-            val uploadedUrls = backup.chapters.filter { it.cloudSynced }.mapTo(mutableSetOf()) { it.url }
-            if (uploadedUrls.isNotEmpty()) {
-                val ids = getChaptersByMangaId.await(manga.id).filter { it.url in uploadedUrls }.map { it.id }
-                downloadPreferences.markChaptersUploadedToCloud(ids, targetId)
+            restoreCloudSyncState(backup)
+        }
+    }
+
+    private suspend fun restoreCloudSyncState(backup: BackupManga) {
+        val states = backup.cloudSyncStates.ifEmpty {
+            val target = backup.cloudSyncTargetId ?: return
+            val urls = backup.chapters.filter { it.cloudSynced }.map { it.url }
+            listOf(BackupCloudSyncState(target, urls, backup.cloudSyncMetaInfoHash))
+        }.filter { cloudSyncTargetPattern.matches(it.targetId) }
+        if (states.isEmpty()) return
+
+        val manga = getMangaByUrlAndSourceId.await(backup.url, backup.source) ?: return
+        val chapterIds = if (states.any { it.chapterUrls.isNotEmpty() }) {
+            getChaptersByMangaId.await(manga.id).associate { it.url to it.id }
+        } else {
+            emptyMap()
+        }
+        states.forEach { state ->
+            downloadPreferences.markChaptersUploadedToCloud(
+                state.chapterUrls.mapNotNull(chapterIds::get),
+                state.targetId,
+            )
+            state.metaInfoHash?.takeIf { it.isNotBlank() }?.let {
+                downloadPreferences.markMetaInfoUploadedToCloud(manga.id, it, state.targetId)
             }
-            backup.cloudSyncMetaInfoHash?.takeIf { it.isNotBlank() }?.let {
-                downloadPreferences.markMetaInfoUploadedToCloud(manga.id, it, targetId)
+            state.mangaFolders.filter(::isSafeCloudFolder).forEach { folder ->
+                downloadPreferences.markRemoteSyncMangaFolder(manga.id, state.targetId, folder)
+            }
+            state.chapterFiles.forEach { file ->
+                val chapterId = chapterIds[file.chapterUrl]
+                if (chapterId != null && isSafeCloudFolder(file.directory) &&
+                    file.fileName.endsWith(".cbz", ignoreCase = true) && '/' !in file.fileName && '\\' !in file.fileName
+                ) {
+                    downloadPreferences.recordCloudChapterUpload(
+                        manga.id,
+                        chapterId,
+                        state.targetId,
+                        CloudChapterUpload(file.directory, file.fileName, file.size?.takeIf { it > 0 }),
+                    )
+                }
             }
         }
     }
+
+    private fun isSafeCloudFolder(folder: String) =
+        folder.startsWith('/') && folder.drop(1).split('/').all {
+            it.isNotBlank() && it != "." && it != ".." && '\\' !in it
+        }
 }

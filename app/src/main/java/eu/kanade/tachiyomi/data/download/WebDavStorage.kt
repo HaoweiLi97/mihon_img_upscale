@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.network.await
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.CacheControl
 import okhttp3.Credentials
 import okhttp3.Headers
@@ -22,9 +23,11 @@ import okio.source
 import org.w3c.dom.Element
 import org.xml.sax.SAXException
 import tachiyomi.core.common.util.lang.withIOContext
+import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
 import javax.xml.parsers.DocumentBuilderFactory
 
 internal class WebDavStorage(
@@ -87,12 +90,16 @@ internal class WebDavStorage(
                 .build()
             uploadClient.newCall(request).await().use { response ->
                 if (response.code !in SUCCESS_CODES) {
-                    error("WebDAV MOVE failed: HTTP ${response.code}")
+                    throw CloudStorageHttpException(
+                        response.code,
+                        "WebDAV MOVE failed: HTTP ${response.code}",
+                        response.header("Retry-After")?.toLongOrNull(),
+                    )
                 }
             }
         } catch (error: Exception) {
             withContext(NonCancellable) {
-                runCatching { deleteRemoteFile(directory, stagingName) }
+                withTimeoutOrNull(5.seconds) { runCatching { deleteRemoteFile(directory, stagingName) } }
             }
             throw error
         }
@@ -113,7 +120,11 @@ internal class WebDavStorage(
         uploadClient.newCall(request).await().use { response ->
             if (response.code == 404) return@withIOContext null
             if (!response.isSuccessful) {
-                throw IllegalStateException("WebDAV file lookup failed: HTTP ${response.code}")
+                throw CloudStorageHttpException(
+                    response.code,
+                    "WebDAV file lookup failed: HTTP ${response.code}",
+                    response.header("Retry-After")?.toLongOrNull(),
+                )
             }
 
             val digest = MessageDigest.getInstance("SHA-256")
@@ -160,6 +171,15 @@ internal class WebDavStorage(
     override suspend fun remoteFileSize(
         remoteDirectory: String,
         fileName: String,
+    ): Long? = headFileSize(remoteDirectory, fileName, allowUnavailable = true)?.takeIf { it > 0 }
+
+    override suspend fun lookupRemoteFileSize(remoteDirectory: String, fileName: String): Long? =
+        headFileSize(remoteDirectory, fileName, allowUnavailable = false)
+
+    private suspend fun headFileSize(
+        remoteDirectory: String,
+        fileName: String,
+        allowUnavailable: Boolean,
     ): Long? = withIOContext {
         val request = Request.Builder()
             .url(config.resolveUrl(normalizePath(remoteDirectory), fileName))
@@ -169,8 +189,15 @@ internal class WebDavStorage(
             .head()
             .build()
         client.newCall(request).await().use { response ->
-            if (response.code != 200) return@use null
-            response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0L }
+            if (response.code == 404 || (!allowUnavailable && response.code == 410)) return@use null
+            if (response.code != 200) {
+                if (allowUnavailable && response.code in setOf(403, 405, 501)) return@use null
+                throw IOException("WebDAV HEAD failed: HTTP ${response.code}")
+            }
+            if (!allowUnavailable && response.request.url.pathSegments.last().isEmpty()) return@use null
+            val size = response.header("Content-Length")?.toLongOrNull()?.takeIf { it >= 0 }
+            if (size == null && !allowUnavailable) throw IOException("WebDAV HEAD did not return a file size")
+            size
         }
     }
 
@@ -192,10 +219,15 @@ internal class WebDavStorage(
             .build()
         client.newCall(request).await().use { response ->
             when (response.code) {
-                207 -> response.body.byteStream().use { parseFileSizes(directory, fileNames, it) }
+                207 -> try {
+                    response.body.byteStream().use { parseFileSizes(directory, fileNames, it) }
+                        ?: throw IOException("Invalid WebDAV directory listing")
+                } catch (error: SAXException) {
+                    throw IOException("Invalid WebDAV directory listing", error)
+                }
                 404 -> emptyMap()
                 403, 405, 501 -> null
-                else -> error("WebDAV PROPFIND failed: HTTP ${response.code}")
+                else -> throw IOException("WebDAV PROPFIND failed: HTTP ${response.code}")
             }
         }
     }
@@ -210,31 +242,54 @@ internal class WebDavStorage(
                 val resource = resources.item(index) as Element
                 val href = resource.firstTextByTagName("href", DAV_NAMESPACE) ?: continue
                 val url = directory.resolve(href) ?: continue
-                if (url.scheme != directory.scheme || url.host != directory.host || url.port != directory.port ||
-                    url.pathSegments.dropLast(1) != directorySegments
-                ) {
+                if (url.scheme != directory.scheme || url.host != directory.host || url.port != directory.port) continue
+                val segments = url.pathSegments
+                val resourceSegments = if (segments.last().isEmpty()) segments.dropLast(1) else segments
+                if (resourceSegments == directorySegments) {
+                    val status = resource.httpStatus()
+                    if (status == 404 || status == 410) return emptyMap()
+                    if (status != null && status !in 200..299) {
+                        throw IOException("WebDAV PROPFIND failed: HTTP $status")
+                    }
                     continue
                 }
-                val fileName = url.pathSegments.last()
+                if (segments.dropLast(1) != directorySegments) continue
+                val fileName = segments.last()
                 if (fileName !in fileNames) continue
+                val status = resource.httpStatus()
+                if (status == 404 || status == 410) continue
+                if (status != null && status !in 200..299) {
+                    put(fileName, null)
+                    continue
+                }
 
                 var isCollection = false
                 var size: Long? = null
                 val results = resource.getElementsByTagNameNS(DAV_NAMESPACE, "propstat")
                 for (resultIndex in 0 until results.length) {
                     val result = results.item(resultIndex) as Element
-                    val status = result.firstTextByTagName("status", DAV_NAMESPACE)
-                    if (status?.split(' ', limit = 3)?.getOrNull(1) != "200") continue
+                    if (result.httpStatus() != 200) continue
                     val properties = result.getElementsByTagNameNS(DAV_NAMESPACE, "prop").item(0) as? Element
                         ?: continue
                     isCollection =
                         isCollection || properties.getElementsByTagNameNS(DAV_NAMESPACE, "collection").length > 0
                     properties.firstTextByTagName("getcontentlength", DAV_NAMESPACE)?.toLongOrNull()
-                        ?.takeIf { it > 0 }?.let { size = it }
+                        ?.takeIf { it >= 0 }?.let { size = it }
                 }
                 if (!isCollection) put(fileName, size)
             }
         }
+    }
+
+    private fun Element.httpStatus(): Int? {
+        val statuses = getElementsByTagNameNS(DAV_NAMESPACE, "status")
+        for (index in 0 until statuses.length) {
+            val status = statuses.item(index)
+            if (status.parentNode == this) {
+                return status.textContent.trim().split(' ', limit = 3).getOrNull(1)?.toIntOrNull()
+            }
+        }
+        return null
     }
 
     private suspend fun deleteRemoteFile(
@@ -288,7 +343,11 @@ internal class WebDavStorage(
         uploadClient.newCall(request).await().use { response ->
             if (response.code == 412) return false
             if (response.code !in SUCCESS_CODES) {
-                throw IllegalStateException("WebDAV upload failed: HTTP ${response.code}")
+                throw CloudStorageHttpException(
+                    response.code,
+                    "WebDAV upload failed: HTTP ${response.code}",
+                    response.header("Retry-After")?.toLongOrNull(),
+                )
             }
         }
         return true
@@ -308,8 +367,10 @@ internal class WebDavStorage(
                         if (directoryExists(targetPath)) {
                             currentPath = targetPath
                         } else {
-                            throw IllegalStateException(
+                            throw CloudStorageHttpException(
+                                result.code,
                                 "WebDAV MKCOL failed: HTTP ${result.code} for ${result.path}",
+                                result.retryAfterSeconds,
                             ).apply {
                                 result.message?.let { addSuppressed(IllegalStateException(it)) }
                             }
@@ -332,10 +393,11 @@ internal class WebDavStorage(
             return when {
                 response.isSuccessful -> true
                 response.code == 404 -> false
-                response.code in AUTH_FAILURE_CODES -> throw IllegalStateException(
+                else -> throw CloudStorageHttpException(
+                    response.code,
                     "WebDAV PROPFIND failed: HTTP ${response.code}",
+                    response.header("Retry-After")?.toLongOrNull(),
                 )
-                else -> false
             }
         }
     }
@@ -357,6 +419,7 @@ internal class WebDavStorage(
                     path = path,
                     code = response.code,
                     message = response.body.string().takeIf { it.isNotBlank() },
+                    retryAfterSeconds = response.header("Retry-After")?.toLongOrNull(),
                 )
             }
         }
@@ -529,5 +592,6 @@ private sealed class MkcolResult {
         val path: String,
         val code: Int,
         val message: String?,
+        val retryAfterSeconds: Long?,
     ) : MkcolResult()
 }

@@ -14,13 +14,17 @@ class ZipWriter(val context: Context, file: UniFile) : Closeable {
     private val pfd = file.openFileDescriptor(context, "wt")
     private val archive = Archive.writeNew()
     private val entry = ArchiveEntry.new2(archive)
-    private val buffer = ByteBuffer.allocateDirect(8192)
+    private val buffer = ByteBuffer.allocateDirect(IO_BUFFER_SIZE)
 
     init {
         try {
             Archive.setCharset(archive, Charsets.UTF_8.name().toByteArray())
             Archive.writeSetFormatZip(archive)
             Archive.writeZipSetCompressionStore(archive)
+            // Keep libarchive's original block padding for pipes and other non-file descriptors.
+            if (pfd.statSize >= 0) {
+                Archive.writeSetBytesPerBlock(archive, IO_BUFFER_SIZE)
+            }
             Archive.writeOpenFd(archive, pfd.fd)
         } catch (e: ArchiveException) {
             close()
@@ -89,4 +93,5 @@ private fun StructStat.toArchiveStat() = ArchiveEntry.StructStat().apply {
 
 private fun Long.toTimespec() = ArchiveEntry.StructTimespec().also { it.tvSec = this }
 
+private const val IO_BUFFER_SIZE = 64 * 1024
 private const val OWNER_READ_WRITE_PERMISSIONS = 384

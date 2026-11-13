@@ -10,6 +10,7 @@ import android.util.Base64
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import eu.kanade.tachiyomi.data.backup.models.BackupOneDriveSession
 import eu.kanade.tachiyomi.network.await
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,6 +47,48 @@ class OneDriveAuth(
     private val credentials = OneDriveCredentials(File(context.noBackupFilesDir, "onedrive-session"))
     private val lock = Mutex()
     private var cachedToken: AccessToken? = null
+
+    internal suspend fun exportSessionForBackup(): BackupOneDriveSession? = withIOContext {
+        lock.withLock {
+            val saved = credentials.read() ?: return@withLock null
+            val driveId = saved.getString("driveId")
+            if (driveId != preferences.cloudSyncOneDriveId().get()) return@withLock null
+            BackupOneDriveSession(
+                driveId = driveId,
+                clientId = saved.getString("clientId"),
+                refreshToken = saved.getString("refresh"),
+                destination = preferences.cloudSyncDestination(CloudSyncStorage.OneDrive).get(),
+            )
+        }
+    }
+
+    internal suspend fun restoreSessionFromBackup(session: BackupOneDriveSession) {
+        withIOContext {
+            require(
+                session.driveId.isNotBlank() && isClientIdValid(session.clientId) && session.refreshToken.isNotBlank(),
+            )
+            lock.withLock {
+                val currentDrive = preferences.cloudSyncOneDriveId()
+                val fingerprint = preferences.cloudSyncOneDriveAccountFingerprint()
+                val previousAccount = accountFingerprint(currentDrive.get()) ?: fingerprint.get()
+                val account = checkNotNull(accountFingerprint(session.driveId))
+                val folder = preferences.cloudSyncDestination(CloudSyncStorage.OneDrive)
+                credentials.save(session.driveId, session.clientId, session.refreshToken)
+                pending.delete()
+                cachedToken = null
+                if (currentDrive.get().isNotBlank() && currentDrive.get() != session.driveId) {
+                    currentDrive.delete()
+                }
+                if (session.destination != null) {
+                    folder.set(session.destination)
+                } else if (previousAccount.isNotBlank() && previousAccount != account) {
+                    folder.delete()
+                }
+                fingerprint.set(account)
+                currentDrive.set(session.driveId)
+            }
+        }
+    }
 
     suspend fun authorizationUrl(clientId: String): String = withIOContext {
         require(isClientIdValid(clientId))
@@ -116,10 +159,14 @@ class OneDriveAuth(
                 JSONObject(response.body.string()).getString("id").also { check(it.isNotBlank()) }
             }
             val currentDrive = preferences.cloudSyncOneDriveId()
+            val fingerprint = preferences.cloudSyncOneDriveAccountFingerprint()
+            val previousAccount = accountFingerprint(currentDrive.get()) ?: fingerprint.get()
+            val account = checkNotNull(accountFingerprint(driveId))
             credentials.save(driveId, clientId, checkNotNull(token.refresh))
-            if (currentDrive.get() != driveId) {
+            if (previousAccount.isNotBlank() && previousAccount != account) {
                 preferences.cloudSyncDestination(CloudSyncStorage.OneDrive).delete()
             }
+            fingerprint.set(account)
             cachedToken = token.copy(driveId = driveId, refresh = null)
             currentDrive.set(driveId)
             true
@@ -161,11 +208,15 @@ class OneDriveAuth(
     }
 
     private fun clearConnection() {
-        preferences.cloudSyncOneDriveId().delete()
-        preferences.cloudSyncDestination(CloudSyncStorage.OneDrive).delete()
+        val currentDrive = preferences.cloudSyncOneDriveId()
+        accountFingerprint(currentDrive.get())?.let { preferences.cloudSyncOneDriveAccountFingerprint().set(it) }
+        currentDrive.delete()
         cachedToken = null
         credentials.delete()
     }
+
+    private fun accountFingerprint(driveId: String): String? =
+        preferences.cloudSyncTargetId(CloudSyncStorage.OneDrive, driveId, "/")
 
     private suspend fun requestToken(clientId: String, vararg parameters: Pair<String, String>): AccessToken {
         val body = FormBody.Builder().apply {
@@ -184,7 +235,11 @@ class OneDriveAuth(
                     "OneDrive token request failed (${errorDetails.joinToString()})"
                 }
                 if (error == "invalid_grant" || error == "interaction_required") throw OneDriveReauthorizationRequired()
-                error("Microsoft sign-in failed (HTTP ${response.code})")
+                throw CloudStorageHttpException(
+                    response.code,
+                    "Microsoft sign-in failed (HTTP ${response.code})",
+                    response.header("Retry-After")?.toLongOrNull(),
+                )
             }
             val result = JSONObject(response.body.string())
             AccessToken(

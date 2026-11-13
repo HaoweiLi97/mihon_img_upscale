@@ -84,18 +84,28 @@ internal class OneDriveStorage(
     }
 
     override suspend fun remoteFileSize(remoteDirectory: String, fileName: String): Long? = withIOContext {
-        lookup(itemUrl(remoteDirectory, fileName))?.fileSize()
+        lookup(itemUrl(remoteDirectory, fileName))?.takeIf { it.isLocalFile() }?.fileSize()?.takeIf { it > 0 }
+    }
+
+    override suspend fun lookupRemoteFileSize(remoteDirectory: String, fileName: String): Long? = withIOContext {
+        val file = lookup(itemUrl(remoteDirectory, fileName)) ?: return@withIOContext null
+        if (!file.isNull("folder") || !file.isNull("remoteItem")) return@withIOContext null
+        check(file.isLocalFile()) { "OneDrive file lookup did not return file metadata" }
+        file.fileSize() ?: error("OneDrive file lookup did not return a file size")
     }
 
     override suspend fun listRemoteFileSizes(remoteDirectory: String, fileNames: Set<String>): Map<String, Long?> =
         withIOContext {
-            val requestedNames = fileNames.associateBy(String::lowercase)
+            val requestedNames = fileNames.groupBy(String::lowercase)
             val sizes = mutableMapOf<String, Long?>()
             if (requestedNames.isEmpty()) return@withIOContext sizes
             visitChildren(remoteDirectory) { item ->
-                val name = requestedNames[item.optString("name").lowercase()]
-                if (name != null && !item.isNull("file") && item.isNull("remoteItem")) sizes[name] = item.fileSize()
-                sizes.size < requestedNames.size
+                val names = requestedNames[item.optString("name").lowercase()]
+                if (names != null && item.isLocalFile()) {
+                    val size = item.fileSize()
+                    names.forEach { sizes[it] = size }
+                }
+                sizes.size < fileNames.size
             }
             sizes
         }
@@ -162,7 +172,7 @@ internal class OneDriveStorage(
                     transfer.newCall(put).await().use { response ->
                         if (response.code == 409 && !replace) return false
                         val expected = if (nextOffset == length) setOf(200, 201) else setOf(202)
-                        check(response.code in expected) { "OneDrive upload failed: HTTP ${response.code}" }
+                        if (response.code !in expected) throw response.httpFailure("upload")
                     }
                     offset = nextOffset
                     onProgress((offset * 100 / length).toInt().coerceAtMost(99))
@@ -259,14 +269,14 @@ internal class OneDriveStorage(
         if (response.code == 200) return response
         val location = response.use {
             if (it.code == 404) return null
-            check(it.code == 302) { "OneDrive download failed: HTTP ${it.code}" }
+            if (it.code != 302) throw it.httpFailure("download")
             requireHttpsUrl(checkNotNull(it.header("Location")))
         }
         // The content URL is already authorized. Never send the Graph bearer token to it.
         return transfer.newCall(Request.Builder().url(location).build()).await().also {
             if (it.code != 200) {
                 it.close()
-                error("OneDrive download failed: HTTP ${it.code}")
+                throw it.httpFailure("download")
             }
         }
     }
@@ -304,13 +314,21 @@ internal class OneDriveStorage(
 
     private fun JSONObject.isLocalFolder() = !isNull("folder") && isNull("remoteItem")
 
-    private fun JSONObject.fileSize() = optLong("size", -1).takeIf { !isNull("file") && isNull("remoteItem") && it > 0 }
+    private fun JSONObject.isLocalFile() = !isNull("file") && isNull("remoteItem")
+
+    private fun JSONObject.fileSize() = optLong("size", -1).takeIf { it >= 0 }
 
     private fun JSONObject.jsonBody() = toString().toRequestBody(JSON)
 
     private fun Response.requireSuccess(operation: String) {
-        check(isSuccessful) { "OneDrive $operation failed: HTTP $code" }
+        if (!isSuccessful) throw httpFailure(operation)
     }
+
+    private fun Response.httpFailure(operation: String) = CloudStorageHttpException(
+        code,
+        "OneDrive $operation failed: HTTP $code",
+        header("Retry-After")?.toLongOrNull(),
+    )
 
     private fun requireHttpsUrl(value: String): HttpUrl =
         checkNotNull(value.toHttpUrlOrNull()?.takeIf { it.isHttps && it.username.isEmpty() && it.password.isEmpty() }) {

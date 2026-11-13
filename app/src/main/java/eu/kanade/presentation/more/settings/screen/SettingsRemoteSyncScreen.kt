@@ -172,6 +172,7 @@ object SettingsRemoteSyncScreen : SearchableSettings {
         val oneDriveId by downloadPreferences.cloudSyncOneDriveId().collectAsState()
         val cloudSyncDestination by key(storage) { downloadPreferences.cloudSyncDestination(storage).collectAsState() }
         val deleteAfterUpload by downloadPreferences.cloudSyncDeleteAfterUpload().collectAsState()
+        val lowPowerMode by downloadPreferences.lowPowerMode.collectAsState()
 
         var showLoginDialog by rememberSaveable(storage) { mutableStateOf(false) }
         var testingConnection by remember { mutableStateOf(false) }
@@ -207,6 +208,7 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                         try {
                             val config = WebDavConfig(url.trim(), username.trim(), password)
                             graph.cloudSyncService.storage(config).listDirectories("/")
+                            downloadPreferences.cloudSyncEnabled().set(false)
                             downloadPreferences.cloudSyncUrl().set(config.url)
                             downloadPreferences.cloudSyncUsername().set(config.username)
                             downloadPreferences.cloudSyncPassword().set(config.password)
@@ -343,6 +345,7 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                     valueRange = 1..5,
                     title = stringResource(MR.strings.pref_cloud_sync_concurrent_uploads),
                     visible = destinationAvailable,
+                    fixedValue = DownloadPreferences.LOW_POWER_CLOUD_UPLOAD_LIMIT.takeIf { lowPowerMode },
                 ),
             ),
         )
