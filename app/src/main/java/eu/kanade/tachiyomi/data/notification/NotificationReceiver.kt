@@ -61,7 +61,7 @@ class NotificationReceiver : BroadcastReceiver() {
             // Dismiss notification
             ACTION_DISMISS_NOTIFICATION -> dismissNotification(context, intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1))
             // Resume the download service
-            ACTION_RESUME_DOWNLOADS -> downloadManager.startDownloads()
+            ACTION_RESUME_DOWNLOADS -> downloadManager.startDownloads(retryFailed = true)
             // Pause the download service
             ACTION_PAUSE_DOWNLOADS -> launchAsync { downloadManager.pauseDownloads() }
             // Clear the download queue

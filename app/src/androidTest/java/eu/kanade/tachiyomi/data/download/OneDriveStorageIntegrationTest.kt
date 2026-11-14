@@ -263,6 +263,7 @@ class OneDriveStorageIntegrationTest {
             api = client { request ->
                 val path = request.url.encodedPath
                 when {
+                    request.method == "GET" && path.endsWith("/root:/Books/Chapter.cbz") -> response(request, 404)
                     request.method == "GET" && path.endsWith("/root:/Books") -> response(request, 404)
                     request.method == "GET" && path.endsWith("/root") ->
                         response(request, 200, """{"id":"root-id","folder":{}}""")
@@ -289,7 +290,7 @@ class OneDriveStorageIntegrationTest {
             },
         ) { "token" }
 
-        withFile(bytes) { _, file -> remote.uploadCbz("/Books", file, "Chapter.cbz", progress::add) }
+        withFile(bytes) { _, file -> remote.uploadFile("/Books", file, "Chapter.cbz", false, progress::add) }
         val chunk = OneDriveStorage.CHUNK_SIZE
         assertEquals(
             listOf("bytes 0-${chunk - 1}/${bytes.size}", "bytes $chunk-${bytes.lastIndex}/${bytes.size}"),
@@ -301,26 +302,37 @@ class OneDriveStorageIntegrationTest {
     }
 
     @Test
-    fun conflictAcceptsIdenticalContentButKeepsDifferentContent() = runBlocking {
-        val bytes = byteArrayOf(7, 8)
+    fun existingFileIsSkippedOrDeletedBeforeUploading() = runBlocking {
+        val requests = mutableListOf<String>()
         val remote = OneDriveStorage(
             "drive-a",
             api = client { request ->
                 val path = request.url.encodedPath
+                requests += request.method
                 when {
+                    path.endsWith("/root:/Books/Chapter.cbz") ->
+                        response(request, 200, """{"id":"file-id","file":{},"eTag":"expected"}""")
+                    path.endsWith("/items/file-id") && request.method == "DELETE" -> {
+                        assertEquals("expected", request.header("If-Match"))
+                        response(request, 204)
+                    }
                     path.endsWith("/root:/Books") -> response(request, 200, """{"id":"folder-id","folder":{}}""")
-                    path.endsWith("/createUploadSession") -> response(request, 409)
-                    path.endsWith(
-                        "/content",
-                    ) -> response(request, 200).newBuilder().body(bytes.toResponseBody()).build()
+                    path.endsWith("/createUploadSession") ->
+                        response(request, 200, """{"uploadUrl":"https://upload.example/session"}""")
                     else -> error("Unexpected request: $request")
                 }
             },
+            transfer = client { request ->
+                requests += request.method
+                response(request, 201)
+            },
         ) { "token" }
-        withFile(bytes) { _, file -> remote.uploadCbz("/Books", file, "Chapter.cbz") {} }
         withFile(byteArrayOf(1)) { _, file ->
-            val failure = runCatching { remote.uploadCbz("/Books", file, "Chapter.cbz") {} }.exceptionOrNull()
-            assertTrue(failure is CloudUploadConflictException)
+            assertFalse(remote.uploadFile("/Books", file, "Chapter.cbz", false) {})
+            assertEquals(listOf("GET"), requests)
+            requests.clear()
+            assertTrue(remote.uploadFile("/Books", file, "Chapter.cbz", true) {})
+            assertEquals(listOf("GET", "DELETE", "GET", "POST", "PUT"), requests)
         }
     }
 

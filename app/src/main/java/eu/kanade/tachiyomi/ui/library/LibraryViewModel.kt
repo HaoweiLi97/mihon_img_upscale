@@ -22,6 +22,7 @@ import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.CloudCoverStatus
 import eu.kanade.tachiyomi.data.download.LibraryCloudSync
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.model.SManga
@@ -111,6 +112,14 @@ class LibraryViewModel(
     internal val coverSyncStatuses = libraryCloudSync.coverStatuses(downloadManager, downloadCache)
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyMap())
 
+    private val cloudSyncFilter = libraryPreferences.filterCloudSync.changes().flatMapLatest { filter ->
+        if (filter == TriState.DISABLED) {
+            flowOf(filter to emptyMap())
+        } else {
+            coverSyncStatuses.map { filter to it }
+        }
+    }
+
     val isCloudSyncAvailable: Boolean
         get() = downloadManager.isCloudSyncAvailable()
 
@@ -160,9 +169,11 @@ class LibraryViewModel(
     private val hasActiveFilters = combine(
         getLibraryItemPreferencesFlow(),
         getTrackingFiltersFlow(),
-    ) { prefs, trackFilters ->
+        libraryPreferences.filterCloudSync.changes(),
+    ) { prefs, trackFilters, filterCloudSync ->
         listOf(
             prefs.filterDownloaded,
+            filterCloudSync,
             prefs.filterUnread,
             prefs.filterStarted,
             prefs.filterBookmarked,
@@ -190,11 +201,23 @@ class LibraryViewModel(
         getCategories.subscribe(),
         getFavoritesFlow(),
         combine(tracks, getTrackingFiltersFlow(), ::Pair),
-        getLibraryItemPreferencesFlow(),
-    ) { searchQuery, categories, favorites, (tracksMap, trackingFilters), itemPreferences ->
+        combine(getLibraryItemPreferencesFlow(), cloudSyncFilter, ::Pair),
+    ) { searchQuery, categories, favorites, (tracksMap, trackingFilters), (itemPreferences, syncFilter) ->
         val showSystemCategory = favorites.any { it.libraryManga.categories.contains(0) }
         val filteredFavorites = favorites
             .applyFilters(tracksMap, trackingFilters, itemPreferences)
+            .let { items ->
+                val (filter, statuses) = syncFilter
+                if (filter == TriState.DISABLED) {
+                    items
+                } else {
+                    items.fastFilter { item ->
+                        val status = statuses[item.id] ?: return@fastFilter false
+                        val synced = status == CloudCoverStatus.CloudOnly || status == CloudCoverStatus.LocalCopy
+                        synced == (filter == TriState.ENABLED_IS)
+                    }
+                }
+            }
             .let { libraryItems ->
                 if (searchQuery.isNullOrEmpty()) {
                     libraryItems

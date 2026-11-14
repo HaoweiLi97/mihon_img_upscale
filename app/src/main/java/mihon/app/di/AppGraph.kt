@@ -69,7 +69,9 @@ import tachiyomi.domain.track.interactor.UpsertTrack
 interface AppGraph : ViewModelGraph {
     @Provides
     fun provideCloudUploadScheduler(context: Context): CloudUploadScheduler =
-        CloudUploadScheduler { wifiOnly -> CloudUploadWorker.schedule(context, wifiOnly) }
+        CloudUploadScheduler { wifiOnly, replaceWaitingWork ->
+            CloudUploadWorker.schedule(context, wifiOnly, replaceWaitingWork)
+        }
 
     fun inject(app: App)
     fun inject(mainActivity: MainActivity)

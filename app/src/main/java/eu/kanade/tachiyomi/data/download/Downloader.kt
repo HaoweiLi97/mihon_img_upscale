@@ -266,9 +266,17 @@ class Downloader(
      *
      * @return true if the downloader is started, false otherwise.
      */
-    suspend fun start(): Boolean {
+    suspend fun start(retryFailed: Boolean = false): Boolean {
         restoreDownloadsJob.join()
-        return lock.withLock { startLocked() }
+        if (retryFailed) libraryCloudSync.selection.filterNotNull().first()
+        return lock.withLock {
+            if (retryFailed) {
+                val failed = queueState.value.filter { it.status == Download.State.ERROR && canTransfer(it) }
+                failed.forEach(::retryDownload)
+                if (failed.isNotEmpty()) retriesRequested.update { it + 1 }
+            }
+            startLocked()
+        }
     }
 
     /**
@@ -344,15 +352,23 @@ class Downloader(
     }
 
     private fun startLocked(): Boolean {
-        if (isRunning || queueState.value.isEmpty()) {
+        val queue = queueState.value
+        if (isRunning || queue.isEmpty()) {
             return false
         }
 
-        val pending = queueState.value.filter {
+        val pending = queue.filter {
             it.status != Download.State.DOWNLOADED && canTransfer(it) &&
-                !(it.isCloudSync && it.status == Download.State.ERROR)
+                it.status != Download.State.ERROR
         }
-        if (pending.isEmpty()) return false
+        if (pending.isEmpty()) {
+            logcat(LogPriority.INFO) {
+                val failed = queue.count { it.status == Download.State.ERROR }
+                val blocked = queue.count { !canTransfer(it) }
+                "No eligible downloads in queue: ${queue.size} total, $failed failed, $blocked outside the active sync selection"
+            }
+            return false
+        }
         pending.forEach { if (it.status != Download.State.QUEUE) it.status = Download.State.QUEUE }
 
         isPaused = false
@@ -367,7 +383,7 @@ class Downloader(
         cancelDownloaderJob()
         queueState.value
             .filter { it.status == Download.State.DOWNLOADING || it.status == Download.State.UPLOADING }
-            .forEach { it.status = if (it.isCloudSync) Download.State.QUEUE else Download.State.ERROR }
+            .forEach { it.status = Download.State.QUEUE }
 
         if (reason != null) {
             notifier.dismissProgress()
@@ -530,8 +546,8 @@ class Downloader(
             if (e is CancellationException) throw e
             logcat(LogPriority.ERROR, e)
             notifier.onError(e.message)
+            failDownload(download)
             if (download.isCloudSync) {
-                failDownload(download)
                 stopIfFinished(owner)
             } else {
                 stopIfCurrent(owner)
@@ -556,12 +572,12 @@ class Downloader(
             download.status = Download.State.QUEUE
             return@withLock
         }
-        if (download.isCloudSync) store.setFailed(download, true)
+        store.setFailed(download, true)
         download.status = Download.State.ERROR
     }
 
     private fun retryDownload(download: Download) {
-        if (download.isCloudSync) store.setFailed(download, false)
+        store.setFailed(download, false)
         download.pages = null
         download.status = Download.State.QUEUE
     }
@@ -997,7 +1013,10 @@ class Downloader(
         } else {
             emptySet()
         }
-        val pending = uniqueChapters.filter { "${target.id}:${it.id}" !in uploaded && it.id !in alreadyUploading }
+        val overwrite = automaticTarget == null && downloadPreferences.cloudSyncOverwriteUploads().get()
+        val pending = uniqueChapters.filter {
+            (overwrite || "${target.id}:${it.id}" !in uploaded) && it.id !in alreadyUploading
+        }
         if (pending.isEmpty()) {
             if (autoStart && retriedDownloads > 0 && !isRunning) DownloadWorker.start(context)
             return CloudSyncQueueResult(downloadsQueued = retriedDownloads, skipped = uniqueChapters.size)
@@ -1006,7 +1025,7 @@ class Downloader(
         val localFiles = provider.findDownloadedChapters(pending, mangaDirs)
         if (target.config is WebDavConfig) {
             try {
-                // Keep the existing upload conflict check when there are local bytes to compare.
+                // Local files go through the upload worker's conflict policy.
                 discoverWebDavChapters(
                     manga,
                     source,
@@ -1042,7 +1061,8 @@ class Downloader(
             val downloadedChapter = localFiles[chapter.id]
             when (
                 cloudSyncChapterAction(
-                    isUploaded = downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id),
+                    isUploaded = (!overwrite || downloadedChapter == null) &&
+                        downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id),
                     hasLocalDownload = downloadedChapter != null,
                     isLocalCbz =
                     downloadedChapter?.isFile == true &&
@@ -1831,13 +1851,13 @@ class Downloader(
         }
     }
 
-    private fun startCloudUploadsLocked() {
+    private fun startCloudUploadsLocked(replaceWaitingWork: Boolean = false) {
         if (!scope.isActive) return
         val target = cloudSyncTargetOrNull()?.id
         val hasPendingUploads = cloudUploadTasks.values.any { !it.record.paused && canUpload(it, target) }
-        if (hasPendingUploads && !cloudUploadWorkScheduled) {
+        if (hasPendingUploads && (!cloudUploadWorkScheduled || replaceWaitingWork)) {
             cloudUploadWorkScheduled = true
-            cloudUploadScheduler.enqueue(downloadPreferences.downloadOnlyOverWifi.get())
+            cloudUploadScheduler.enqueue(downloadPreferences.downloadOnlyOverWifi.get(), replaceWaitingWork)
         }
         cloudUploadTasks.values.filter {
             it.record.isChapter && !it.record.paused && !canUpload(it, target)
@@ -1879,14 +1899,24 @@ class Downloader(
         uploadLock.withLock {
             val target = cloudSyncTargetOrNull()?.id
             val (resumable, otherTarget) = chapterUploadsLocked(chapterId)
-                .filter { it.record.paused || it.record.retryAfterMillis > 0 }
+                .filter { it.record.key !in activeCloudUploadJobs || it.record.paused }
                 .partition { it.record.targetId == target }
             otherTarget.firstOrNull()?.let { task ->
                 reportCloudUploadError(task.download, CloudUploadTargetChangedException())
             }
-            if (resumable.isEmpty()) return@withLock
-            setCloudUploadsPaused(resumable, false)
-            startCloudUploadsLocked()
+            val waitingMetadata = if (chapterId == null) {
+                cloudUploadTasks.values.filter {
+                    !it.record.isChapter && it.record.retryAfterMillis > 0 && canUpload(it, target) &&
+                        it.record.key !in activeCloudUploadJobs
+                }
+            } else {
+                emptyList()
+            }
+            if (resumable.isEmpty() && waitingMetadata.isEmpty()) return@withLock
+            val waiting = resumable.filter { it.record.paused || it.record.retryAfterMillis > 0 } + waitingMetadata
+            if (waiting.isNotEmpty()) setCloudUploadsPaused(waiting, false)
+            // An existing WorkManager retry has its own backoff even after a chapter is ready again.
+            startCloudUploadsLocked(replaceWaitingWork = activeCloudUploadJobs.isEmpty())
         }
     }
 
@@ -1955,6 +1985,7 @@ class Downloader(
         var file: UniFile? = null
         var failure: Exception? = null
         var attempted = false
+        var uploaded = false
         try {
             owner.ensureActive()
             if (!networkAllowed()) return
@@ -1964,22 +1995,13 @@ class Downloader(
                 ?: error("Local upload file is unavailable: ${record.fileName}")
             val uploadFile = file
             val storage = cloudSyncService.storage(config)
-            if (record.isChapter) {
-                storage.uploadCbz(
-                    record.remoteDirectory,
-                    uploadFile,
-                    record.fileName,
-                ) { progress ->
-                    if (owner.isActive) task.download.uploadProgress = progress
-                }
-            } else {
-                val remoteHash = storage.remoteFileSha256OrNull(
-                    record.remoteDirectory,
-                    record.fileName,
-                )
-                if (remoteHash != record.contentHash) {
-                    storage.replaceFile(record.remoteDirectory, uploadFile, record.fileName)
-                }
+            uploaded = storage.uploadFile(
+                record.remoteDirectory,
+                uploadFile,
+                record.fileName,
+                downloadPreferences.cloudSyncOverwriteUploads().get(),
+            ) { progress ->
+                if (record.isChapter && owner.isActive) task.download.uploadProgress = progress
             }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
@@ -1994,7 +2016,7 @@ class Downloader(
                         target == currentTarget && canUpload(task, currentTarget?.id)
                     ) {
                         try {
-                            finishCloudUpload(task, file, failure, now)
+                            finishCloudUpload(task, file, uploaded, failure, now)
                         } catch (error: Exception) {
                             task.updateRecord(task.record.copy(paused = true, failed = true))
                             reportCloudUploadError(task.download, error)
@@ -2009,7 +2031,13 @@ class Downloader(
         }
     }
 
-    private suspend fun finishCloudUpload(task: CloudUploadTask, file: UniFile?, failure: Exception?, now: () -> Long) {
+    private suspend fun finishCloudUpload(
+        task: CloudUploadTask,
+        file: UniFile?,
+        uploaded: Boolean,
+        failure: Exception?,
+        now: () -> Long,
+    ) {
         val record = task.record
         val download = task.download
         if (failure != null) {
@@ -2036,11 +2064,15 @@ class Downloader(
                 record.mangaId,
                 record.chapterId,
                 record.targetId,
-                CloudChapterUpload(record.remoteDirectory, record.fileName, file?.length()?.takeIf { it > 0 }),
+                CloudChapterUpload(
+                    record.remoteDirectory,
+                    record.fileName,
+                    file?.length()?.takeIf { uploaded && it > 0 },
+                ),
             )
             downloadPreferences.markChaptersUploadedToCloud(listOf(record.chapterId), record.targetId)
             downloadPreferences.markRemoteSyncMangaFolder(record.mangaId, record.targetId, record.remoteDirectory)
-        } else {
+        } else if (uploaded) {
             downloadPreferences.markMetaInfoUploadedToCloud(
                 record.mangaId,
                 checkNotNull(record.contentHash),
@@ -2049,7 +2081,7 @@ class Downloader(
         }
         store.removeUpload(record.key)
         cloudUploadTasks.remove(record.key)
-        if (!record.isChapter || record.temporaryArchive || record.deleteAfterUpload) {
+        if (!record.isChapter || record.temporaryArchive || (uploaded && record.deleteAfterUpload)) {
             try {
                 if (file?.delete() == true && record.deleteAfterUpload) {
                     cache.removeChapter(download.chapter, download.manga)
@@ -2210,7 +2242,7 @@ class Downloader(
             val queuedChapterIds = queue.mapTo(HashSet()) { it.chapter.id }
             val toAdd = downloads.filter { it.chapter.id !in queuedChapterIds }
             toAdd.forEach { download ->
-                if (!download.isCloudSync || download.status != Download.State.ERROR) {
+                if (download.status != Download.State.ERROR) {
                     download.status = Download.State.QUEUE
                 }
             }
@@ -2296,7 +2328,7 @@ class Downloader(
             downloads.forEach {
                 if (it.chapter.id == retryChapterId && it.status == Download.State.ERROR && canTransfer(it)) {
                     retryDownload(it)
-                } else if (!it.isCloudSync || it.status != Download.State.ERROR) {
+                } else if (it.status != Download.State.ERROR) {
                     it.status = if (canTransfer(it)) Download.State.QUEUE else Download.State.PAUSED
                 }
             }

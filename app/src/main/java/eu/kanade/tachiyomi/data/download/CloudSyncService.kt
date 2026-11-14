@@ -1,20 +1,26 @@
 package eu.kanade.tachiyomi.data.download
 
 import com.hippo.unifile.UniFile
+import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.network.NetworkHelper
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.sync.Mutex
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.domain.download.service.CloudSyncStorage
 import tachiyomi.domain.download.service.DownloadPreferences
 import kotlin.time.Duration.Companion.minutes
 
 @Inject
+@SingleIn(AppScope::class)
 class CloudSyncService(
     private val networkHelper: NetworkHelper,
     private val oneDriveAuth: OneDriveAuth,
 ) {
+    private val webDavDirectoryLock = Mutex()
+
     private val uploadClient by lazy {
         networkHelper.client.newBuilder()
             .readTimeout(15.minutes)
@@ -25,7 +31,7 @@ class CloudSyncService(
     }
 
     internal fun storage(config: CloudStorageConfig): CloudStorage = when (config) {
-        is WebDavConfig -> WebDavStorage(config, networkHelper.client, uploadClient)
+        is WebDavConfig -> WebDavStorage(config, networkHelper.client, uploadClient, webDavDirectoryLock)
         is OneDriveConfig -> OneDriveStorage(config.driveId) { rejected ->
             oneDriveAuth.accessToken(config.driveId, rejected)
         }
@@ -34,9 +40,14 @@ class CloudSyncService(
 
 internal interface CloudStorage {
     suspend fun listDirectories(path: String): List<CloudSyncDirectory>
-    suspend fun uploadCbz(remoteDirectory: String, file: UniFile, fileName: String, onProgress: (Int) -> Unit)
-    suspend fun replaceFile(remoteDirectory: String, file: UniFile, fileName: String)
-    suspend fun remoteFileSha256OrNull(remoteDirectory: String, fileName: String): String?
+    /** Returns true if bytes were uploaded, or false if an existing file was kept. */
+    suspend fun uploadFile(
+        remoteDirectory: String,
+        file: UniFile,
+        fileName: String,
+        overwrite: Boolean,
+        onProgress: (Int) -> Unit,
+    ): Boolean
     suspend fun downloadCbz(remoteDirectory: String, fileName: String, file: UniFile): Boolean
     suspend fun remoteFileSize(remoteDirectory: String, fileName: String): Long?
 
@@ -104,9 +115,6 @@ internal data class CloudSyncDirectory(
     val name: String,
     val path: String,
 )
-
-internal class CloudUploadConflictException(fileName: String) :
-    IllegalStateException("Cloud storage already contains a different file named $fileName")
 
 internal class CloudStorageHttpException(
     val status: Int,

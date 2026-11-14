@@ -27,6 +27,18 @@ import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
+private fun downloadFailedSummary(failed: Int): String =
+    pluralStringResource(MR.plurals.download_queue_failed_summary, count = failed, failed)
+
+@Composable
+private fun downloadQueueSubtitle(pending: Int, failed: Int, paused: Boolean): String {
+    val remaining = pluralStringResource(MR.plurals.download_queue_summary, count = pending, pending)
+    val pauseLabel = if (paused) stringResource(MR.strings.paused) else null
+    val failureLabel = if (failed > 0) downloadFailedSummary(failed) else null
+    return listOfNotNull(pauseLabel, remaining, failureLabel).joinToString(" • ")
+}
+
+@Composable
 fun MoreScreen(
     downloadQueueStateProvider: () -> DownloadQueueState,
     downloadedOnly: Boolean,
@@ -77,24 +89,17 @@ fun MoreScreen(
                     title = stringResource(MR.strings.label_transfer_queue),
                     subtitle = when (downloadQueueState) {
                         DownloadQueueState.Stopped -> null
-                        is DownloadQueueState.Paused -> {
-                            val pending = downloadQueueState.pending
-                            if (pending == 0) {
-                                stringResource(MR.strings.paused)
-                            } else {
-                                "${stringResource(MR.strings.paused)} • ${
-                                    pluralStringResource(
-                                        MR.plurals.download_queue_summary,
-                                        count = pending,
-                                        pending,
-                                    )
-                                }"
-                            }
-                        }
-                        is DownloadQueueState.Downloading -> {
-                            val pending = downloadQueueState.pending
-                            pluralStringResource(MR.plurals.download_queue_summary, count = pending, pending)
-                        }
+                        is DownloadQueueState.Failed -> downloadFailedSummary(downloadQueueState.failed)
+                        is DownloadQueueState.Paused -> downloadQueueSubtitle(
+                            downloadQueueState.pending,
+                            downloadQueueState.failed,
+                            paused = true,
+                        )
+                        is DownloadQueueState.Downloading -> downloadQueueSubtitle(
+                            downloadQueueState.pending,
+                            downloadQueueState.failed,
+                            paused = false,
+                        )
                     },
                     icon = MaterialSymbols.Rounded.Download,
                     onPreferenceClick = onClickDownloadQueue,

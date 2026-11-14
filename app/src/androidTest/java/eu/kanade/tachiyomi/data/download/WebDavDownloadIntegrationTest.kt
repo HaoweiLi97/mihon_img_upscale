@@ -80,6 +80,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import mihon.app.di.AppGraph
 import mihon.app.di.MihonViewModelFactory
 import mihon.core.metro.metroGraph
@@ -247,28 +248,105 @@ class WebDavDownloadIntegrationTest {
     }
 
     @Test
-    fun remoteConflictsAndFailedIndexReplacementPreserveExistingBytes() = runBlocking {
+    fun concurrentChapterAndMetadataUploadsWaitForDirectoryCreation() = runBlocking {
+        val config = WebDavConfig(server.url, "user", "pass")
+        val file = checkNotNull(UniFile.fromFile(File(root, "upload").apply { writeText("contents") }))
+        val firstCreation = CountDownLatch(1)
+        val finishCreation = CountDownLatch(1)
+        val creating = AtomicInteger()
+        val conflicts = AtomicInteger()
+        server.beforeMkcol = { path ->
+            if (path == "/target/new/") {
+                when (creating.incrementAndGet()) {
+                    1 -> {
+                        firstCreation.countDown()
+                        check(finishCreation.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                        201
+                    }
+                    else -> if (finishCreation.count == 0L) 201 else {
+                        conflicts.incrementAndGet()
+                        423
+                    }
+                }
+            } else {
+                201
+            }
+        }
+        val chapter = async { graph.cloudSyncService.storage(config).uploadFile("/target/new", file, "chapter.cbz", false) {} }
+        await { firstCreation.count == 0L }
+        val metadata = async { graph.cloudSyncService.storage(config).uploadFile("/target/new", file, "meta.info", false) {} }
+        try {
+            withTimeoutOrNull(500) { metadata.join() }
+        } finally {
+            finishCreation.countDown()
+        }
+        assertTrue(chapter.await())
+        assertTrue(metadata.await())
+        assertEquals(0, conflicts.get())
+        assertEquals(2, server.conditionedPuts.get())
+    }
+
+    @Test
+    fun checksForExistingFilesBeforeSkippingOrOverwriting() = runBlocking {
         val config = WebDavConfig(server.url, "user", "pass")
         val service = graph.cloudSyncService.storage(config)
         val local = "local contents".toByteArray()
         val original = "existing contents".toByteArray()
         val file = checkNotNull(UniFile.fromFile(File(root, "new.cbz").apply { writeBytes(local) }))
+        server.beforeHead = { 404 }
         server.files["/target/chapter.cbz"] = original
-        val failure = runCatching { service.uploadCbz("/target", file, "chapter.cbz") {} }.exceptionOrNull()
-        assertTrue(failure is CloudUploadConflictException)
+        assertFalse(service.uploadFile("/target", file, "chapter.cbz", overwrite = false) {})
         assertArrayEquals(original, server.files["/target/chapter.cbz"])
-        server.files["/target/chapter.cbz"] = local
-        service.uploadCbz("/target", file, "chapter.cbz") {}
-        assertEquals(2, server.conditionedPuts.get())
-
         server.files["/target/meta.info"] = original
-        server.rejectMove = true
-        assertTrue(runCatching { service.replaceFile("/target", file, "meta.info") }.isFailure)
+        assertFalse(service.uploadFile("/target", file, "meta.info", overwrite = false) {})
         assertArrayEquals(original, server.files["/target/meta.info"])
-        assertFalse(server.files.keys.any { it.endsWith(".tmp") })
-        server.rejectMove = false
-        service.replaceFile("/target", file, "meta.info")
+        assertEquals(0, server.conditionedPuts.get())
+
+        assertTrue(service.uploadFile("/target", file, "chapter.cbz", overwrite = true) {})
+        assertArrayEquals(local, server.files["/target/chapter.cbz"])
+        assertTrue(service.uploadFile("/target", file, "meta.info", overwrite = true) {})
         assertArrayEquals(local, server.files["/target/meta.info"])
+        assertTrue(service.uploadFile("/target", file, "missing.info", overwrite = false) {})
+        assertArrayEquals(local, server.files["/target/missing.info"])
+        assertEquals(3, server.conditionedPuts.get())
+    }
+
+    @Test
+    fun skippedChapterKeepsLocalArchiveAndCanBeExplicitlyOverwritten() = runBlocking {
+        val fixture = createDownloader()
+        val chapter = chapters.first()
+        fixture.downloader.queueChapters(manga, listOf(chapter), autoStart = false)
+        assertTrue(fixture.downloader.start())
+        await { fixture.downloader.queueState.value.isEmpty() && !fixture.downloader.isRunning }
+        val archive = root.walkTopDown().single { it.extension == "cbz" }
+        val local = archive.readBytes()
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        downloads.cloudSyncDeleteAfterUpload().set(true)
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+
+        suspend fun queueUpload() = fixture.downloader.queueChaptersForCloudSync(manga, listOf(chapter), false)
+        assertEquals(1, queueUpload().uploadsQueued)
+        val record = DownloadStore(context, sourceManager, graph.json, GetManga(mangaRepo), GetChapter(chapterRepo))
+            .restoreUploads().single().first
+        val path = URI(null, null, "${record.remoteDirectory}/${record.fileName}", null).toASCIIString()
+        val original = "server archive".toByteArray()
+        server.files[path] = original
+        assertFalse(fixture.downloader.runCloudUploads(networkAllowed = { true }))
+        assertEquals(0, server.conditionedPuts.get())
+        assertArrayEquals(original, server.files[path])
+        assertTrue(archive.isFile)
+        assertTrue(downloads.isChapterUploadedToCloud(chapter.id, target))
+
+        downloads.cloudSyncOverwriteUploads().set(true)
+        assertEquals(1, queueUpload().uploadsQueued)
+        assertFalse(fixture.downloader.runCloudUploads(networkAllowed = { true }))
+        assertEquals(1, server.conditionedPuts.get())
+        assertArrayEquals(local, server.files[path])
+        assertFalse(archive.exists())
     }
 
     @Test
@@ -431,16 +509,11 @@ class WebDavDownloadIntegrationTest {
         val newTarget = downloads.cloudSyncTargetId()
         assertFalse(downloads.isChapterUploadedToCloud(first.id, newTarget))
         val conflictPath = firstRemoteFile.key.replaceFirst("/target/", "/new-target/")
-        server.files[conflictPath] = "Different contents".toByteArray()
+        val existing = "Different contents".toByteArray()
+        server.files[conflictPath] = existing
         assertEquals(1, downloader.queueChaptersForCloudSync(manga, listOf(first), autoStart = false).uploadsQueued)
-        await { downloader.uploadQueueState.value.singleOrNull()?.status == Download.State.ERROR }
-        scopes.last().coroutineContext.job.cancelAndJoin()
-        downloader = createDownloader(processUploads = true).downloader
-        await { downloader.uploadQueueState.value.singleOrNull()?.status == Download.State.ERROR }
-        server.files.remove(conflictPath)
-        downloader.resumeCloudUpload(first.id)
         await { downloads.isChapterUploadedToCloud(first.id, newTarget) && downloader.uploadQueueState.value.isEmpty() }
-        assertTrue(server.files.keys.any { it.startsWith("/new-target/") })
+        assertArrayEquals(existing, server.files[conflictPath])
     }
 
     @Test
@@ -759,7 +832,7 @@ class WebDavDownloadIntegrationTest {
             chapters.all { downloads.isChapterUploadedToCloud(it.id, target) } &&
                 downloader.queueState.value.isEmpty() && downloader.uploadQueueState.value.isEmpty()
         }
-        assertFalse(localArchive.exists())
+        assertTrue(localArchive.isFile)
     }
 
     @Test
@@ -830,7 +903,8 @@ class WebDavDownloadIntegrationTest {
 
     @Test
     fun manualUploadRetriesAfterConnectionDrops() = runBlocking {
-        var fixture = createDownloader(processUploads = false)
+        val scheduling = Channel<Boolean>(Channel.UNLIMITED)
+        var fixture = createDownloader(onUploadScheduled = { scheduling.trySend(it) })
         val chapter = chapters.first()
         fixture.downloader.queueChapters(manga, listOf(chapter), autoStart = false)
         assertTrue(fixture.downloader.start())
@@ -860,16 +934,19 @@ class WebDavDownloadIntegrationTest {
         assertEquals(Download.State.QUEUE, fixture.downloader.uploadQueueState.value.single().status)
         assertFalse(downloads.isChapterUploadedToCloud(chapter.id, target))
         assertTrue(archive.isFile)
+        assertFalse(withTimeout(5_000) { scheduling.receive() })
 
         fixture.scope.coroutineContext.job.cancelAndJoin()
-        fixture = createDownloader(processUploads = false)
+        fixture = createDownloader(onUploadScheduled = { scheduling.trySend(it) })
         assertTrue(runUploadWorker())
         val restored = fixture.downloader.uploadQueueState.value.single()
         assertEquals(chapter.id, restored.chapter.id)
         assertEquals(Download.State.QUEUE, restored.status)
         assertEquals(1, server.conditionedPuts.get())
 
-        clock += 60_000
+        assertFalse(withTimeout(5_000) { scheduling.receive() })
+        fixture.downloader.resumeCloudUploads()
+        assertTrue(withTimeout(5_000) { scheduling.receive() })
         assertFalse(runUploadWorker())
         assertEquals(2, server.conditionedPuts.get())
         assertTrue(downloads.isChapterUploadedToCloud(chapter.id, target))
@@ -921,8 +998,32 @@ class WebDavDownloadIntegrationTest {
         assertFalse(fixture.downloader.runCloudUploads(networkAllowed = { true }))
         assertTrue(downloads.isChapterUploadedToCloud(chapter.id, target))
         assertTrue(fixture.downloader.uploadQueueState.value.isEmpty())
-        assertEquals(2, server.conditionedPuts.get())
+        assertEquals(1, server.conditionedPuts.get())
+        assertTrue(archive.isFile)
         assertArrayEquals(contents, server.files.values.single())
+    }
+
+    @Test
+    fun pageListFailureRemainsFailedAfterRestartUntilManualRetry() = runBlocking {
+        var fixture = createDownloader()
+        val chapter = chapters.first()
+        source.failPageList = true
+        fixture.downloader.queueChapters(manga, listOf(chapter), autoStart = false)
+        assertTrue(fixture.downloader.start())
+        await {
+            !fixture.downloader.isRunning &&
+                fixture.downloader.queueState.value.singleOrNull()?.status == Download.State.ERROR
+        }
+        assertNull(fixture.downloader.queueState.value.single().pages)
+        fixture.scope.coroutineContext.job.cancelAndJoin()
+
+        fixture = createDownloader()
+        await { fixture.downloader.queueState.value.singleOrNull()?.status == Download.State.ERROR }
+        assertFalse(fixture.downloader.start())
+        source.failPageList = false
+        assertTrue(fixture.downloader.start(retryFailed = true))
+        await { fixture.downloader.queueState.value.isEmpty() && !fixture.downloader.isRunning }
+        assertEquals(1, server.images.get())
     }
 
     @Test
@@ -957,8 +1058,7 @@ class WebDavDownloadIntegrationTest {
         assertFalse(fixture.downloader.start())
         assertEquals(1, server.images.get())
         server.rejectImages = false
-        assertEquals(1, fixture.downloader.retryCloudTransfers { it.chapter.id == chapter.id })
-        assertTrue(fixture.downloader.start())
+        assertTrue(fixture.downloader.start(retryFailed = true))
         awaitCloudUploads(fixture.downloader) { downloads.isChapterUploadedToCloud(chapter.id, target) }
         assertEquals(2, server.images.get())
     }
@@ -966,7 +1066,8 @@ class WebDavDownloadIntegrationTest {
     @Test
     fun bulkQueueActionsAffectOnlyTheirTransferDirection() = runBlocking {
         downloads.lowPowerMode.set(false)
-        val downloader = createDownloader(processUploads = true).downloader
+        val fixture = createDownloader(processUploads = true)
+        val downloader = fixture.downloader
         val uploadChapters = listOf(
             chapters.first(),
             chapters.first().copy(id = 42013L, url = "/chapter-3", name = "Chapter 3", sourceOrder = -3),
@@ -1002,11 +1103,15 @@ class WebDavDownloadIntegrationTest {
 
         downloader.queueChapters(manga, listOf(downloadChapter), autoStart = false)
         val firstDownload = startBlockedDownload()
+        assertEquals(TransferTaskCounts(1, 1), fixture.manager.downloadTaskCounts().first())
+        assertEquals(TransferTaskCounts(2, 1), fixture.manager.uploadTaskCounts().first())
         downloader.pause()
         firstDownload.release.countDown()
         assertFalse(downloader.isRunning)
         assertEquals(Download.State.QUEUE, downloader.queueState.value.single().status)
         assertEquals(activeUploads, uploadStates())
+        assertEquals(TransferTaskCounts(1, 0), fixture.manager.downloadTaskCounts().first())
+        assertEquals(TransferTaskCounts(2, 1), fixture.manager.uploadTaskCounts().first())
 
         val secondDownload = startBlockedDownload()
         downloader.pauseCloudUploads()
@@ -1014,6 +1119,8 @@ class WebDavDownloadIntegrationTest {
         assertEquals(List(2) { Download.State.PAUSED }, uploadStates())
         assertTrue(downloader.isRunning)
         assertEquals(Download.State.DOWNLOADING, downloader.queueState.value.single().status)
+        assertEquals(TransferTaskCounts(1, 1), fixture.manager.downloadTaskCounts().first())
+        assertEquals(TransferTaskCounts(2, 0), fixture.manager.uploadTaskCounts().first())
 
         val secondUpload = server.blockNextUpload()
         downloader.resumeCloudUploads()
@@ -1689,6 +1796,7 @@ class WebDavDownloadIntegrationTest {
     private fun createDownloader(
         libraryPreferences: LibraryPreferences = graph.libraryPreferences,
         processUploads: Boolean = false,
+        onUploadScheduled: (Boolean) -> Unit = {},
     ): DownloaderFixture {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { scopes += it }
         val uploadRequests = if (processUploads) Channel<Unit>(Channel.CONFLATED) else null
@@ -1730,7 +1838,10 @@ class WebDavDownloadIntegrationTest {
             DownloadNotifier(context, graph.securityPreferences),
             sync,
             GetDuplicateLibraryManga(mangaRepo),
-            CloudUploadScheduler { uploadRequests?.trySend(Unit) },
+            CloudUploadScheduler { _, replaceWaitingWork ->
+                onUploadScheduled(replaceWaitingWork)
+                uploadRequests?.trySend(Unit)
+            },
         )
         if (uploadRequests != null) {
             scope.launch {
@@ -1788,6 +1899,7 @@ class WebDavDownloadIntegrationTest {
         override val supportsLatest = false
         val metaInfoFailures = AtomicInteger()
         var pagesPerChapter = 1
+        var failPageList = false
         var beforeFirstMetadata: (() -> Unit)? = null
 
         override fun getMangaUrl(manga: SManga): String {
@@ -1795,9 +1907,12 @@ class WebDavDownloadIntegrationTest {
             error("Fixture metadata failure")
         }
 
-        override suspend fun getPageList(chapter: SChapter): List<Page> = List(pagesPerChapter) { index ->
-            val pagePath = if (pagesPerChapter == 1) chapter.url else "${chapter.url}/$index"
-            Page(index = index, imageUrl = "$baseUrl/image$pagePath")
+        override suspend fun getPageList(chapter: SChapter): List<Page> {
+            check(!failPageList) { "HTTP error 404" }
+            return List(pagesPerChapter) { index ->
+                val pagePath = if (pagesPerChapter == 1) chapter.url else "${chapter.url}/$index"
+                Page(index = index, imageUrl = "$baseUrl/image$pagePath")
+            }
         }
 
         override fun popularMangaRequest(page: Int): Request = error("Unexpected request")
@@ -1826,7 +1941,6 @@ private class DavTestServer : AutoCloseable {
     val deletedCollections = java.util.concurrent.ConcurrentLinkedQueue<String>()
     val releaseLookups = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
-    @Volatile var rejectMove = false
 
     @Volatile var failNextPut = false
 
@@ -1837,6 +1951,8 @@ private class DavTestServer : AutoCloseable {
     @Volatile var fileListingFailure: Int? = null
 
     @Volatile var beforeHead: ((String) -> Int?)? = null
+
+    @Volatile var beforeMkcol: ((String) -> Int)? = null
 
     @Volatile var directoryListing: String? = null
 
@@ -1901,8 +2017,25 @@ private class DavTestServer : AutoCloseable {
                 }
                 files[path]?.let { respond(socket, 200, it, headOnly = true) } ?: respond(socket, 404)
             }
-            "MKCOL" -> respond(socket, 201)
+            "MKCOL" -> respond(socket, beforeMkcol?.invoke(path) ?: 201)
             "PROPFIND" -> {
+                if (headers["depth"] == "0" && path == "/target/new/") {
+                    respond(socket, 404)
+                    return
+                }
+                if (headers["depth"] == "0" && !path.endsWith('/')) {
+                    if (!files.containsKey(path)) {
+                        respond(socket, 404)
+                    } else {
+                        val xml = """
+                            <d:multistatus xmlns:d="DAV:"><d:response><d:href>$path</d:href>
+                            <d:propstat><d:prop><d:resourcetype/></d:prop>
+                            <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>
+                        """.trimIndent()
+                        respond(socket, 207, xml.toByteArray(), "application/xml")
+                    }
+                    return
+                }
                 val listing = if ("getcontentlength" in body.decodeToString()) {
                     check(headers["depth"] == "1")
                     releaseLookups += method
@@ -1964,16 +2097,6 @@ private class DavTestServer : AutoCloseable {
                     respond(socket, 503)
                 } else {
                     respond(socket, if (files.putIfAbsent(path, body) == null) 201 else 412)
-                }
-            }
-            "MOVE" -> {
-                check(headers["overwrite"] == "T")
-                if (rejectMove) {
-                    respond(socket, 503)
-                } else {
-                    val destination = URI(checkNotNull(headers["destination"])).rawPath
-                    files[destination] = checkNotNull(files.remove(path))
-                    respond(socket, 204)
                 }
             }
             else -> error("Unexpected method: $method")

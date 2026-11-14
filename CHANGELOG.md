@@ -12,6 +12,17 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.23] - 2026-11-14
+
+### Added
+- Filter the library by cloud sync status.
+- Choose whether to skip an existing cloud file or delete it before uploading a replacement. The setting applies to chapter archives and metadata on WebDAV and OneDrive.
+
+### Fixed
+- Resume failed downloads and uploads from the transfer queue. Failed downloads show a failure label, keep their state across restarts, and allow individual retries.
+- Coordinate WebDAV directory creation when a chapter archive and metadata start uploading together.
+- Show separate download and upload counts while transfers are running.
+
 ## [v1.3.22] - 2026-11-13
 
 ### Added

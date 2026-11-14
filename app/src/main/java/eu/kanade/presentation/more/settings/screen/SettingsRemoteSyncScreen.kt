@@ -330,6 +330,14 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                     title = stringResource(MR.strings.cloud_sync_prefer_remote_downloads),
                     subtitle = stringResource(MR.strings.cloud_sync_prefer_remote_downloads_summary),
                 ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = downloadPreferences.cloudSyncOverwriteUploads(),
+                    entries = mapOf(
+                        false to stringResource(MR.strings.cloud_sync_upload_conflict_skip),
+                        true to stringResource(MR.strings.cloud_sync_upload_conflict_overwrite),
+                    ),
+                    title = stringResource(MR.strings.cloud_sync_upload_conflict),
+                ),
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(MR.strings.cloud_sync_delete_after_upload),
                 ) {

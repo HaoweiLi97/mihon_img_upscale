@@ -48,6 +48,7 @@ class DownloadPreferences(
     }
 
     fun cloudSyncPreferRemoteDownloads() = preferenceStore.getBoolean("cloud_sync_prefer_webdav_downloads", true)
+    fun cloudSyncOverwriteUploads() = preferenceStore.getBoolean("cloud_sync_overwrite_uploads", false)
 
     fun cloudSyncDeleteAfterUpload() = preferenceStore.getBoolean("cloud_sync_delete_after_upload", false)
 

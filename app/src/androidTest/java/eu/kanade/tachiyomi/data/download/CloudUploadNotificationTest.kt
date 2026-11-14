@@ -40,6 +40,8 @@ class CloudUploadNotificationTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val notifications = checkNotNull(context.getSystemService<NotificationManager>())
+        fun uploadTitle(total: Int, active: Int) =
+            context.stringResource(MR.strings.transfer_status_upload_count, total, active)
         assumeTrue("Mihon must have notification permission", notifications.areNotificationsEnabled())
         val workManager = WorkManager.getInstance(context)
         val request = OneTimeWorkRequestBuilder<CloudUploadNotificationTestWorker>().build()
@@ -68,13 +70,14 @@ class CloudUploadNotificationTest {
                         NotificationHandler.openDownloadManagerPendingActivity(context),
                         starting.contentIntent,
                     )
-                    verifyTransferCounts(starting, 0, 0)
+                    verifyTransferCounts(starting, uploadTitle(0, 0))
 
                     CloudUploadNotificationTestWorker.stage.value = UploadStage.UPLOADING
-                    val active = awaitCounts(context, activeUpload, 4, 2)
+                    val activeTitle = uploadTitle(4, 2)
+                    val active = awaitCounts(activeUpload, activeTitle)
                     assertTrue(active.flags and Notification.FLAG_ONGOING_EVENT != 0)
-                    verifyTransferCounts(active, 4, 2)
-                    captureTransferNotificationShadeIfRequested("cloud-upload-notification.png", 4, 2)
+                    verifyTransferCounts(active, activeTitle)
+                    captureTransferNotificationShadeIfRequested("cloud-upload-notification.png", activeTitle)
 
                     scenario.moveToState(Lifecycle.State.CREATED)
                     withTimeout(15_000) {
@@ -83,7 +86,8 @@ class CloudUploadNotificationTest {
                         }
                     }
                     CloudUploadNotificationTestWorker.stage.value = UploadStage.BACKGROUND
-                    verifyTransferCounts(awaitCounts(context, activeUpload, 4, 3), 4, 3)
+                    val backgroundTitle = uploadTitle(4, 3)
+                    verifyTransferCounts(awaitCounts(activeUpload, backgroundTitle), backgroundTitle)
 
                     CloudUploadNotificationTestWorker.stage.value = UploadStage.FINISHED
                     val work = withTimeout(15_000) {
@@ -103,13 +107,10 @@ class CloudUploadNotificationTest {
     }
 
     private suspend fun awaitCounts(
-        context: Context,
         notifications: Flow<Notification?>,
-        total: Int,
-        active: Int,
+        title: String,
     ): Notification = withTimeout(15_000) {
-        val text = context.stringResource(MR.strings.transfer_status_count_summary, total, active)
-        checkNotNull(notifications.first { it?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() == text })
+        checkNotNull(notifications.first { it?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() == title })
     }
 }
 

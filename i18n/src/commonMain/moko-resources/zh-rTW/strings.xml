@@ -10,7 +10,9 @@
     <string name="transfer_queue_uploads">上傳</string>
     <string name="transfer_queue_no_uploads">沒有上傳任務</string>
     <string name="transfer_status_title">傳輸狀態</string>
-    <string name="transfer_status_count_summary">%1$d 個任務 · %2$d 個進行中</string>
+    <string name="transfer_status_download_count">下載 %1$d 項 · %2$d 項進行中</string>
+    <string name="transfer_status_upload_count">上傳 %1$d 項 · %2$d 項進行中</string>
+    <string name="transfer_status_queue_count">下載 %1$d 項 · 上傳 %2$d 項</string>
     <string name="pref_idle_transfer_notification_summary">閒置時也在下拉通知欄保留傳輸佇列入口。</string>
     <string name="transfer_queue_download_actions">下載操作</string>
     <string name="transfer_queue_upload_actions">上傳操作</string>
@@ -147,6 +149,7 @@
     <string name="source_not_installed">來源未安裝：%1$s</string>
     <string name="chapter_error">錯誤</string>
     <string name="chapter_paused">已暫停</string>
+    <string name="download_queue_failed">下載失敗</string>
     <string name="manga_download">下載</string>
     <string name="snack_categories_deleted">已刪除類別</string>
     <string name="picture_saved">圖片已儲存</string>
@@ -1024,9 +1027,14 @@
     <string name="remote_sync_no_categories">尚未選擇參與同步的分類</string>
     <string name="remote_sync_waiting">等待同步</string>
     <string name="remote_sync_cover_unsynced">尚未同步</string>
+    <string name="library_filter_cloud_sync">雲端同步狀態</string>
+    <string name="library_filter_synced">已同步</string>
     <string name="remote_sync_cover_cloud_only">僅雲端</string>
     <string name="remote_sync_cover_local_copy">已同步，本機有副本</string>
     <string name="remote_sync_delete_folder">同時刪除雲端上的漫畫資料夾</string>
     <string name="remote_sync_delete_success">已從書櫃和雲端刪除。</string>
     <string name="remote_sync_delete_failed_count">有 %1$d 部漫畫未能完成刪除。</string>
+    <string name="cloud_sync_upload_conflict">遠端已有同名檔案時</string>
+    <string name="cloud_sync_upload_conflict_skip">略過上傳</string>
+    <string name="cloud_sync_upload_conflict_overwrite">刪除遠端檔案後重新上傳</string>
 </resources>

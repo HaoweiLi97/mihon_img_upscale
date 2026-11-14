@@ -91,6 +91,18 @@ private fun ColumnScope.FilterPage(
         enabled = !downloadedOnly,
         onClick = { viewModel.toggleFilter(LibraryPreferences::filterDownloaded) },
     )
+    val filterCloudSync by viewModel.libraryPreferences.filterCloudSync.collectAsState()
+    TriStateItem(
+        label = stringResource(
+            when (filterCloudSync) {
+                TriState.DISABLED -> MR.strings.library_filter_cloud_sync
+                TriState.ENABLED_IS -> MR.strings.library_filter_synced
+                TriState.ENABLED_NOT -> MR.strings.remote_sync_cover_unsynced
+            },
+        ),
+        state = filterCloudSync,
+        onClick = { viewModel.toggleFilter(LibraryPreferences::filterCloudSync) },
+    )
     val filterUnread by viewModel.libraryPreferences.filterUnread.collectAsState()
     TriStateItem(
         label = stringResource(MR.strings.action_filter_unread),

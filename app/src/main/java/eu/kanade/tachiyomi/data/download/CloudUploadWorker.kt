@@ -17,7 +17,6 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.data.notification.TransferTaskCounts
 import eu.kanade.tachiyomi.data.notification.transferStatusNotification
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.cancelNotification
@@ -42,12 +41,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import logcat.LogPriority
 import mihon.app.di.appGraph
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.i18n.MR
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
 fun interface CloudUploadScheduler {
-    fun enqueue(wifiOnly: Boolean)
+    fun enqueue(wifiOnly: Boolean, replaceWaitingWork: Boolean)
 }
 
 class CloudUploadWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
@@ -71,7 +72,7 @@ class CloudUploadWorker(context: Context, parameters: WorkerParameters) : Corout
         if (!foreground) context.notify(notificationId, getForegroundInfo().notification)
 
         val notificationUpdates = launch {
-            manager.transferTaskCounts().collect { counts ->
+            manager.uploadTaskCounts().collect { counts ->
                 val info = progressInfo(counts.total, counts.active)
                 if (foreground) {
                     try {
@@ -117,7 +118,7 @@ class CloudUploadWorker(context: Context, parameters: WorkerParameters) : Corout
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
-        val counts = applicationContext.appGraph.downloadManager.transferTaskCounts().first()
+        val counts = applicationContext.appGraph.downloadManager.uploadTaskCounts().first()
         return progressInfo(counts.total, counts.active)
     }
 
@@ -130,7 +131,7 @@ class CloudUploadWorker(context: Context, parameters: WorkerParameters) : Corout
             notificationId,
             context.transferStatusNotification(
                 Notifications.CHANNEL_CLOUD_SYNC_PROGRESS,
-                TransferTaskCounts(totalTasks, activeTasks),
+                context.stringResource(MR.strings.transfer_status_upload_count, totalTasks, activeTasks),
             ),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
         )
@@ -146,9 +147,10 @@ class CloudUploadWorker(context: Context, parameters: WorkerParameters) : Corout
             .map { work -> work.any { it.state == WorkInfo.State.RUNNING } }
             .distinctUntilChanged()
 
-        internal fun schedule(context: Context, wifiOnly: Boolean) {
+        internal fun schedule(context: Context, wifiOnly: Boolean, replaceWaitingWork: Boolean) {
             // A new upload may arrive while a drained worker is still returning success.
-            enqueue(context, wifiOnly, ExistingWorkPolicy.APPEND_OR_REPLACE)
+            val policy = if (replaceWaitingWork) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.APPEND_OR_REPLACE
+            enqueue(context, wifiOnly, policy)
         }
 
         internal fun enqueue(context: Context, wifiOnly: Boolean, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {

@@ -2,10 +2,9 @@ package eu.kanade.tachiyomi.data.download
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.network.await
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.CacheControl
 import okhttp3.Credentials
 import okhttp3.Headers
@@ -25,15 +24,13 @@ import org.xml.sax.SAXException
 import tachiyomi.core.common.util.lang.withIOContext
 import java.io.IOException
 import java.io.InputStream
-import java.security.MessageDigest
-import java.util.UUID
-import kotlin.time.Duration.Companion.seconds
 import javax.xml.parsers.DocumentBuilderFactory
 
 internal class WebDavStorage(
     private val config: WebDavConfig,
     private val client: OkHttpClient,
     private val uploadClient: OkHttpClient,
+    private val directoryLock: Mutex,
 ) : CloudStorage {
 
     override suspend fun listDirectories(path: String): List<CloudSyncDirectory> = withIOContext {
@@ -58,87 +55,86 @@ internal class WebDavStorage(
         }
     }
 
-    override suspend fun uploadCbz(
+    override suspend fun uploadFile(
         remoteDirectory: String,
         file: UniFile,
         fileName: String,
+        overwrite: Boolean,
         onProgress: (Int) -> Unit,
-    ) = withIOContext {
-        val directory = ensureDirectory(remoteDirectory)
-        val created = putNewFile(directory, fileName, file, CBZ_MEDIA_TYPE, onProgress)
-        if (!created && remoteFileSha256OrNull(directory, fileName) != file.sha256()) {
-            throw CloudUploadConflictException(fileName)
-        }
-        onProgress(100)
+    ): Boolean = withIOContext {
+        val existing = lookupUploadDestination(remoteDirectory, fileName)
+        if (existing != null && !overwrite) return@withIOContext false
+        // Chapter and metadata uploads can share a directory even across storage instances.
+        val directory = directoryLock.withLock { ensureDirectory(remoteDirectory) }
+        if (existing != null) deleteRemoteFile(directory, fileName, existing.etag)
+        val mediaType = if (fileName.endsWith(".cbz", ignoreCase = true)) CBZ_MEDIA_TYPE else GENERIC_BINARY_MEDIA_TYPE
+        val uploaded = putNewFile(directory, fileName, file, mediaType, onProgress)
+        if (!uploaded && overwrite) error("The remote file changed during upload: $fileName")
+        if (uploaded) onProgress(100)
+        uploaded
     }
 
-    override suspend fun replaceFile(
-        remoteDirectory: String,
-        file: UniFile,
-        fileName: String,
-    ) = withIOContext {
-        val directory = ensureDirectory(remoteDirectory)
-        val stagingName = "$fileName.${UUID.randomUUID()}.tmp"
-        try {
-            check(putNewFile(directory, stagingName, file, GENERIC_BINARY_MEDIA_TYPE) {})
-            val request = Request.Builder()
-                .url(config.resolveUrl(directory, stagingName))
-                .headers(config.authHeaders())
-                .header("Destination", config.resolveUrl(directory, fileName).toString())
-                .header("Overwrite", "T")
-                .method("MOVE", null)
-                .build()
-            uploadClient.newCall(request).await().use { response ->
-                if (response.code !in SUCCESS_CODES) {
-                    throw CloudStorageHttpException(
-                        response.code,
-                        "WebDAV MOVE failed: HTTP ${response.code}",
-                        response.header("Retry-After")?.toLongOrNull(),
-                    )
-                }
-            }
-        } catch (error: Exception) {
-            withContext(NonCancellable) {
-                withTimeoutOrNull(5.seconds) { runCatching { deleteRemoteFile(directory, stagingName) } }
-            }
-            throw error
-        }
-    }
-
-    override suspend fun remoteFileSha256OrNull(
-        remoteDirectory: String,
-        fileName: String,
-    ): String? = withIOContext {
-        val effectiveRemoteDirectory = normalizePath(remoteDirectory)
-        val request = Request.Builder()
-            .url(config.resolveUrl(effectiveRemoteDirectory, fileName))
+    private suspend fun lookupUploadDestination(directory: String, fileName: String): UploadDestination? {
+        val url = config.resolveUrl(directory, fileName)
+        // A depth-zero DAV stat can refresh the server's directory cache before a conditional upload.
+        val stat = Request.Builder()
+            .url(url)
             .headers(config.authHeaders())
+            .header("Depth", "0")
             .cacheControl(CacheControl.FORCE_NETWORK)
-            .get()
+            .method("PROPFIND", PROPFIND_UPLOAD_DESTINATION_BODY)
             .build()
-
-        uploadClient.newCall(request).await().use { response ->
-            if (response.code == 404) return@withIOContext null
-            if (!response.isSuccessful) {
-                throw CloudStorageHttpException(
+        client.newCall(stat).await().use { response ->
+            when (response.code) {
+                404, 410 -> return null
+                207 -> {
+                    val document = response.body.byteStream().use(::parseDavDocument)
+                    val resources = document.getElementsByTagNameNS(DAV_NAMESPACE, "response")
+                    for (index in 0 until resources.length) {
+                        val resource = resources.item(index) as Element
+                        val href = resource.firstTextByTagName("href", DAV_NAMESPACE) ?: continue
+                        val resolved = url.resolve(href) ?: continue
+                        if (resolved.pathSegments.dropLastWhile(String::isEmpty) != url.pathSegments) continue
+                        val status = resource.httpStatus()
+                        if (status == 404 || status == 410) return null
+                        if (status != null && status !in 200..299) throw IOException("WebDAV PROPFIND failed: HTTP $status")
+                        check(resource.getElementsByTagNameNS(DAV_NAMESPACE, "collection").length == 0) {
+                            "The WebDAV upload destination is a directory"
+                        }
+                        return UploadDestination(resource.firstTextByTagName("getetag", DAV_NAMESPACE))
+                    }
+                }
+                400, 403, 405, 501 -> Unit // Some servers only support HEAD for individual objects.
+                else -> throw CloudStorageHttpException(
                     response.code,
-                    "WebDAV file lookup failed: HTTP ${response.code}",
+                    "WebDAV PROPFIND failed: HTTP ${response.code}",
                     response.header("Retry-After")?.toLongOrNull(),
                 )
             }
-
-            val digest = MessageDigest.getInstance("SHA-256")
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            response.body.byteStream().use { input ->
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read == -1) break
-                    digest.update(buffer, 0, read)
-                }
+        }
+        val request = Request.Builder()
+            .url(url)
+            .headers(config.authHeaders())
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .head()
+            .build()
+        client.newCall(request).await().use { response ->
+            if (response.code == 404 || response.code == 410) return null
+            if (response.code != 200) {
+                throw CloudStorageHttpException(
+                    response.code,
+                    "WebDAV HEAD failed: HTTP ${response.code}",
+                    response.header("Retry-After")?.toLongOrNull(),
+                )
             }
-            digest.digest().toHexString()
+            check(!response.request.url.encodedPath.endsWith('/')) {
+                "The WebDAV upload destination did not resolve to the requested file"
+            }
+            return UploadDestination(response.header("ETag")?.takeIf { response.request.url == url })
         }
     }
+
+    private data class UploadDestination(val etag: String?)
 
     override suspend fun downloadCbz(
         remoteDirectory: String,
@@ -295,11 +291,13 @@ internal class WebDavStorage(
     private suspend fun deleteRemoteFile(
         remoteDirectory: String,
         fileName: String,
+        etag: String?,
     ) = withIOContext {
         val effectiveRemoteDirectory = normalizePath(remoteDirectory)
         val request = Request.Builder()
             .url(config.resolveUrl(effectiveRemoteDirectory, fileName))
             .headers(config.authHeaders())
+            .apply { etag?.let { header("If-Match", it) } }
             .delete()
             .build()
 
@@ -503,10 +501,6 @@ internal class WebDavStorage(
         return normalizePath(segments.drop(base.size).joinToString("/"))
     }
 
-    private fun ByteArray.toHexString(): String {
-        return joinToString(separator = "") { byte -> "%02x".format(byte) }
-    }
-
     private class UniFileRequestBody(
         private val file: UniFile,
         private val mediaType: MediaType,
@@ -557,6 +551,9 @@ internal class WebDavStorage(
 
     companion object {
         private const val DAV_NAMESPACE = "DAV:"
+        private val PROPFIND_UPLOAD_DESTINATION_BODY =
+            """<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getetag/></d:prop></d:propfind>"""
+                .toRequestBody("application/xml; charset=utf-8".toMediaType())
         private val PROPFIND_BODY = """
             <?xml version="1.0" encoding="utf-8" ?>
             <d:propfind xmlns:d="DAV:">

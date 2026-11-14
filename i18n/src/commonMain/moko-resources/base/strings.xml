@@ -54,7 +54,9 @@
     <string name="transfer_queue_uploads">Uploads</string>
     <string name="transfer_queue_no_uploads">No uploads</string>
     <string name="transfer_status_title">Transfer status</string>
-    <string name="transfer_status_count_summary">%1$d tasks · %2$d in progress</string>
+    <string name="transfer_status_download_count">Downloads %1$d · %2$d active</string>
+    <string name="transfer_status_upload_count">Uploads %1$d · %2$d active</string>
+    <string name="transfer_status_queue_count">Downloads %1$d · Uploads %2$d</string>
     <string name="pref_idle_transfer_notification_summary">Keep a shortcut to the transfer queue in the notification shade when idle.</string>
     <string name="transfer_queue_download_actions">Download actions</string>
     <string name="transfer_queue_upload_actions">Upload actions</string>
@@ -1006,6 +1008,7 @@
 
     <!-- Downloads activity and service -->
     <string name="download_queue_error">Couldn\'t download chapters. You can try again in the downloads section</string>
+    <string name="download_queue_failed">Download failed</string>
     <string name="download_insufficient_space">Couldn\'t download chapters due to low storage space</string>
     <string name="download_queue_size_warning">Warning: large bulk downloads may lead to sources becoming slower and/or blocking %s. Tap to learn more.</string>
 
@@ -1281,9 +1284,14 @@
     <string name="remote_sync_no_categories">No categories selected for sync</string>
     <string name="remote_sync_waiting">Waiting to sync</string>
     <string name="remote_sync_cover_unsynced">Not synced</string>
+    <string name="library_filter_cloud_sync">Cloud sync status</string>
+    <string name="library_filter_synced">Synced</string>
     <string name="remote_sync_cover_cloud_only">Online only</string>
     <string name="remote_sync_cover_local_copy">Synced with a local copy</string>
     <string name="remote_sync_delete_folder">Also delete the manga folder from cloud storage</string>
     <string name="remote_sync_delete_success">Removed from the library and cloud storage.</string>
     <string name="remote_sync_delete_failed_count">Could not finish removing %1$d manga.</string>
+    <string name="cloud_sync_upload_conflict">When a cloud file already exists</string>
+    <string name="cloud_sync_upload_conflict_skip">Skip upload</string>
+    <string name="cloud_sync_upload_conflict_overwrite">Delete remote file and upload again</string>
 </resources>

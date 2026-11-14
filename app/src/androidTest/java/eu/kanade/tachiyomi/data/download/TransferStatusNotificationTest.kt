@@ -53,8 +53,9 @@ class TransferStatusNotificationTest {
                 assertEquals(Notifications.CHANNEL_TRANSFER_STATUS, idleCard.channelId)
                 assertTrue(idleCard.flags and Notification.FLAG_ONGOING_EVENT != 0)
                 assertEquals(NotificationHandler.openDownloadManagerPendingActivity(context), idleCard.contentIntent)
-                verifyTransferCounts(idleCard, 0, 0)
-                captureTransferNotificationShadeIfRequested("transfer-status-idle.png", 0, 0)
+                val title = context.stringResource(MR.strings.transfer_status_queue_count, 0, 0)
+                verifyTransferCounts(idleCard, title)
+                captureTransferNotificationShadeIfRequested("transfer-status-idle.png", title)
             }
 
             withTimeout(15_000) {
@@ -86,10 +87,9 @@ class TransferStatusNotificationTest {
 }
 
 @Suppress("DEPRECATION")
-internal fun verifyTransferCounts(notification: Notification, total: Int, active: Int) {
-    val context = InstrumentationRegistry.getInstrumentation().targetContext
+internal fun verifyTransferCounts(notification: Notification, expectedTitle: String) {
     assertEquals(
-        context.stringResource(MR.strings.transfer_status_count_summary, total, active),
+        expectedTitle,
         notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
     )
     assertNull(notification.extras.getCharSequence(Notification.EXTRA_TEXT))
@@ -100,12 +100,11 @@ internal fun verifyTransferCounts(notification: Notification, total: Int, active
     assertNull(notification.bigContentView)
 }
 
-internal suspend fun captureTransferNotificationShadeIfRequested(fileName: String, total: Int, active: Int) {
+internal suspend fun captureTransferNotificationShadeIfRequested(fileName: String, expectedTitle: String) {
     if (InstrumentationRegistry.getArguments().getString("notificationCapture") != "true") return
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val context = instrumentation.targetContext
     val automation = instrumentation.uiAutomation
-    val expectedText = context.stringResource(MR.strings.transfer_status_count_summary, total, active)
     fun statusBar(command: String) {
         ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("cmd statusbar $command")).use {
             it.readBytes()
@@ -114,7 +113,7 @@ internal suspend fun captureTransferNotificationShadeIfRequested(fileName: Strin
     statusBar("expand-notifications")
     try {
         withTimeout(10_000) {
-            while (automation.rootInActiveWindow?.containsText(expectedText) != true) {
+            while (automation.rootInActiveWindow?.containsText(expectedTitle) != true) {
                 delay(50)
             }
         }

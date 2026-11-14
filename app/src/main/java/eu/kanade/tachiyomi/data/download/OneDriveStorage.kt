@@ -16,7 +16,6 @@ import okhttp3.Response
 import org.json.JSONObject
 import tachiyomi.core.common.util.lang.withIOContext
 import java.io.DataInputStream
-import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration.Companion.seconds
 
@@ -43,29 +42,28 @@ internal class OneDriveStorage(
         directories.sortedBy { it.name.lowercase() }
     }
 
-    override suspend fun uploadCbz(
+    override suspend fun uploadFile(
         remoteDirectory: String,
         file: UniFile,
         fileName: String,
+        overwrite: Boolean,
         onProgress: (Int) -> Unit,
-    ) = withIOContext {
-        onProgress(0)
-        val created = upload(remoteDirectory, file, fileName, replace = false, onProgress)
-        if (!created && remoteFileSha256OrNull(remoteDirectory, fileName) != file.sha256()) {
-            throw CloudUploadConflictException(fileName)
+    ): Boolean = withIOContext {
+        val existing = lookup(itemUrl(remoteDirectory, fileName))
+        if (existing != null) {
+            check(existing.isLocalFile()) { "The OneDrive item is not a file in your drive" }
+            if (!overwrite) return@withIOContext false
+            val request = Request.Builder().url(itemById(existing.getString("id"))).delete()
+            existing.optString("eTag").takeIf { it.isNotBlank() }?.let { request.header("If-Match", it) }
+            graph(request.build()).use { response ->
+                if (response.code != 404) response.requireSuccess("file removal")
+            }
         }
-        onProgress(100)
-    }
-
-    override suspend fun replaceFile(remoteDirectory: String, file: UniFile, fileName: String) = withIOContext {
-        check(upload(remoteDirectory, file, fileName, replace = true) {})
-    }
-
-    override suspend fun remoteFileSha256OrNull(remoteDirectory: String, fileName: String): String? = withIOContext {
-        val digest = MessageDigest.getInstance("SHA-256")
-        readFile(remoteDirectory, fileName) { bytes, size -> digest.update(bytes, 0, size) }
-            .takeIf { it }
-            ?.let { digest.digest().toHexString() }
+        onProgress(0)
+        val uploaded = upload(remoteDirectory, file, fileName, onProgress)
+        if (!uploaded && overwrite) error("The remote file changed during upload: $fileName")
+        if (uploaded) onProgress(100)
+        uploaded
     }
 
     override suspend fun downloadCbz(
@@ -125,7 +123,6 @@ internal class OneDriveStorage(
         directory: String,
         file: UniFile,
         fileName: String,
-        replace: Boolean,
         onProgress: (Int) -> Unit,
     ): Boolean {
         requirePathSegment(fileName)
@@ -146,10 +143,10 @@ internal class OneDriveStorage(
             .addPathSegment("$fileName:")
             .addPathSegment("createUploadSession")
             .build()
-        val options = JSONObject().put("@microsoft.graph.conflictBehavior", if (replace) "replace" else "fail")
+        val options = JSONObject().put("@microsoft.graph.conflictBehavior", "fail")
         val request = Request.Builder().url(url).post(JSONObject().put("item", options).jsonBody()).build()
         val session = graph(request).use { response ->
-            if (response.code == 409 && !replace) return false
+            if (response.code == 409) return false
             response.requireSuccess("upload setup")
             JSONObject(response.body.string()).getString("uploadUrl").let(::requireHttpsUrl)
         }
@@ -170,7 +167,7 @@ internal class OneDriveStorage(
                         .put(bytes.toRequestBody(BINARY, 0, count))
                         .build()
                     transfer.newCall(put).await().use { response ->
-                        if (response.code == 409 && !replace) return false
+                        if (response.code == 409) return false
                         val expected = if (nextOffset == length) setOf(200, 201) else setOf(202)
                         if (response.code !in expected) throw response.httpFailure("upload")
                     }
@@ -244,12 +241,6 @@ internal class OneDriveStorage(
         if (response.code == 404) return null
         response.requireSuccess("file lookup")
         JSONObject(response.body.string())
-    }
-
-    private suspend fun readFile(directory: String, fileName: String, consume: (ByteArray, Int) -> Unit): Boolean {
-        val response = openFile(directory, fileName) ?: return false
-        response.use { copyContent(response, consume) }
-        return true
     }
 
     private suspend fun copyContent(response: Response, consume: (ByteArray, Int) -> Unit) {

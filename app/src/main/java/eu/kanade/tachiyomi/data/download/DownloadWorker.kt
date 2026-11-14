@@ -10,9 +10,9 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.data.notification.TransferTaskCounts
 import eu.kanade.tachiyomi.data.notification.transferStatusNotification
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.cancelNotification
@@ -32,8 +32,10 @@ import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.app.di.AppGraph
 import mihon.core.metro.metroGraph
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.i18n.MR
 import tachiyomi.i18n.R
 import kotlin.time.Duration.Companion.seconds
 
@@ -54,23 +56,27 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo =
-        foregroundInfo(graph.downloadManager.transferTaskCounts().first())
+        foregroundInfo(graph.downloadManager.downloadTaskCounts().first())
 
     override suspend fun doWork(): Result = coroutineScope {
         var networkIssue = networkIssue()
         if (networkIssue != null) {
+            logcat(LogPriority.WARN) { "Download worker stopped before starting: $networkIssue" }
             downloader.stop(networkIssue)
             return@coroutineScope Result.failure()
         }
 
-        if (!downloader.start()) return@coroutineScope Result.failure()
+        if (!downloader.start(retryFailed = inputData.getBoolean(RETRY_FAILED, false))) {
+            logcat(LogPriority.DEBUG) { "No new download run started" }
+            return@coroutineScope Result.failure()
+        }
 
         try {
             val initialForeground = getForegroundInfo()
             val isForeground = updateForeground(initialForeground)
             val notifications = launch {
                 var canUpdateForeground = isForeground
-                graph.downloadManager.transferTaskCounts().collect { counts ->
+                graph.downloadManager.downloadTaskCounts().collect { counts ->
                     val info = foregroundInfo(counts)
                     if (canUpdateForeground) canUpdateForeground = updateForeground(info)
                     if (!canUpdateForeground) applicationContext.notify(info.notificationId, info.notification)
@@ -101,7 +107,7 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
         Notifications.ID_DOWNLOAD_CHAPTER_PROGRESS,
         applicationContext.transferStatusNotification(
             Notifications.CHANNEL_DOWNLOADER_PROGRESS,
-            counts,
+            applicationContext.stringResource(MR.strings.transfer_status_download_count, counts.total, counts.active),
         ),
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0,
     )
@@ -129,10 +135,16 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
 
     companion object {
         private const val TAG = "Downloader"
+        private const val RETRY_FAILED = "retry_failed"
 
-        fun start(context: Context, policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE) {
+        fun start(
+            context: Context,
+            policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE,
+            retryFailed: Boolean = false,
+        ) {
             val request = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .addTag(TAG)
+                .setInputData(workDataOf(RETRY_FAILED to retryFailed))
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniqueWork(TAG, policy, request)

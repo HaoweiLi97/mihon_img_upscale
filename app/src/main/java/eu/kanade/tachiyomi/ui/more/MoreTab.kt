@@ -25,6 +25,7 @@ import eu.kanade.presentation.more.MoreScreen
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
@@ -34,6 +35,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import mihon.feature.support.SupportUsScreen
 import tachiyomi.i18n.MR
@@ -98,15 +101,21 @@ class MoreViewModel(
         viewModelScope.launch {
             combine(
                 downloadManager.isDownloaderRunning,
-                downloadManager.queueState,
-            ) { isRunning, downloadQueue -> Pair(isRunning, downloadQueue.size) }
-                .collectLatest { (isDownloading, downloadQueueSize) ->
-                    val pendingDownloadExists = downloadQueueSize != 0
-                    _downloadQueueState.value = when {
-                        !pendingDownloadExists -> DownloadQueueState.Stopped
-                        !isDownloading -> DownloadQueueState.Paused(downloadQueueSize)
-                        else -> DownloadQueueState.Downloading(downloadQueueSize)
-                    }
+                downloadManager.queueState.flatMapLatest { queue ->
+                    if (queue.isEmpty()) flowOf(emptyList()) else combine(queue.map(Download::statusFlow)) { it.toList() }
+                },
+            ) { isRunning, statuses ->
+                val failed = statuses.count { it == Download.State.ERROR }
+                val pending = statuses.size - failed
+                when {
+                    statuses.isEmpty() -> DownloadQueueState.Stopped
+                    pending == 0 -> DownloadQueueState.Failed(failed)
+                    isRunning -> DownloadQueueState.Downloading(pending, failed)
+                    else -> DownloadQueueState.Paused(pending, failed)
+                }
+            }
+                .collectLatest { state ->
+                    _downloadQueueState.value = state
                 }
         }
     }
@@ -114,6 +123,7 @@ class MoreViewModel(
 
 sealed interface DownloadQueueState {
     data object Stopped : DownloadQueueState
-    data class Paused(val pending: Int) : DownloadQueueState
-    data class Downloading(val pending: Int) : DownloadQueueState
+    data class Failed(val failed: Int) : DownloadQueueState
+    data class Paused(val pending: Int, val failed: Int) : DownloadQueueState
+    data class Downloading(val pending: Int, val failed: Int) : DownloadQueueState
 }

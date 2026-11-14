@@ -22,8 +22,6 @@ import mihon.app.di.appGraph
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 
-internal data class TransferTaskCounts(val total: Int, val active: Int)
-
 @OptIn(ExperimentalCoroutinesApi::class)
 internal fun Context.observeIdleTransferNotification(scope: CoroutineScope, refresh: Flow<Int>) {
     val graph = appGraph
@@ -33,19 +31,21 @@ internal fun Context.observeIdleTransferNotification(scope: CoroutineScope, refr
         combine(
             DownloadWorker.isRunningFlow(this),
             CloudUploadWorker.isRunningFlow(this),
-            manager.transferTaskCounts(),
-        ) { downloading, uploading, counts ->
-            if (downloading || uploading) null else counts
+            manager.downloadTaskCounts(),
+            manager.uploadTaskCounts(),
+        ) { downloading, uploading, downloadCounts, uploadCounts ->
+            if (downloading || uploading) null else downloadCounts.total to uploadCounts.total
         }.distinctUntilChanged()
     }
-    combine(status, refresh) { queues, _ -> queues }
-        .onEach { queues ->
-            if (queues == null) {
+    combine(status, refresh) { counts, _ -> counts }
+        .onEach { counts ->
+            if (counts == null) {
                 cancelNotification(Notifications.ID_TRANSFER_STATUS)
             } else {
+                val title = stringResource(MR.strings.transfer_status_queue_count, counts.first, counts.second)
                 notify(
                     Notifications.ID_TRANSFER_STATUS,
-                    transferStatusNotification(Notifications.CHANNEL_TRANSFER_STATUS, queues),
+                    transferStatusNotification(Notifications.CHANNEL_TRANSFER_STATUS, title),
                 )
             }
         }
@@ -54,12 +54,12 @@ internal fun Context.observeIdleTransferNotification(scope: CoroutineScope, refr
 
 internal fun Context.transferStatusNotification(
     channel: String,
-    counts: TransferTaskCounts,
+    title: String,
 ): Notification {
     val openQueue = NotificationHandler.openDownloadManagerPendingActivity(this)
     return notificationBuilder(channel) {
         setSmallIcon(R.drawable.ic_mihon)
-        setContentTitle(stringResource(MR.strings.transfer_status_count_summary, counts.total, counts.active))
+        setContentTitle(title)
         setContentIntent(openQueue)
         setCategory(NotificationCompat.CATEGORY_STATUS)
         setShowWhen(false)

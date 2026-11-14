@@ -85,7 +85,8 @@ internal class TransferHeaderHolder(view: View, adapter: FlexibleAdapter<*>) : F
                         it.status == Download.State.QUEUE || it.status == Download.State.UPLOADING
                     }
                     findItem(R.id.resume_transfers).isEnabled = uploads.any {
-                        it.status == Download.State.PAUSED || it.status == Download.State.ERROR
+                        it.status == Download.State.QUEUE || it.status == Download.State.PAUSED ||
+                            it.status == Download.State.ERROR
                     }
                 } else {
                     val running = viewModel.isDownloaderRunning

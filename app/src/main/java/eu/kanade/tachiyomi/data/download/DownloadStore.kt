@@ -174,7 +174,7 @@ class DownloadStore(
                     obj.explicitCloudSync,
                     obj.explicitSyncTarget,
                 )
-                if (obj.failed && download.isCloudSync) download.status = Download.State.ERROR
+                if (obj.failed) download.status = Download.State.ERROR
                 downloads.add(download)
                 restoredKeys.add(getKey(download))
             }
@@ -197,7 +197,7 @@ class DownloadStore(
             counter++,
             download.automaticSyncTarget,
             download.explicitCloudSync,
-            failed = download.isCloudSync && download.status == Download.State.ERROR,
+            failed = download.status == Download.State.ERROR,
             explicitSyncTarget = download.explicitSyncTarget,
         )
         return json.encodeToString(obj)

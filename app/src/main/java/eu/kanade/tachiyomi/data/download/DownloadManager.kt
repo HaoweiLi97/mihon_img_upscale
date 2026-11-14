@@ -6,17 +6,18 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.model.Download
-import eu.kanade.tachiyomi.data.notification.TransferTaskCounts
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
@@ -72,10 +73,10 @@ class DownloadManager(
     /**
      * Starts the download worker, which runs the downloader.
      */
-    fun startDownloads() {
+    fun startDownloads(retryFailed: Boolean = false) {
         if (downloader.isRunning) return
 
-        DownloadWorker.start(context)
+        DownloadWorker.start(context, retryFailed = retryFailed)
     }
 
     /**
@@ -541,21 +542,9 @@ class DownloadManager(
             queue.map { download -> download.statusFlow.map { download } }.merge()
         }
 
-    internal fun transferTaskCounts(): Flow<TransferTaskCounts> =
-        kotlinx.coroutines.flow.combine(queueState, uploadQueueState) { downloads, uploads -> downloads + uploads }
-            .flatMapLatest { queue ->
-                if (queue.isEmpty()) {
-                    kotlinx.coroutines.flow.flowOf(TransferTaskCounts(0, 0))
-                } else {
-                    kotlinx.coroutines.flow.combine(queue.map(Download::statusFlow)) { states ->
-                        TransferTaskCounts(
-                            total = states.count { it != Download.State.DOWNLOADED },
-                            active = states.count { it == Download.State.DOWNLOADING || it == Download.State.UPLOADING },
-                        )
-                    }
-                }
-            }
-            .distinctUntilChanged()
+    internal fun downloadTaskCounts(): Flow<TransferTaskCounts> = queueState.taskCounts(Download.State.DOWNLOADING)
+
+    internal fun uploadTaskCounts(): Flow<TransferTaskCounts> = uploadQueueState.taskCounts(Download.State.UPLOADING)
 
     fun progressFlow(): Flow<Download> = kotlinx.coroutines.flow.combine(queueState, uploadQueueState) {
             downloads,
@@ -579,6 +568,22 @@ class DownloadManager(
             )
         }
 }
+
+internal data class TransferTaskCounts(val total: Int, val active: Int)
+
+private fun Flow<List<Download>>.taskCounts(activeState: Download.State): Flow<TransferTaskCounts> =
+    flatMapLatest { queue ->
+        if (queue.isEmpty()) {
+            flowOf(TransferTaskCounts(0, 0))
+        } else {
+            combine(queue.map(Download::statusFlow)) { states ->
+                TransferTaskCounts(
+                    total = states.count { it != Download.State.DOWNLOADED },
+                    active = states.count { it == activeState },
+                )
+            }
+        }
+    }.distinctUntilChanged()
 
 internal data class CloudSyncQueueResult(
     val downloadsQueued: Int = 0,

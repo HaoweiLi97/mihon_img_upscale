@@ -49,6 +49,9 @@ class DownloadQueueViewModel(
             val item = adapter?.getItem(position) as? DownloadItem ?: return
             val download = item.download
             when (menuItem.itemId) {
+                R.id.retry_download -> viewModelScope.launch {
+                    downloadManager.startDownloadNow(download.chapter.id)
+                }
                 R.id.resume_upload -> viewModelScope.launch {
                     downloadManager.resumeCloudUpload(download.chapter.id)
                 }
@@ -78,7 +81,7 @@ class DownloadQueueViewModel(
     }
 
     fun startDownloads() {
-        downloadManager.startDownloads()
+        downloadManager.startDownloads(retryFailed = true)
     }
 
     fun pauseDownloads() {
