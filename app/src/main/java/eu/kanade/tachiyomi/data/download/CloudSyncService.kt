@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.domain.download.service.CloudSyncStorage
+import tachiyomi.domain.download.service.ChapterArchiveFormat
 import tachiyomi.domain.download.service.DownloadPreferences
 import kotlin.time.Duration.Companion.minutes
 
@@ -88,7 +89,7 @@ internal fun DownloadPreferences.cloudStorageConfig(storage: CloudSyncStorage): 
 }
 
 internal fun DownloadPreferences.activeCloudSyncTarget(): CloudSyncTarget? {
-    if (!saveChaptersAsCBZ.get()) return null
+    if (chapterArchiveFormat().get() != ChapterArchiveFormat.CBZ) return null
     val storage = cloudSyncStorage().get()
     val config = cloudStorageConfig(storage) ?: return null
     val destination = cloudSyncDestination(storage).get()
@@ -100,7 +101,7 @@ internal fun DownloadPreferences.activeCloudSyncTarget(): CloudSyncTarget? {
 }
 
 internal fun DownloadPreferences.cloudSyncSettingsChanges() = merge(
-    saveChaptersAsCBZ.changes(),
+    chapterArchiveFormat().changes(),
     cloudSyncStorage().changes(),
     cloudSyncEnabled().changes(),
     cloudSyncUrl().changes(),

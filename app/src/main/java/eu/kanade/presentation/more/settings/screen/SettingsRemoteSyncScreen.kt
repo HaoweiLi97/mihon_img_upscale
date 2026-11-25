@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.download.service.CloudSyncStorage
+import tachiyomi.domain.download.service.ChapterArchiveFormat
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -61,9 +62,9 @@ object SettingsRemoteSyncScreen : SearchableSettings {
         val graph = LocalContext.current.appGraph
         val categories by graph.getCategories.subscribe().collectAsState(initial = emptyList())
         val participatingIds by graph.downloadPreferences.remoteSyncCategories().collectAsState()
-        val saveAsCbz by graph.downloadPreferences.saveChaptersAsCBZ.collectAsState()
+        val archiveFormat by graph.downloadPreferences.chapterArchiveFormat().collectAsState()
         return listOf(
-            getCloudSyncGroup(graph.downloadPreferences, saveAsCbz, categories, participatingIds),
+            getCloudSyncGroup(graph.downloadPreferences, archiveFormat == ChapterArchiveFormat.CBZ, categories, participatingIds),
             getCategorySyncGroup(categories.filter { it.id.toString() in participatingIds }),
         )
     }

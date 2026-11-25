@@ -433,7 +433,7 @@ class DownloadCache(
                         when {
                             it.name?.endsWith(Downloader.TMP_DIR_SUFFIX) == true -> null
                             it.isDirectory -> it.name
-                            it.isFile && it.extension == "cbz" -> it.nameWithoutExtension
+                            it.isFile && (it.extension == "cbz" || it.extension == "cstr") -> it.nameWithoutExtension
                             else -> null
                         }
                     }

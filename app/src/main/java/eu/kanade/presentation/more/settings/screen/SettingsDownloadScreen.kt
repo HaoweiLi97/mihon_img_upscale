@@ -40,6 +40,7 @@ import kotlinx.coroutines.withContext
 import mihon.app.di.appGraph
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.download.service.ChapterArchiveFormat
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.pluralStringResource
@@ -65,7 +66,8 @@ object SettingsDownloadScreen : SearchableSettings {
         val lowPowerMode by downloadPreferences.lowPowerMode.collectAsState()
         val parallelSourceLimit by downloadPreferences.parallelSourceLimit.collectAsState()
         val parallelPageLimit by downloadPreferences.parallelPageLimit.collectAsState()
-        val saveChaptersAsCBZ by downloadPreferences.saveChaptersAsCBZ.collectAsState()
+        val archivePreference = remember(downloadPreferences) { downloadPreferences.chapterArchiveFormat() }
+        val archiveFormat by archivePreference.collectAsState()
         return listOf(
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.downloadOnlyOverWifi,
@@ -81,20 +83,26 @@ object SettingsDownloadScreen : SearchableSettings {
                 title = stringResource(MR.strings.pref_download_organize_by_category),
                 subtitle = stringResource(MR.strings.pref_download_organize_by_category_summary),
             ),
-            Preference.PreferenceItem.SwitchPreference(
-                preference = downloadPreferences.saveChaptersAsCBZ,
-                title = stringResource(MR.strings.save_chapter_as_cbz),
+            Preference.PreferenceItem.ListPreference(
+                preference = archivePreference,
+                entries = mapOf(
+                    ChapterArchiveFormat.NONE to stringResource(MR.strings.none),
+                    ChapterArchiveFormat.CBZ to "CBZ",
+                    ChapterArchiveFormat.CSTR to "CSTR",
+                ),
+                title = stringResource(MR.strings.pref_download_archive_format),
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.addRandomNonceToCBZ(),
                 title = stringResource(MR.strings.add_random_nonce_to_cbz),
                 subtitle = stringResource(MR.strings.add_random_nonce_to_cbz_summary),
-                visible = saveChaptersAsCBZ,
+                visible = archiveFormat == ChapterArchiveFormat.CBZ,
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.splitTallImages,
                 title = stringResource(MR.strings.split_tall_images),
                 subtitle = stringResource(MR.strings.split_tall_images_summary),
+                visible = archiveFormat != ChapterArchiveFormat.CSTR,
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.lowPowerMode,

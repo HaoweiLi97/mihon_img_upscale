@@ -12,6 +12,11 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.24-beta.1] - 2026-11-25
+
+### Added
+- Choose None, CBZ, or CSTR as the chapter download format. CSTR uses WebP quality 85 and supports offline reading.
+
 ## [v1.3.23] - 2026-11-14
 
 ### Added

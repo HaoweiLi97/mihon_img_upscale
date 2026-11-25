@@ -282,17 +282,20 @@ class DownloadProvider(
 
     /**
      * Returns the output names for the chapters of a manga.
-     * CBZ files use a plain name unless multiple chapters would use the same name.
+     * Archives use a plain name unless multiple chapters would use the same name.
      */
-    internal fun chapterOutputNames(chapters: List<Chapter>, asCbz: Boolean): Map<Long, String> {
+    internal fun chapterOutputNames(chapters: List<Chapter>, asCbz: Boolean): Map<Long, String> =
+        chapterOutputNames(chapters, "cbz".takeIf { asCbz })
+
+    internal fun chapterOutputNames(chapters: List<Chapter>, archiveExtension: String?): Map<Long, String> {
         val names = chapters.associate { chapter ->
-            chapter.id to if (asCbz) {
+            chapter.id to if (archiveExtension != null) {
                 getChapterDirName(chapter.name, chapter.scanlator, chapter.url, enableChapterNameHash = false)
             } else {
                 getChapterDirName(chapter.name, chapter.scanlator, chapter.url)
             }
         }
-        if (!asCbz) return names
+        if (archiveExtension == null) return names
 
         val counts = names.values.groupingBy(String::lowercase).eachCount()
         return chapters.associate { chapter ->
@@ -302,13 +305,13 @@ class DownloadProvider(
             } else {
                 plain
             }
-            chapter.id to "$name.cbz"
+            chapter.id to "$name.$archiveExtension"
         }
     }
 
-    internal suspend fun chapterOutputName(chapter: Chapter, asCbz: Boolean): String {
-        val chapters = if (asCbz) getChaptersByMangaId.await(chapter.mangaId) else emptyList()
-        return chapterOutputNames((listOf(chapter) + chapters).distinctBy { it.url }, asCbz).getValue(chapter.id)
+    internal suspend fun chapterOutputName(chapter: Chapter, archiveExtension: String?): String {
+        val chapters = if (archiveExtension != null) getChaptersByMangaId.await(chapter.mangaId) else emptyList()
+        return chapterOutputNames((listOf(chapter) + chapters).distinctBy { it.url }, archiveExtension).getValue(chapter.id)
     }
 
     internal suspend fun getChapterLookupNames(chapter: Chapter): List<String> =
@@ -409,11 +412,13 @@ class DownloadProvider(
             add(chapterDirName)
             // Archived chapters
             add("$chapterDirName.cbz")
+            add("$chapterDirName.cstr")
 
             // any legacy names
             legacyChapterDirNames.forEach {
                 add(it)
                 add("$it.cbz")
+                add("$it.cstr")
             }
         }
     }

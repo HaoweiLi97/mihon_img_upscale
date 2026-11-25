@@ -8,6 +8,12 @@ import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
 import java.security.MessageDigest
 
+enum class ChapterArchiveFormat(val extension: String?) {
+    NONE(null),
+    CBZ("cbz"),
+    CSTR("cstr"),
+}
+
 @Inject
 @SingleIn(AppScope::class)
 class DownloadPreferences(
@@ -19,7 +25,12 @@ class DownloadPreferences(
         true,
     )
 
-    val saveChaptersAsCBZ: Preference<Boolean> = preferenceStore.getBoolean("save_chapter_as_cbz", true)
+    private val legacySaveChaptersAsCbz = preferenceStore.getBoolean("save_chapter_as_cbz", true)
+
+    fun chapterArchiveFormat(): Preference<ChapterArchiveFormat> = preferenceStore.getEnum(
+        "chapter_archive_format",
+        if (legacySaveChaptersAsCbz.get()) ChapterArchiveFormat.CBZ else ChapterArchiveFormat.NONE,
+    )
 
     val showIdleTransferNotification: Preference<Boolean> =
         preferenceStore.getBoolean("show_idle_transfer_notification", true)

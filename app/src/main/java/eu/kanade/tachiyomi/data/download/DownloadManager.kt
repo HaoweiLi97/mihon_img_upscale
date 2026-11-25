@@ -497,8 +497,7 @@ class DownloadManager(
 
         val newName = provider.chapterOutputName(
             newChapter,
-            asCbz =
-            oldDownload.isFile && oldDownload.extension == "cbz",
+            archiveExtension = oldDownload.extension.takeIf { oldDownload.isFile && (it == "cbz" || it == "cstr") },
         )
 
         if (oldDownload.name == newName) return
@@ -506,7 +505,7 @@ class DownloadManager(
 
         if (oldDownload.renameTo(newName)) {
             cache.removeChapter(oldChapter, manga)
-            cache.addChapter(newName, mangaDir, manga)
+            cache.addChapter(if (oldDownload.isFile) newName.substringBeforeLast('.') else newName, mangaDir, manga)
         } else {
             logcat(LogPriority.ERROR) { "Could not rename downloaded chapter: ${oldNames.joinToString()}" }
         }

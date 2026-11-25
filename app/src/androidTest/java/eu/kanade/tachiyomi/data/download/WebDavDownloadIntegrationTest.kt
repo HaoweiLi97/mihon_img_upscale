@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -105,6 +106,7 @@ import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.repository.ChapterRepository
+import tachiyomi.domain.download.service.ChapterArchiveFormat
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibraryManga
@@ -580,17 +582,62 @@ class WebDavDownloadIntegrationTest {
     }
 
     @Test
+    fun downloadsUsingTheSelectedArchiveFormat() = runBlocking {
+        val fixture = createDownloader()
+        val downloader = fixture.downloader
+        assertEquals(ChapterArchiveFormat.CBZ, downloads.chapterArchiveFormat().get())
+        preferences.getBoolean("save_chapter_as_cbz", true).set(false)
+        assertEquals(ChapterArchiveFormat.NONE, downloads.chapterArchiveFormat().get())
+        downloads.chapterArchiveFormat().set(ChapterArchiveFormat.CSTR)
+
+        downloader.queueChapters(manga, listOf(chapters.first()), autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+
+        val cstr = root.walkTopDown().single { it.extension == "cstr" }
+        assertEquals("Chapter 1.cstr", cstr.name)
+        val archive = CstrArchive(checkNotNull(UniFile.fromFile(cstr)))
+        assertEquals(1, archive.pageCount)
+        archive.openPage(0).use { page ->
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeStream(page, null, options)
+            assertEquals("image/webp", options.outMimeType)
+            assertEquals(32, options.outWidth)
+            assertEquals(32, options.outHeight)
+        }
+        assertFalse(root.walkTopDown().any { it.name.endsWith(".cstr_tmp") })
+
+        downloads.chapterArchiveFormat().set(ChapterArchiveFormat.CBZ)
+        downloader.queueChapters(manga, listOf(chapters.last()), autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+
+        val cbz = root.walkTopDown().single { it.extension == "cbz" }
+        assertEquals("Chapter 2.cbz", cbz.name)
+        ZipFile(cbz).use { assertTrue(it.getEntry("001.png") != null) }
+
+        fixture.manager.deleteChapters(listOf(chapters.last()), manga, source)
+        downloads.chapterArchiveFormat().set(ChapterArchiveFormat.NONE)
+        downloader.queueChapters(manga, listOf(chapters.last()), autoStart = false)
+        assertTrue(downloader.start())
+        await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        assertTrue(root.walkTopDown().any { it.name == "001.png" && it.parentFile?.name == "Chapter 2" })
+        assertFalse(cbz.exists())
+        assertTrue(cstr.isFile)
+    }
+
+    @Test
     fun automaticScopePausesQueuedDownloadsAndUploadsAcrossRestart() = runBlocking {
         var fixture = createDownloader()
         var downloader = fixture.downloader
         // Simulate an older chapter saved as a directory before CBZ was enabled.
-        downloads.saveChaptersAsCBZ.set(false)
+        downloads.chapterArchiveFormat().set(ChapterArchiveFormat.NONE)
         downloader.queueChapters(manga, listOf(chapters.first()), autoStart = false)
         assertTrue(downloader.start())
         await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
         val legacyPage = root.walkTopDown().single { it.name == "001.png" }
 
-        downloads.saveChaptersAsCBZ.set(true)
+        downloads.chapterArchiveFormat().set(ChapterArchiveFormat.CBZ)
         downloads.cloudSyncUrl().set(server.url)
         downloads.cloudSyncUsername().set("user")
         downloads.cloudSyncPassword().set("pass")

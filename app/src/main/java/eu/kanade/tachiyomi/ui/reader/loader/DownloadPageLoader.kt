@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.loader
 import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.data.download.CstrArchive
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
@@ -11,6 +12,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.util.waifu2x.ImageEnhancer
 import mihon.core.archive.archiveReader
+import tachiyomi.core.common.storage.extension
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.injectLazy
 
@@ -47,6 +49,17 @@ internal class DownloadPageLoader(
     }
 
     private suspend fun getPagesFromArchive(file: UniFile): List<ReaderPage> {
+        if (file.extension == "cstr") {
+            val archive = CstrArchive(file)
+            return List(archive.pageCount) { index ->
+                ReaderPage(index, stream = {
+                    check(!isRecycled)
+                    archive.openPage(index)
+                }).apply {
+                    status = Page.State.Ready
+                }
+            }
+        }
         val loader = ArchivePageLoader(file.archiveReader(context)).also { archivePageLoader = it }
         return loader.getPages()
     }

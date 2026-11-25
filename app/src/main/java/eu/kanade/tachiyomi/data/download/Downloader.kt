@@ -766,6 +766,7 @@ class Downloader(
             val file = files[chapter.id] ?: return@mapNotNull null
             val name = file.name ?: return@mapNotNull null
             val isDirectory = file.isDirectory
+            if (!isDirectory && !isCloudArchiveName(name)) return@mapNotNull null
             CloudStorageCandidate(
                 chapter,
                 file,
@@ -1236,9 +1237,9 @@ class Downloader(
             return
         }
 
-        val asCbz = downloadPreferences.saveChaptersAsCBZ.get()
-        val outputName = provider.chapterOutputName(download.chapter, asCbz)
-        val chapterDirname = if (asCbz) outputName.removeSuffix(".cbz") else outputName
+        val archiveExtension = downloadPreferences.chapterArchiveFormat().get().extension
+        val outputName = provider.chapterOutputName(download.chapter, archiveExtension)
+        val chapterDirname = archiveExtension?.let { outputName.removeSuffix(".$it") } ?: outputName
 
         // Being stopped after the download is moved into place but before it's indexed leaves a finished download
         // on disk that is still queued, and downloading it again would save a second copy next to it
@@ -1247,7 +1248,7 @@ class Downloader(
             mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
             existingChapter.name?.let { name ->
                 cache.addChapter(
-                    if (existingChapter.isFile) name.removeSuffix(".cbz") else name,
+                    if (existingChapter.isFile) name.substringBeforeLast('.') else name,
                     mangaDir,
                     download.manga,
                 )
@@ -1257,11 +1258,15 @@ class Downloader(
         }
 
         try {
-            if (asCbz && mangaDir.findFile(outputName) != null) {
+            if (archiveExtension != null && mangaDir.findFile(outputName) != null) {
                 throw IOException("Chapter download target already exists: $outputName")
             }
             download.status = Download.State.DOWNLOADING
-            val syncedArchive = downloadSyncedChapter(download, mangaDir, "$chapterDirname.cbz")
+            val syncedArchive = if (archiveExtension != "cstr") {
+                downloadSyncedChapter(download, mangaDir, "$chapterDirname.cbz")
+            } else {
+                null
+            }
             if (syncedArchive != null) {
                 mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
                 cache.addChapter(chapterDirname, mangaDir, download.manga)
@@ -1300,7 +1305,7 @@ class Downloader(
                             }
                         }
 
-                        getOrDownloadImage(page, download, tmpDir)
+                        getOrDownloadImage(page, download, tmpDir, splitTallImages = archiveExtension != "cstr")
                     }.invokeOnCompletion { slots.release() }
                 }
                 pagesStarted.complete(Unit)
@@ -1321,11 +1326,13 @@ class Downloader(
             )
 
             // Only rename the directory if it's downloaded
-            val downloadedChapter = if (asCbz) {
-                archiveChapter(mangaDir, chapterDirname, tmpDir)
-            } else {
-                tmpDir.renameTo(chapterDirname)
-                mangaDir.findFile(chapterDirname) ?: error("Unable to finalize downloaded chapter: $chapterDirname")
+            val downloadedChapter = when (archiveExtension) {
+                "cbz" -> archiveChapter(mangaDir, chapterDirname, tmpDir)
+                "cstr" -> archiveCstrChapter(mangaDir, outputName, tmpDir, download.chapter.name)
+                else -> {
+                    tmpDir.renameTo(chapterDirname)
+                    mangaDir.findFile(chapterDirname) ?: error("Unable to finalize downloaded chapter: $chapterDirname")
+                }
             }
             cache.addChapter(chapterDirname, mangaDir, download.manga)
 
@@ -1401,7 +1408,7 @@ class Downloader(
      * @param download the download of the page.
      * @param tmpDir the temporary directory of the download.
      */
-    private suspend fun getOrDownloadImage(page: Page, download: Download, tmpDir: UniFile) {
+    private suspend fun getOrDownloadImage(page: Page, download: Download, tmpDir: UniFile, splitTallImages: Boolean) {
         // If the image URL is empty, do nothing
         if (page.imageUrl == null) {
             return
@@ -1426,7 +1433,7 @@ class Downloader(
             }
 
             // When the page is ready, set page path, progress (just in case) and status
-            splitTallImageIfNeeded(page, tmpDir)
+            if (splitTallImages) splitTallImageIfNeeded(page, tmpDir)
 
             page.uri = file.uri
             page.progress = 100
@@ -1592,6 +1599,28 @@ class Downloader(
         tmpDir.delete()
         archive
     }
+
+    private suspend fun archiveCstrChapter(mangaDir: UniFile, name: String, tmpDir: UniFile, title: String): UniFile =
+        withChapterArchiveLock {
+            val tempName = name + TMP_DIR_SUFFIX
+            mangaDir.findFile(tempName)?.delete()
+            val tempFile = mangaDir.createFile(tempName) ?: throw IOException("Unable to create $tempName")
+            try {
+                val pages = tmpDir.listFiles().orEmpty()
+                    .filter {
+                        val fileName = it.name.orEmpty()
+                        it.isFile && fileName.firstOrNull()?.isDigit() == true && !fileName.endsWith(".tmp")
+                    }
+                    .sortedWith { first, second ->
+                        first.name.orEmpty().compareToCaseInsensitiveNaturalOrder(second.name.orEmpty())
+                    }
+                writeCstrArchive(context.cacheDir, tempFile, pages, title, tmpDir.findFile(COMIC_INFO_FILE))
+                coroutineContext.ensureActive()
+                finalizeDownloadFile(tempFile, mangaDir, name).also { tmpDir.delete() }
+            } finally {
+                mangaDir.findFile(tempName)?.delete()
+            }
+        }
 
     private suspend inline fun <T> withChapterArchiveLock(action: () -> T): T =
         if (downloadPreferences.lowPowerMode.get()) chapterArchiveLock.withLock(action = action) else action()
@@ -2138,7 +2167,13 @@ class Downloader(
     ): UniFile {
         val chapters = getChaptersByMangaId.await(manga.id, applyScanlatorFilter = false)
             .sortedWith(getChapterSort(manga))
-        val outputNames = provider.chapterOutputNames(chapters, downloadPreferences.saveChaptersAsCBZ.get())
+        val archiveExtension = downloadPreferences.chapterArchiveFormat().get().extension
+        val outputNames = provider.chapterOutputNames(chapters, archiveExtension)
+        val localNames = if (archiveExtension == "cstr" || mangaDir.listFiles().orEmpty().any { it.name.orEmpty().endsWith(".cstr") }) {
+            provider.findDownloadedChapters(chapters, listOf(mangaDir)).mapValues { (_, file) -> file.name }
+        } else {
+            emptyMap()
+        }
         val coverAsset = resolveMetaInfoCoverAsset(manga, source)
         val manifest = MetaInfoManifest(
             schemaVersion = 1,
@@ -2162,7 +2197,7 @@ class Downloader(
                     scanlator = chapter.scanlator,
                     url = source.getChapterUrl(chapter.toSChapter()).trim(),
                     sourceOrder = chapter.sourceOrder,
-                    file = outputNames.getValue(chapter.id),
+                    file = localNames[chapter.id] ?: outputNames.getValue(chapter.id),
                 )
             },
         )
