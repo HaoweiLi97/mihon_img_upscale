@@ -8,12 +8,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hippo.unifile.UniFile
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import tachiyomi.domain.chapter.model.Chapter
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -22,6 +24,22 @@ import java.util.Base64
 
 @RunWith(AndroidJUnit4::class)
 class CstrArchiveTest {
+    @Test
+    fun distinguishesCollectedVolumesFromInstallments() {
+        for ((title, type, expected) in listOf(
+            Triple("第２卷", "volume", 2.0),
+            Triple("Vol. 4", "volume", 4.0),
+            Triple("第2卷 第12.5話", "chapter", 12.5),
+            Triple("Vol. 2 Ch. 12", "chapter", 12.0),
+        )) {
+            val entry = JSONObject().put("chapterNumber", 99)
+            writeCstrEntryType(entry, Chapter.create().copy(name = title, chapterNumber = 99.0))
+            assertEquals(type, entry.getString("type"))
+            assertEquals(expected, entry.getDouble(if (type == "volume") "volumeNumber" else "chapterNumber"), 0.0)
+            assertTrue(entry.has("volumeNumber") != entry.has("chapterNumber"))
+        }
+    }
+
     @Test
     fun readsPagesBeforeThumbnailData() {
         withArchive(archiveBytes()) { archive ->
@@ -77,10 +95,23 @@ class CstrArchiveTest {
             assertTrue(packed.createNewFile())
             val destination = checkNotNull(UniFile.fromFile(packed))
             val pages = (originals + rotated).map { checkNotNull(UniFile.fromFile(it)) }
-            writeCstrArchive(cache, destination, pages, "Originals", null)
+            writeCstrArchive(cache, destination, pages, JSONObject().put("title", "Originals"), null)
 
-            val header = ByteBuffer.wrap(packed.readBytes(), 0, 32).order(ByteOrder.LITTLE_ENDIAN)
-            assertEquals(1, header.getShort(6).toInt())
+            val bytes = packed.readBytes()
+            val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            assertEquals(3, header.getShort(6).toInt())
+            assertEquals(48L, header.getLong(16))
+            val coverOffset = 48 + header.getInt(24) + header.getInt(28)
+            assertEquals(coverOffset.toLong(), header.getLong(32))
+            val coverSize = header.getInt(40)
+            assertTrue(coverSize in 1..128 * 1024)
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, coverOffset, coverSize, options)
+            assertEquals("image/webp", options.outMimeType)
+            assertEquals(4, options.outWidth)
+            assertEquals(3, options.outHeight)
+            assertEquals(options.outWidth, header.getShort(44).toInt())
+            assertEquals(options.outHeight, header.getShort(46).toInt())
             val archive = CstrArchive(destination)
             assertEquals(listOf("jpg", "png", "webp", "avif", "webp"), (0 until archive.pageCount).map(archive::pageExtension))
             originals.forEachIndexed { index, original ->

@@ -24,6 +24,8 @@ import kotlin.coroutines.coroutineContext
 import kotlin.math.ceil
 
 private const val HEADER_SIZE = 32
+private const val COVER_DESCRIPTOR_SIZE = 16
+private const val FLAG_COVER = 2
 private const val PAGE_SIZE = 16
 private const val CHUNK_SIZE = 20
 private const val THUMBNAIL_RECORD_SIZE = 16
@@ -42,7 +44,7 @@ private val MAGIC = byteArrayOf(0x43, 0x53, 0x54, 0x52)
 private data class CstrPage(val width: Int, val height: Int, val firstChunk: Int, val chunkCount: Int)
 private data class CstrChunk(val height: Int, val codec: CstrCodec, val offset: Long, val size: Int)
 private data class CstrThumbnail(val width: Int, val height: Int, val offset: Long, val size: Int)
-private data class EncodedThumbnail(val width: Int, val height: Int, val bytes: ByteArray)
+private data class EncodedPreview(val width: Int, val height: Int, val bytes: ByteArray)
 
 internal fun fitsCstrImage(width: Int, height: Int): Boolean =
     width in 1..WEBP_MAX_DIMENSION && height in 1..WEBP_MAX_DIMENSION && width.toLong() * height <= MAX_CHUNK_PIXELS
@@ -51,18 +53,19 @@ internal suspend fun writeCstrArchive(
     cacheDir: File,
     destination: UniFile,
     images: List<UniFile>,
-    title: String,
+    metadataObject: JSONObject,
     comicInfo: UniFile?,
 ) {
     val pageTablesSize = images.size.toLong() * (PAGE_SIZE + THUMBNAIL_RECORD_SIZE)
     requireCstr(images.isNotEmpty() && pageTablesSize + images.size.toLong() * CHUNK_SIZE <= MAX_INDEX_SIZE)
-    val metadata = JSONObject().put("title", title).apply {
+    val metadata = metadataObject.apply {
         comicInfo?.openInputStream()?.bufferedReader()?.use { put("comicInfo", it.readText()) }
     }.toString().toByteArray(Charsets.UTF_8)
-        .takeIf { it.size <= MAX_METADATA_SIZE } ?: ByteArray(0)
+    if (metadata.size > MAX_METADATA_SIZE) throw IOException("CSTR metadata exceeds 256 KiB")
     val pages = mutableListOf<CstrPage>()
     val chunks = mutableListOf<CstrChunk>()
     val thumbnails = mutableListOf<CstrThumbnail>()
+    var cover: EncodedPreview? = null
     var offset = 0L
     var thumbnailOffset = 0L
     val payload = File.createTempFile("cstr-body-", ".tmp", cacheDir)
@@ -76,6 +79,7 @@ internal suspend fun writeCstrArchive(
                     val firstChunk = chunks.size
                     val (width, height) = encodeCstrImage(
                         image,
+                        writeCover = if (pages.isEmpty()) ({ cover = it }) else null,
                         writeThumbnail = { thumbnail ->
                             thumbnails += CstrThumbnail(thumbnail.width, thumbnail.height, thumbnailOffset, thumbnail.bytes.size)
                             previewOutput.write(thumbnail.bytes)
@@ -94,10 +98,14 @@ internal suspend fun writeCstrArchive(
         }
 
         val indexSize = pageTablesSize.toInt() + chunks.size * CHUNK_SIZE
-        val index = ByteBuffer.allocate(HEADER_SIZE + indexSize).order(ByteOrder.LITTLE_ENDIAN)
-        index.put(MAGIC).putShort(1).putShort(FLAG_THUMBNAILS.toShort())
-            .putInt(pages.size).putInt(chunks.size).putLong(HEADER_SIZE.toLong())
+        val bookCover = checkNotNull(cover)
+        val indexOffset = HEADER_SIZE + COVER_DESCRIPTOR_SIZE
+        val index = ByteBuffer.allocate(indexOffset + indexSize).order(ByteOrder.LITTLE_ENDIAN)
+        index.put(MAGIC).putShort(1).putShort((FLAG_THUMBNAILS or FLAG_COVER).toShort())
+            .putInt(pages.size).putInt(chunks.size).putLong(indexOffset.toLong())
             .putInt(indexSize).putInt(metadata.size)
+        index.putLong(indexOffset.toLong() + indexSize + metadata.size).putInt(bookCover.bytes.size)
+            .putShort(bookCover.width.toShort()).putShort(bookCover.height.toShort())
         pages.forEach { page ->
             index.putInt(page.width).putInt(page.height).putInt(page.firstChunk).putInt(page.chunkCount)
         }
@@ -111,6 +119,7 @@ internal suspend fun writeCstrArchive(
         destination.openOutputStream().buffered().use { output ->
             output.write(index.array())
             output.write(metadata)
+            output.write(bookCover.bytes)
             payload.copyCstrDataTo(output)
             previews.copyCstrDataTo(output)
         }
@@ -135,7 +144,8 @@ private suspend fun File.copyCstrDataTo(output: OutputStream) {
 @Suppress("DEPRECATION")
 private suspend fun encodeCstrImage(
     image: UniFile,
-    writeThumbnail: (EncodedThumbnail) -> Unit,
+    writeCover: ((EncodedPreview) -> Unit)?,
+    writeThumbnail: (EncodedPreview) -> Unit,
     writeChunk: (Int, CstrCodec, ByteArray) -> Unit,
 ): Pair<Int, Int> {
     val orientation = try {
@@ -191,6 +201,7 @@ private suspend fun encodeCstrImage(
             val width = decoder?.width ?: checkNotNull(bitmap).width
             val height = decoder?.height ?: checkNotNull(bitmap).height
             requireCstr(width in 1..WEBP_MAX_DIMENSION && height > 0)
+            writeCover?.invoke(encodeCover(width, height, decoder, bitmap))
             writeThumbnail(encodeThumbnail(width, height, decoder, bitmap))
             // Android reports an undefined orientation for images without an EXIF orientation tag.
             val original = if (transform.isIdentity) image.readCstrOriginal(width, height) else null
@@ -232,12 +243,44 @@ private suspend fun encodeCstrImage(
 }
 
 @Suppress("DEPRECATION")
+private fun encodeCover(width: Int, height: Int, decoder: BitmapRegionDecoder?, bitmap: Bitmap?): EncodedPreview {
+    val scale = minOf(1.0, 640.0 / width, 909.0 / height)
+    var targetWidth = (width * scale).toInt().coerceAtLeast(1)
+    var targetHeight = (height * scale).toInt().coerceAtLeast(1)
+    val source = if (decoder != null) {
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = Integer.highestOneBit(maxOf(width / targetWidth, height / targetHeight))
+        }
+        decoder.decodeRegion(Rect(0, 0, width, height), options) ?: throw IOException("Unable to decode CSTR cover")
+    } else {
+        checkNotNull(bitmap)
+    }
+    try {
+        while (true) {
+            val resized = Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
+            val bytes = try {
+                resized.encodeWebp(WEBP_QUALITY)
+            } finally {
+                if (resized !== source) resized.recycle()
+            }
+            if (bytes.size <= 128 * 1024) return EncodedPreview(targetWidth, targetHeight, bytes)
+            val shrink = minOf((targetWidth * 3 / 4).coerceAtLeast(1).toDouble() / width,
+                (targetHeight * 3 / 4).coerceAtLeast(1).toDouble() / height)
+            targetWidth = (width * shrink).toInt().coerceAtLeast(1)
+            targetHeight = (height * shrink).toInt().coerceAtLeast(1)
+        }
+    } finally {
+        if (source !== bitmap) source.recycle()
+    }
+}
+
+@Suppress("DEPRECATION")
 private fun encodeThumbnail(
     width: Int,
     height: Int,
     decoder: BitmapRegionDecoder?,
     bitmap: Bitmap?,
-): EncodedThumbnail {
+): EncodedPreview {
     val cropWidth = minOf(width.toLong(), height * 2L).toInt()
     val cropHeight = minOf(height.toLong(), width * 2L).toInt()
     val left = (width - cropWidth) / 2
@@ -258,7 +301,7 @@ private fun encodeThumbnail(
         try {
             val bytes = thumbnail.encodeWebp(THUMBNAIL_QUALITY)
             requireCstr(bytes.size in 1..MAX_THUMBNAIL_SIZE)
-            return EncodedThumbnail(targetWidth, targetHeight, bytes)
+            return EncodedPreview(targetWidth, targetHeight, bytes)
         } finally {
             if (thumbnail !== crop) thumbnail.recycle()
         }
@@ -294,8 +337,9 @@ internal class CstrArchive(private val file: UniFile) {
             requireCstr(MAGIC.indices.all { header.get() == MAGIC[it] })
             requireCstr(header.short.toInt() == 1)
             val flags = header.short.toInt()
-            requireCstr(flags and FLAG_THUMBNAILS.inv() == 0)
+            requireCstr(flags and (FLAG_THUMBNAILS or FLAG_COVER).inv() == 0)
             val hasThumbnails = flags and FLAG_THUMBNAILS != 0
+            val hasCover = flags and FLAG_COVER != 0
             val pageCount = header.int
             val chunkCount = header.int
             val indexOffset = header.long
@@ -303,11 +347,22 @@ internal class CstrArchive(private val file: UniFile) {
             val metaSize = header.int.toLong() and 0xFFFFFFFFL
             val pageIndexSize = PAGE_SIZE + if (hasThumbnails) THUMBNAIL_RECORD_SIZE else 0
             requireCstr(
-                pageCount > 0 && chunkCount >= pageCount && indexOffset == HEADER_SIZE.toLong() &&
+                pageCount > 0 && chunkCount >= pageCount && indexOffset == (HEADER_SIZE + if (hasCover) COVER_DESCRIPTOR_SIZE else 0).toLong() &&
                     indexSize in 1..MAX_INDEX_SIZE &&
                     indexSize.toLong() == pageCount.toLong() * pageIndexSize + chunkCount.toLong() * CHUNK_SIZE,
             )
-            payloadStart = indexOffset + indexSize + metaSize
+            val metadataEnd = indexOffset + indexSize + metaSize
+            val coverSize = if (hasCover) {
+                val descriptor = input.readBuffer(COVER_DESCRIPTOR_SIZE)
+                requireCstr(descriptor.long == metadataEnd)
+                descriptor.int.also { size ->
+                    requireCstr(size in 1..2 * 1024 * 1024)
+                    requireCstr(descriptor.short.toInt() in 1..2560 && descriptor.short.toInt() in 1..2560)
+                }
+            } else {
+                0
+            }
+            payloadStart = metadataEnd + coverSize
             requireCstr(payloadStart < fileSize)
             val index = input.readBuffer(indexSize)
             var nextChunk = 0

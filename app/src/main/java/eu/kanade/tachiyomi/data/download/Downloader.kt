@@ -8,6 +8,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.getComicInfo
+import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.CoverCache
@@ -24,6 +25,7 @@ import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -71,7 +73,9 @@ import mihon.core.archive.archiveReader
 import mihon.core.metro.AppCoroutineScope
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
+import org.json.JSONObject
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
@@ -1088,7 +1092,9 @@ class Downloader(
                 CloudSyncChapterAction.Upload -> {
                     if (enqueueDownloadedChapterUpload(download, downloadedChapter!!, target)) {
                         uploadsQueued++
-                        directUploadDownload = directUploadDownload ?: download
+                        if (!downloadedChapter.extension.equals("cstr", ignoreCase = true)) {
+                            directUploadDownload = directUploadDownload ?: download
+                        }
                     } else {
                         failed++
                     }
@@ -1347,7 +1353,7 @@ class Downloader(
             // Only rename the directory if it's downloaded
             val downloadedChapter = when (archiveExtension) {
                 "cbz" -> archiveChapter(mangaDir, chapterDirname, tmpDir)
-                "cstr" -> archiveCstrChapter(mangaDir, outputName, tmpDir, download.chapter.name)
+                "cstr" -> archiveCstrChapter(mangaDir, outputName, tmpDir, download)
                 else -> {
                     tmpDir.renameTo(chapterDirname)
                     mangaDir.findFile(chapterDirname) ?: error("Unable to finalize downloaded chapter: $chapterDirname")
@@ -1689,7 +1695,7 @@ class Downloader(
         archive
     }
 
-    private suspend fun archiveCstrChapter(mangaDir: UniFile, name: String, tmpDir: UniFile, title: String): UniFile =
+    private suspend fun archiveCstrChapter(mangaDir: UniFile, name: String, tmpDir: UniFile, download: Download): UniFile =
         withChapterArchiveLock {
             val tempName = name + TMP_DIR_SUFFIX
             mangaDir.findFile(tempName)?.delete()
@@ -1703,7 +1709,29 @@ class Downloader(
                     .sortedWith { first, second ->
                         first.name.orEmpty().compareToCaseInsensitiveNaturalOrder(second.name.orEmpty())
                     }
-                writeCstrArchive(context.cacheDir, tempFile, pages, title, tmpDir.findFile(COMIC_INFO_FILE))
+                val manga = download.manga
+                val chapter = download.chapter
+                val mangaUrl = cstrSourceUrl(manga.url) { download.source.getMangaUrl(manga.toSManga()) }
+                val chapterUrl = cstrSourceUrl(chapter.url) { download.source.getChapterUrl(chapter.toSChapter()) }
+                val manifest = MetaInfoManifest(
+                    schemaVersion = 1,
+                    manga = manga.toMetaInfo(download.source, cover = null, url = mangaUrl),
+                    chapters = listOf(chapter.toMetaInfo(url = chapterUrl, file = name)),
+                )
+                val metadata = JSONObject(json.encodeToString(manifest)).put("title", chapter.name)
+                val direction = when (ReadingMode.fromPreference(manga.readingMode.toInt())) {
+                    ReadingMode.LEFT_TO_RIGHT -> "ltr"
+                    ReadingMode.RIGHT_TO_LEFT -> "rtl"
+                    ReadingMode.VERTICAL, ReadingMode.WEBTOON, ReadingMode.CONTINUOUS_VERTICAL -> "ttb"
+                    ReadingMode.DEFAULT -> null
+                }
+                metadata.put("readingDirection", direction)
+                val language = download.source.lang
+                if (language !in setOf("all", "other") && java.util.Locale.forLanguageTag(language).language.isNotEmpty()) {
+                    metadata.getJSONObject("manga").put("language", language)
+                }
+                writeCstrEntryType(metadata.getJSONArray("chapters").getJSONObject(0), chapter)
+                writeCstrArchive(context.cacheDir, tempFile, pages, metadata, tmpDir.findFile(COMIC_INFO_FILE))
                 coroutineContext.ensureActive()
                 finalizeDownloadFile(tempFile, mangaDir, name).also { tmpDir.delete() }
             } finally {
@@ -1782,7 +1810,9 @@ class Downloader(
                 reportCloudUploadError(download, error)
             }
         }
-        updateMetaInfo(upload, mangaDir, target)
+        if (chapterFile.isDirectory || !chapterFile.extension.equals("cstr", ignoreCase = true)) {
+            updateMetaInfo(upload, mangaDir, target)
+        }
         completeDownload(download, owner)
     }
 
@@ -2276,26 +2306,10 @@ class Downloader(
         val coverAsset = resolveMetaInfoCoverAsset(manga, source)
         val manifest = MetaInfoManifest(
             schemaVersion = 1,
-            manga = MetaInfoManga(
-                id = manga.id,
-                title = manga.title,
-                author = manga.author,
-                artist = manga.artist,
-                status = manga.status.toMetaInfoStatus(),
-                description = manga.description,
-                tags = manga.genre.orEmpty(),
-                source = source.name,
-                url = source.getMangaUrl(manga.toSManga()).trim(),
-                cover = coverAsset?.entryName,
-            ),
+            manga = manga.toMetaInfo(source, coverAsset?.entryName),
             chapters = chapters.map { chapter ->
-                MetaInfoChapter(
-                    id = chapter.id,
-                    title = chapter.name,
-                    chapterNumber = chapter.chapterNumber.takeIf { it >= 0 },
-                    scanlator = chapter.scanlator,
-                    url = source.getChapterUrl(chapter.toSChapter()).trim(),
-                    sourceOrder = chapter.sourceOrder,
+                chapter.toMetaInfo(
+                    url = source.getChapterUrl(chapter.toSChapter()),
                     file = remoteNames[chapter.id]?.fileName
                         ?: legacyRemoteNames[chapter.id]?.takeIf {
                             target != null && downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id)
@@ -2618,6 +2632,62 @@ private fun Exception.isRetryableCloudUploadFailure(): Boolean = when (this) {
     is IOException -> true
     else -> false
 }
+
+private const val CSTR_NUMBER = """([0-9]+(?:\.[0-9]+)?)"""
+private val cstrVolume = Regex(
+    """(?:\bvol(?:ume)?\.?\s*$CSTR_NUMBER\b|(?:第\s*)?$CSTR_NUMBER\s*[卷巻])""",
+    RegexOption.IGNORE_CASE,
+)
+private val cstrChapter = Regex(
+    """(?:\bch(?:apter)?\.?\s*$CSTR_NUMBER\b|(?:第\s*)?$CSTR_NUMBER\s*[话話回章])""",
+    RegexOption.IGNORE_CASE,
+)
+
+internal fun writeCstrEntryType(entry: JSONObject, chapter: Chapter) {
+    val title = java.text.Normalizer.normalize(chapter.name, java.text.Normalizer.Form.NFKC)
+    fun number(pattern: Regex): Double? = pattern.find(title)?.groupValues
+        ?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toDoubleOrNull()?.takeIf { it.isFinite() }
+    val volume = number(cstrVolume)
+    val installment = number(cstrChapter)
+    if (volume != null && installment == null) {
+        entry.remove("chapterNumber")
+        entry.put("type", "volume").put("volumeNumber", volume)
+    } else {
+        entry.put("type", "chapter")
+        val number = installment ?: chapter.chapterNumber.takeIf { it.isFinite() && it >= 0 }
+        entry.put("chapterNumber", number as Any?)
+    }
+}
+
+private inline fun cstrSourceUrl(fallback: String, resolve: () -> String): String = try {
+    resolve()
+} catch (error: Exception) {
+    if (error is CancellationException) throw error
+    fallback
+}
+
+private fun Manga.toMetaInfo(source: HttpSource, cover: String?, url: String = source.getMangaUrl(toSManga())) = MetaInfoManga(
+    id = id,
+    title = title,
+    author = author,
+    artist = artist,
+    status = status.toMetaInfoStatus(),
+    description = description,
+    tags = genre.orEmpty(),
+    source = source.name,
+    url = url.trim(),
+    cover = cover,
+)
+
+private fun Chapter.toMetaInfo(url: String, file: String) = MetaInfoChapter(
+    id = id,
+    title = name,
+    chapterNumber = chapterNumber.takeIf { it >= 0 },
+    scanlator = scanlator,
+    url = url.trim(),
+    sourceOrder = sourceOrder,
+    file = file,
+)
 
 @Serializable
 private data class MetaInfoManifest(

@@ -12,6 +12,12 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.24-beta.4] - 2026-11-25
+
+### Changed
+- Embed an independent first-page WebP cover in new CSTR downloads.
+- Store manga and chapter metadata in each CSTR file and identify volumes and chapters separately. CSTR downloads and uploads no longer need a separate meta.info file.
+
 ## [v1.3.24-beta.3] - 2026-11-25
 
 ### Changed

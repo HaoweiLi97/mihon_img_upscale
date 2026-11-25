@@ -89,6 +89,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okio.buffer
 import okio.source
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -122,6 +123,8 @@ import tachiyomi.domain.storage.service.StoragePreferences
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.repository.TrackRepository
 import tachiyomi.i18n.MR
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
@@ -644,6 +647,16 @@ class WebDavDownloadIntegrationTest {
 
         val cstr = root.walkTopDown().single { it.extension == "cstr" }
         assertEquals("Chapter 1.cstr", cstr.name)
+        val bytes = cstr.readBytes()
+        val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val metaStart = header.getLong(16).toInt() + header.getInt(24)
+        val metadata = JSONObject(bytes.decodeToString(metaStart, metaStart + header.getInt(28)))
+        assertEquals(manga.title, metadata.getJSONObject("manga").getString("title"))
+        assertEquals("en", metadata.getJSONObject("manga").getString("language"))
+        assertEquals("chapter", metadata.getJSONArray("chapters").getJSONObject(0).getString("type"))
+        assertEquals(chapters.first().id, metadata.getJSONArray("chapters").getJSONObject(0).getLong("id"))
+        assertFalse(root.walkTopDown().any { it.name == "meta.info" })
+        assertEquals(1, source.metaInfoFailures.get())
         val archive = CstrArchive(checkNotNull(UniFile.fromFile(cstr)))
         assertEquals(1, archive.pageCount)
         archive.openPage(0).use { page ->
