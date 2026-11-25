@@ -12,6 +12,12 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.24-beta.3] - 2026-11-25
+
+### Changed
+- Keep compatible JPEG, PNG, WebP, and AVIF pages byte for byte in CSTR downloads. Use WebP quality 85 when conversion or splitting is needed.
+- Embed CSTR thumbnails by default and show them while dragging the reader page slider.
+
 ## [v1.3.24-beta.2] - 2026-11-25
 
 ### Fixed

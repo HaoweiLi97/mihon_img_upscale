@@ -56,6 +56,7 @@ internal class DownloadPageLoader(
                     check(!isRecycled)
                     archive.openPage(index)
                 }).apply {
+                    loadPreview = { if (isRecycled) null else archive.readPreview(index) }
                     status = Page.State.Ready
                 }
             }

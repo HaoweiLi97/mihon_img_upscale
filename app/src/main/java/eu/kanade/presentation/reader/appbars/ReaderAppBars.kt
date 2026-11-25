@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader.appbars
 
+import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -64,6 +65,7 @@ fun ReaderAppBars(
     enabledPrevious: Boolean,
     currentPage: Int,
     totalPages: Int,
+    loadPagePreview: (() -> Bitmap?)?,
     onPageIndexChange: (Int) -> Unit,
     onPageIndexChangeFinished: () -> Unit,
 
@@ -131,6 +133,7 @@ fun ReaderAppBars(
                                     enabledPrevious = enabledPrevious,
                                     currentPage = currentPage,
                                     totalPages = totalPages,
+                                    loadPagePreview = loadPagePreview,
                                     onPageIndexChange = onPageIndexChange,
                                     onPageIndexChangeFinished = onPageIndexChangeFinished,
                                 )
@@ -159,6 +162,7 @@ fun ReaderAppBars(
                         enabledPrevious = enabledPrevious,
                         currentPage = currentPage,
                         totalPages = totalPages,
+                        loadPagePreview = loadPagePreview,
                         onPageIndexChange = onPageIndexChange,
                         onPageIndexChangeFinished = onPageIndexChangeFinished,
                     )

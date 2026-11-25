@@ -624,7 +624,7 @@ class WebDavDownloadIntegrationTest {
         downloads.chapterArchiveFormat().set(ChapterArchiveFormat.NONE)
         assertEquals(target, downloads.activeCloudSyncTarget()?.id)
         download(second)
-        assertTrue(root.walkTopDown().any { it.name == "001.webp" && it.parentFile?.name == "Chapter 2" })
+        assertTrue(root.walkTopDown().any { it.name == "001.png" && it.parentFile?.name == "Chapter 2" })
         assertFalse(root.walkTopDown().any { it.extension == "cstr" })
         assertArrayEquals(oldBytes, server.files[oldPath])
     }
@@ -649,7 +649,7 @@ class WebDavDownloadIntegrationTest {
         archive.openPage(0).use { page ->
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeStream(page, null, options)
-            assertEquals("image/webp", options.outMimeType)
+            assertEquals("image/png", options.outMimeType)
             assertEquals(32, options.outWidth)
             assertEquals(32, options.outHeight)
         }

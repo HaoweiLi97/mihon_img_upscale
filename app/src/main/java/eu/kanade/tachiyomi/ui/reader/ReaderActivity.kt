@@ -562,6 +562,7 @@ class ReaderActivity : BaseActivity() {
             enabledPrevious = state.viewerChapters?.prevChapter != null,
             currentPage = state.currentPage,
             totalPages = state.totalPages,
+            loadPagePreview = state.currentChapter?.pages?.getOrNull(state.currentPage - 1)?.loadPreview,
             onPageIndexChange = {
                 isScrollingThroughPages = true
                 moveToPageIndex(it)

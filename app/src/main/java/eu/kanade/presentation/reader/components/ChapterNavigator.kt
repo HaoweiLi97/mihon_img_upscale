@@ -1,9 +1,12 @@
 package eu.kanade.presentation.reader.components
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -29,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,7 +41,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.tooling.preview.Preview
@@ -45,11 +52,15 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 import eu.kanade.presentation.util.isTabletUi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.SkipNext
 import mihon.icons.materialsymbols.rounded.SkipPrevious
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
+import java.io.IOException
 import kotlin.math.roundToInt
 
 enum class ChapterNavigatorType {
@@ -74,6 +85,7 @@ fun ChapterNavigator(
     onPageIndexChange: (Int) -> Unit,
     onPageIndexChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
+    loadPagePreview: (() -> Bitmap?)? = null,
 ) {
     val haptic = LocalHapticFeedback.current
 
@@ -114,40 +126,80 @@ fun ChapterNavigator(
 
     val onPageChange: (Int) -> Unit = { onPageIndexChange(it - 1) }
 
+    val preview = loadPagePreview.takeIf { sliderDragged }
     if (type.isHorizontal()) {
-        HorizontalChapterNavigator(
-            isRtl = type == ChapterNavigatorType.HORIZONTAL_RTL,
-            state = state,
-            onNextChapter = onNextChapter,
-            enabledNext = enabledNext,
-            onPreviousChapter = onPreviousChapter,
-            enabledPrevious = enabledPrevious,
-            currentPage = currentPage,
-            totalPages = totalPages,
-            onPageChange = onPageChange,
-            onPageChangeFinished = onPageIndexChangeFinished,
-            interactionSource = interactionSource,
-            mainAxisPadding = mainAxisPadding,
-            backgroundColor = backgroundColor,
-            buttonColor = buttonColor,
+        Column(
             modifier = modifier,
-        )
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (preview != null) NavigatorPagePreview(preview, backgroundColor)
+            HorizontalChapterNavigator(
+                isRtl = type == ChapterNavigatorType.HORIZONTAL_RTL,
+                state = state,
+                onNextChapter = onNextChapter,
+                enabledNext = enabledNext,
+                onPreviousChapter = onPreviousChapter,
+                enabledPrevious = enabledPrevious,
+                currentPage = currentPage,
+                totalPages = totalPages,
+                onPageChange = onPageChange,
+                onPageChangeFinished = onPageIndexChangeFinished,
+                interactionSource = interactionSource,
+                mainAxisPadding = mainAxisPadding,
+                backgroundColor = backgroundColor,
+                buttonColor = buttonColor,
+            )
+        }
     } else {
-        VerticalChapterNavigator(
-            state = state,
-            onNextChapter = onNextChapter,
-            enabledNext = enabledNext,
-            onPreviousChapter = onPreviousChapter,
-            enabledPrevious = enabledPrevious,
-            currentPage = currentPage,
-            totalPages = totalPages,
-            onPageChange = onPageChange,
-            onPageChangeFinished = onPageIndexChangeFinished,
-            interactionSource = interactionSource,
-            mainAxisPadding = mainAxisPadding,
-            backgroundColor = backgroundColor,
-            buttonColor = buttonColor,
+        Row(
             modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            VerticalChapterNavigator(
+                state = state,
+                onNextChapter = onNextChapter,
+                enabledNext = enabledNext,
+                onPreviousChapter = onPreviousChapter,
+                enabledPrevious = enabledPrevious,
+                currentPage = currentPage,
+                totalPages = totalPages,
+                onPageChange = onPageChange,
+                onPageChangeFinished = onPageIndexChangeFinished,
+                interactionSource = interactionSource,
+                mainAxisPadding = mainAxisPadding,
+                backgroundColor = backgroundColor,
+                buttonColor = buttonColor,
+            )
+            if (preview != null) NavigatorPagePreview(preview, backgroundColor)
+        }
+    }
+}
+
+@Composable
+private fun NavigatorPagePreview(loadPreview: () -> Bitmap?, backgroundColor: Color) {
+    val bitmap by produceState<Bitmap?>(null, loadPreview) {
+        value = null
+        delay(60)
+        value = withContext(Dispatchers.IO) {
+            try {
+                loadPreview()
+            } catch (_: IOException) {
+                null
+            }
+        }
+    }
+    bitmap?.let { image ->
+        Image(
+            bitmap = remember(image) { image.asImageBitmap() },
+            contentDescription = null,
+            modifier = Modifier
+                .size(96.dp, 128.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(backgroundColor)
+                .padding(4.dp),
+            contentScale = ContentScale.Fit,
         )
     }
 }

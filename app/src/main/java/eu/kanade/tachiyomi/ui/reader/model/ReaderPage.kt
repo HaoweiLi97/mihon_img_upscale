@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.model
 
+import android.graphics.Bitmap
 import eu.kanade.tachiyomi.source.model.Page
 import java.io.InputStream
 
@@ -22,6 +23,7 @@ open class ReaderPage(
 
     var enhancementStream: (() -> InputStream)? = null
     var enhancementKeySuffix: String = ""
+    var loadPreview: (() -> Bitmap?)? = null
 
     fun isFromSamePage(other: ReaderPage): Boolean {
         return index == other.index && chapter.chapter.id == other.chapter.chapter.id
