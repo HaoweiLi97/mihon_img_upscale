@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.domain.download.service.CloudSyncStorage
-import tachiyomi.domain.download.service.ChapterArchiveFormat
 import tachiyomi.domain.download.service.DownloadPreferences
 import kotlin.time.Duration.Companion.minutes
 
@@ -49,7 +48,7 @@ internal interface CloudStorage {
         overwrite: Boolean,
         onProgress: (Int) -> Unit,
     ): Boolean
-    suspend fun downloadCbz(remoteDirectory: String, fileName: String, file: UniFile): Boolean
+    suspend fun downloadArchive(remoteDirectory: String, fileName: String, file: UniFile): Boolean
     suspend fun remoteFileSize(remoteDirectory: String, fileName: String): Long?
 
     /** Returns null for a missing file. A failed lookup or an unknown size throws. */
@@ -89,7 +88,6 @@ internal fun DownloadPreferences.cloudStorageConfig(storage: CloudSyncStorage): 
 }
 
 internal fun DownloadPreferences.activeCloudSyncTarget(): CloudSyncTarget? {
-    if (chapterArchiveFormat().get() != ChapterArchiveFormat.CBZ) return null
     val storage = cloudSyncStorage().get()
     val config = cloudStorageConfig(storage) ?: return null
     val destination = cloudSyncDestination(storage).get()
@@ -101,7 +99,6 @@ internal fun DownloadPreferences.activeCloudSyncTarget(): CloudSyncTarget? {
 }
 
 internal fun DownloadPreferences.cloudSyncSettingsChanges() = merge(
-    chapterArchiveFormat().changes(),
     cloudSyncStorage().changes(),
     cloudSyncEnabled().changes(),
     cloudSyncUrl().changes(),

@@ -66,7 +66,7 @@ internal class OneDriveStorage(
         uploaded
     }
 
-    override suspend fun downloadCbz(
+    override suspend fun downloadArchive(
         remoteDirectory: String,
         fileName: String,
         file: UniFile,

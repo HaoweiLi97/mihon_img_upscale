@@ -1188,7 +1188,6 @@
     <string name="cloud_sync_connection_failed">Cloud sync connection failed</string>
     <string name="cloud_sync_not_configured">Not configured</string>
     <string name="cloud_sync_connected">Connected as %s</string>
-    <string name="cloud_sync_requires_cbz">Enable CBZ archive saving to use cloud sync</string>
     <string name="cloud_sync_storage">Cloud storage</string>
     <string name="cloud_sync_webdav_connection">WebDAV connection</string>
     <string name="cloud_sync_onedrive_connection">OneDrive account</string>

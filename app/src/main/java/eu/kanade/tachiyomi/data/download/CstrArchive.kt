@@ -247,6 +247,19 @@ internal class CstrArchive(private val file: UniFile) {
         }
     }
 
+    fun pageExtension(index: Int): String {
+        val page = pages[index]
+        return if (page.chunkCount > 1) {
+            "png"
+        } else {
+            when (chunks[page.firstChunk].codec) {
+                WEBP_CODEC -> "webp"
+                2 -> "avif"
+                else -> "png"
+            }
+        }
+    }
+
     fun openPage(index: Int): InputStream {
         val page = pages[index]
         val first = chunks[page.firstChunk]

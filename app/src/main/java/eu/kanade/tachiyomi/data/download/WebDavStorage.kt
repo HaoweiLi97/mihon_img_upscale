@@ -136,7 +136,7 @@ internal class WebDavStorage(
 
     private data class UploadDestination(val etag: String?)
 
-    override suspend fun downloadCbz(
+    override suspend fun downloadArchive(
         remoteDirectory: String,
         fileName: String,
         file: UniFile,

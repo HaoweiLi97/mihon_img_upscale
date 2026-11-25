@@ -888,7 +888,10 @@ class Downloader(
                     return@mapNotNull null
                 }
                 val name = upload?.fileName ?: candidate.remoteName
-                if (!isCloudArchiveName(name) || (upload == null && name !in legacyNames.getValue(chapterId))) {
+                if (!isCloudArchiveName(name) ||
+                    (!candidate.isDirectory && archiveExtension(name) != archiveExtension(candidate.remoteName)) ||
+                    (upload == null && name !in legacyNames.getValue(chapterId))
+                ) {
                     if (results[chapterId] == CloudStorageReleaseReason.RemoteMissing) {
                         results[chapterId] = CloudStorageReleaseReason.RemoteMismatch
                     }
@@ -1015,6 +1018,7 @@ class Downloader(
             emptySet()
         }
         val overwrite = automaticTarget == null && downloadPreferences.cloudSyncOverwriteUploads().get()
+        val previousUploads = if (overwrite) downloadPreferences.cloudChapterUploads(manga.id, target.id) else emptyMap()
         val pending = uniqueChapters.filter {
             (overwrite || "${target.id}:${it.id}" !in uploaded) && it.id !in alreadyUploading
         }
@@ -1060,14 +1064,23 @@ class Downloader(
             )
             if (!canTransfer(download)) return@forEach
             val downloadedChapter = localFiles[chapter.id]
+            val previousUpload = previousUploads[chapter.id]
+            val localName = downloadedChapter?.name
+            if (previousUpload != null && localName != null) {
+                val uploadName = if (downloadedChapter.isDirectory) "$localName.cbz" else localName
+                if (archiveExtension(uploadName) != archiveExtension(previousUpload.fileName)) {
+                    skipped++
+                    return@forEach
+                }
+            }
             when (
                 cloudSyncChapterAction(
                     isUploaded = (!overwrite || downloadedChapter == null) &&
                         downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id),
                     hasLocalDownload = downloadedChapter != null,
-                    isLocalCbz =
+                    isLocalArchive =
                     downloadedChapter?.isFile == true &&
-                        downloadedChapter.name?.endsWith(".cbz", ignoreCase = true) == true,
+                        isCloudArchiveName(downloadedChapter.name.orEmpty()),
                 )
             ) {
                 CloudSyncChapterAction.Skip -> skipped++
@@ -1082,7 +1095,7 @@ class Downloader(
                 }
                 CloudSyncChapterAction.UnsupportedLocalDownload -> {
                     val mangaDir = mangaDirs.firstOrNull()
-                    if (automaticTarget != null && downloadedChapter?.isDirectory == true && mangaDir != null &&
+                    if (downloadedChapter?.isDirectory == true && mangaDir != null &&
                         enqueueChapterDirectoryUpload(download, downloadedChapter, mangaDir, target)
                     ) {
                         uploadsQueued++
@@ -1140,7 +1153,7 @@ class Downloader(
 
         val allChapters = chapters + getChaptersByMangaId.await(manga.id)
         val candidates = provider.getChapterLookupNames(missing, allChapters)
-            .mapValues { (_, names) -> names.filter { it.endsWith(".cbz") } }
+            .mapValues { (_, names) -> names.filter(::isCloudArchiveName) }
             .filterValues { it.isNotEmpty() }.toMutableMap()
         if (candidates.isEmpty()) return
 
@@ -1161,13 +1174,19 @@ class Downloader(
             for (directory in directories) {
                 val names = candidates.values.flatten().toSet()
                 val listing = storage.listRemoteFileSizes(directory, names) ?: continue
-                val files = listing.filter { (name, size) ->
-                    (size ?: storage.remoteFileSize(directory, name))?.let { it > 0 } == true
-                }.keys
-                val matches = candidates.filterValues { names -> names.any { it in files } }.keys
+                val files = buildMap {
+                    listing.forEach { (name, size) ->
+                        val actualSize = size ?: storage.remoteFileSize(directory, name)
+                        if (actualSize != null && actualSize > 0) put(name, actualSize)
+                    }
+                }
+                val matches = candidates.mapNotNull { (id, names) ->
+                    val name = names.firstOrNull { it in files } ?: return@mapNotNull null
+                    id to CloudChapterUpload(directory, name, files.getValue(name))
+                }.toMap()
                 if (matches.isEmpty()) continue
                 put(directory, matches)
-                candidates.keys.removeAll(matches)
+                candidates.keys.removeAll(matches.keys)
                 if (candidates.isEmpty()) break
             }
         }
@@ -1184,11 +1203,15 @@ class Downloader(
                 return@withLock
             }
             val latestFolders = downloadPreferences.remoteSyncMangaFolders().get()
-            for ((folder, ids) in discovered) {
+            val uploads = downloadPreferences.cloudChapterUploads(manga.id, target.id)
+            for ((folder, matches) in discovered) {
                 if (sharedDirectories.any { it.equals(folder, ignoreCase = true) }) continue
                 if (isRemoteMangaFolderShared(folder, target.id, prefix, latestFolders)) continue
                 downloadPreferences.markRemoteSyncMangaFolder(manga.id, target.id, folder)
-                downloadPreferences.markChaptersUploadedToCloud(ids, target.id)
+                matches.forEach { (id, upload) ->
+                    if (id !in uploads) downloadPreferences.recordCloudChapterUpload(manga.id, id, target.id, upload)
+                }
+                downloadPreferences.markChaptersUploadedToCloud(matches.keys, target.id)
             }
         }
     }
@@ -1262,11 +1285,7 @@ class Downloader(
                 throw IOException("Chapter download target already exists: $outputName")
             }
             download.status = Download.State.DOWNLOADING
-            val syncedArchive = if (archiveExtension != "cstr") {
-                downloadSyncedChapter(download, mangaDir, "$chapterDirname.cbz")
-            } else {
-                null
-            }
+            val syncedArchive = downloadSyncedChapter(download, mangaDir, chapterDirname, archiveExtension)
             if (syncedArchive != null) {
                 mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
                 cache.addChapter(chapterDirname, mangaDir, download.manga)
@@ -1348,54 +1367,124 @@ class Downloader(
         }
     }
 
-    private suspend fun downloadSyncedChapter(download: Download, mangaDir: UniFile, fileName: String): UniFile? {
+    private suspend fun downloadSyncedChapter(
+        download: Download,
+        mangaDir: UniFile,
+        chapterDirname: String,
+        archiveExtension: String?,
+    ): UniFile? {
         if (!downloadPreferences.cloudSyncPreferRemoteDownloads().get()) return null
         val target = cloudSyncTargetOrNull() ?: return null
         if (download.cloudSyncTarget != null && download.cloudSyncTarget != target.id) return null
         val chapter = download.chapter
+        val manga = download.manga
         if (!downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id)) return null
 
-        val tempName = fileName + TMP_DIR_SUFFIX
+        val tempName = "$chapterDirname.remote$TMP_DIR_SUFFIX"
         mangaDir.findFile(tempName)?.delete()
         val tempFile = mangaDir.createFile(tempName) ?: return null
         try {
-            val downloaded = try {
-                val prefix = "${target.id}:${download.manga.id}:"
-                val recordedFolders = downloadPreferences.remoteSyncMangaFolders().get()
-                val directories = buildSet {
-                    add(cloudRemoteDirectory(download, target))
-                    recordedFolders
-                        .filter { it.startsWith(prefix) }
-                        .forEach { add(it.removePrefix(prefix)) }
-                }.filter { folder ->
-                    isInSyncDestination(folder, target) &&
-                        !isRemoteMangaFolderShared(folder, target.id, prefix, recordedFolders)
+            val prefix = "${target.id}:${manga.id}:"
+            val recordedFolders = downloadPreferences.remoteSyncMangaFolders().get()
+            val directories = buildSet {
+                add(cloudRemoteDirectory(download, target))
+                recordedFolders.filter { it.startsWith(prefix) }.forEach { add(it.removePrefix(prefix)) }
+            }
+            val names = provider.getChapterLookupNames(chapter).filter(::isCloudArchiveName)
+            val storage = cloudSyncService.storage(target.config)
+            val upload = downloadPreferences.cloudChapterUploads(manga.id, target.id)[chapter.id]
+            val locations = buildSet {
+                upload?.let { add(it.directory to it.fileName) }
+                for (name in names) {
+                    for (directory in directories) add(directory to name)
                 }
-                val names = provider.getChapterLookupNames(chapter).filter(::isCloudArchiveName)
-                val storage = cloudSyncService.storage(target.config)
-                val upload = downloadPreferences.cloudChapterUploads(download.manga.id, target.id)[chapter.id]
-                val foundAtUploadPath = upload != null && isInSyncDestination(upload.directory, target) &&
-                    !isRemoteMangaFolderShared(upload.directory, target.id, prefix, recordedFolders) &&
-                    isCloudArchiveName(upload.fileName) &&
-                    storage.downloadCbz(upload.directory, upload.fileName, tempFile)
-                val found = foundAtUploadPath || names.any { name ->
-                    directories.any { directory ->
-                        (directory != upload?.directory || name != upload.fileName) &&
-                            storage.downloadCbz(directory, name, tempFile)
+            }
+            for ((directory, name) in locations) {
+                if (!isCloudArchiveName(name) || !isInSyncDestination(directory, target) ||
+                    isRemoteMangaFolderShared(directory, target.id, prefix, recordedFolders)
+                ) continue
+
+                val extension = archiveExtension(name)
+                val downloaded = try {
+                    storage.downloadArchive(directory, name, tempFile)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    logcat(LogPriority.WARN, error) { "Cloud download failed for chapter ${chapter.id}" }
+                    return null
+                }
+                if (!downloaded) continue
+                coroutineContext.ensureActive()
+                if (cloudSyncTargetOrNull() != target || !canTransfer(download)) return null
+                val restored = try {
+                    if (archiveExtension == null) {
+                        restoreArchiveAsDirectory(tempFile, extension, mangaDir, chapterDirname)
+                    } else {
+                        if (extension == "cstr") {
+                            CstrArchive(tempFile).openPage(0).close()
+                        } else {
+                            tempFile.archiveReader(context).use { reader ->
+                                check(reader.useEntries { entries -> entries.any { it.isFile && ImageUtil.isImage(it.name) } })
+                            }
+                        }
+                        finalizeDownloadFile(tempFile, mangaDir, "$chapterDirname.$extension")
+                    }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    logcat(LogPriority.WARN, error) { "Cloud download failed for chapter ${chapter.id}" }
+                    continue
+                }
+                return restored
+            }
+            return null
+        } finally {
+            mangaDir.findFile(tempName)?.delete()
+        }
+    }
+
+    private suspend fun restoreArchiveAsDirectory(
+        archiveFile: UniFile,
+        extension: String,
+        mangaDir: UniFile,
+        chapterDirname: String,
+    ): UniFile {
+        val tempName = "$chapterDirname.remote-pages$TMP_DIR_SUFFIX"
+        mangaDir.findFile(tempName)?.delete()
+        val directory = mangaDir.createDirectory(tempName) ?: throw IOException("Unable to create $tempName")
+        try {
+            if (extension == "cstr") {
+                val archive = CstrArchive(archiveFile)
+                repeat(archive.pageCount) { index ->
+                    coroutineContext.ensureActive()
+                    val number = (index + 1).toString().padStart(archive.pageCount.toString().length.coerceAtLeast(3), '0')
+                    val fileName = "$number.${archive.pageExtension(index)}"
+                    archive.openPage(index).use { input ->
+                        checkNotNull(directory.createFile(fileName)).openOutputStream().use { input.copyTo(it) }
                     }
                 }
-                found && tempFile.archiveReader(context).use { reader ->
-                    reader.useEntries { entries -> entries.any { it.isFile && ImageUtil.isImage(it.name) } }
+            } else {
+                archiveFile.archiveReader(context).use { reader ->
+                    val names = reader.useEntries { entries ->
+                        entries.filter { it.isFile && ImageUtil.isImage(it.name) }
+                            .map { it.name }
+                            .sortedWith(String::compareToCaseInsensitiveNaturalOrder)
+                            .toList()
+                    }
+                    check(names.isNotEmpty())
+                    names.forEachIndexed { index, entry ->
+                        coroutineContext.ensureActive()
+                        val number = (index + 1).toString().padStart(names.size.toString().length.coerceAtLeast(3), '0')
+                        val name = "$number.${entry.substringAfterLast('.')}"
+                        checkNotNull(reader.getInputStream(entry)).use { input ->
+                            checkNotNull(directory.createFile(name)).openOutputStream().use { input.copyTo(it) }
+                        }
+                    }
+                    reader.getInputStream(COMIC_INFO_FILE)?.use { input ->
+                        checkNotNull(directory.createFile(COMIC_INFO_FILE)).openOutputStream().use { input.copyTo(it) }
+                    }
                 }
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                logcat(LogPriority.WARN, error) { "Cloud download failed for chapter ${chapter.id}" }
-                false
             }
-            coroutineContext.ensureActive()
-            if (!downloaded || cloudSyncTargetOrNull() != target || !canTransfer(download)) return null
-
-            return finalizeDownloadFile(tempFile, mangaDir, fileName)
+            check(directory.renameTo(chapterDirname))
+            return checkNotNull(mangaDir.findFile(chapterDirname))
         } finally {
             mangaDir.findFile(tempName)?.delete()
         }
@@ -1681,11 +1770,13 @@ class Downloader(
         } else {
             download
         }
-        if (target != null && chapterFile.isFile &&
-            !downloadPreferences.isChapterUploadedToCloud(download.chapter.id, target.id)
-        ) {
+        if (target != null && !downloadPreferences.isChapterUploadedToCloud(download.chapter.id, target.id)) {
             try {
-                enqueueDownloadedChapterUpload(upload, chapterFile, target)
+                if (chapterFile.isDirectory) {
+                    enqueueChapterDirectoryUpload(upload, chapterFile, mangaDir, target)
+                } else {
+                    enqueueDownloadedChapterUpload(upload, chapterFile, target)
+                }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 reportCloudUploadError(download, error)
@@ -1699,7 +1790,7 @@ class Downloader(
         try {
             // Chapters from one manga can finish together. Generate and snapshot its index as one operation.
             metaInfoLock.withLock {
-                val metaInfoFile = createMetaInfoFile(mangaDir, download.manga, download.source)
+                val metaInfoFile = createMetaInfoFile(mangaDir, download.manga, download.source, target)
                 if (target == null) return
                 val snapshot = snapshotMetaInfoFile(mangaDir, metaInfoFile) ?: return
                 var queued = false
@@ -1735,7 +1826,7 @@ class Downloader(
         fileName: String = chapterFile.name.orEmpty(),
         temporaryArchive: Boolean = false,
     ): Boolean {
-        if (!fileName.endsWith(".cbz", ignoreCase = true)) return false
+        if (!isCloudArchiveName(fileName)) return false
         return enqueueCloudUpload(
             CloudUploadRecord(
                 mangaId = download.manga.id,
@@ -2164,13 +2255,21 @@ class Downloader(
         mangaDir: UniFile,
         manga: Manga,
         source: HttpSource,
+        target: CloudSyncTarget?,
     ): UniFile {
         val chapters = getChaptersByMangaId.await(manga.id, applyScanlatorFilter = false)
             .sortedWith(getChapterSort(manga))
         val archiveExtension = downloadPreferences.chapterArchiveFormat().get().extension
-        val outputNames = provider.chapterOutputNames(chapters, archiveExtension)
-        val localNames = if (archiveExtension == "cstr" || mangaDir.listFiles().orEmpty().any { it.name.orEmpty().endsWith(".cstr") }) {
-            provider.findDownloadedChapters(chapters, listOf(mangaDir)).mapValues { (_, file) -> file.name }
+        val outputNames = provider.chapterOutputNames(chapters, archiveExtension ?: "cbz".takeIf { target != null })
+        val localNames = provider.findDownloadedChapters(chapters, listOf(mangaDir)).mapValues { (_, file) ->
+            file.name?.let { if (file.isDirectory && target != null) "$it.cbz" else it }
+        }
+        val remoteNames = target?.let { downloadPreferences.cloudChapterUploads(manga.id, it.id) }.orEmpty()
+        val legacyRemoteNames = if (target != null && chapters.any {
+                it.id !in remoteNames && downloadPreferences.isChapterUploadedToCloud(it.id, target.id)
+            }
+        ) {
+            provider.chapterOutputNames(chapters, asCbz = true)
         } else {
             emptyMap()
         }
@@ -2197,7 +2296,12 @@ class Downloader(
                     scanlator = chapter.scanlator,
                     url = source.getChapterUrl(chapter.toSChapter()).trim(),
                     sourceOrder = chapter.sourceOrder,
-                    file = localNames[chapter.id] ?: outputNames.getValue(chapter.id),
+                    file = remoteNames[chapter.id]?.fileName
+                        ?: legacyRemoteNames[chapter.id]?.takeIf {
+                            target != null && downloadPreferences.isChapterUploadedToCloud(chapter.id, target.id)
+                        }
+                        ?: localNames[chapter.id]
+                        ?: outputNames.getValue(chapter.id),
                 )
             },
         )
@@ -2461,7 +2565,9 @@ private data class CloudReleaseLookup(
 private data class CloudReleaseResponse<T>(val value: T)
 
 private fun isCloudArchiveName(name: String): Boolean =
-    name.endsWith(".cbz", ignoreCase = true) && '/' !in name && '\\' !in name
+    '/' !in name && '\\' !in name && (name.endsWith(".cbz", true) || name.endsWith(".cstr", true))
+
+private fun archiveExtension(name: String): String = name.substringAfterLast('.', "").lowercase()
 
 internal enum class CloudSyncChapterAction {
     Skip,
@@ -2473,12 +2579,12 @@ internal enum class CloudSyncChapterAction {
 internal fun cloudSyncChapterAction(
     isUploaded: Boolean,
     hasLocalDownload: Boolean,
-    isLocalCbz: Boolean,
+    isLocalArchive: Boolean,
 ): CloudSyncChapterAction {
     return when {
         isUploaded -> CloudSyncChapterAction.Skip
         !hasLocalDownload -> CloudSyncChapterAction.Download
-        isLocalCbz -> CloudSyncChapterAction.Upload
+        isLocalArchive -> CloudSyncChapterAction.Upload
         else -> CloudSyncChapterAction.UnsupportedLocalDownload
     }
 }

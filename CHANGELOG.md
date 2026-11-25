@@ -12,6 +12,11 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 
 ## [Unreleased]
 
+## [v1.3.24-beta.2] - 2026-11-25
+
+### Fixed
+- Use cloud sync with any download format. CSTR archives can sync alongside existing CBZ archives without converting the existing files.
+
 ## [v1.3.24-beta.1] - 2026-11-25
 
 ### Added

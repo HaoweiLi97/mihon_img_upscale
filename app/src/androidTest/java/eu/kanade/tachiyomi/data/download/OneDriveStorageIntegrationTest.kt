@@ -193,9 +193,9 @@ class OneDriveStorageIntegrationTest {
 
         assertEquals(listOf("/Archive", "/漫画"), remote.listDirectories("/").map { it.path })
         withFile(byteArrayOf()) { file, uniFile ->
-            assertTrue(remote.downloadCbz("/漫画", "Chapter 1 #1.cbz", uniFile))
+            assertTrue(remote.downloadArchive("/漫画", "Chapter 1 #1.cbz", uniFile))
             assertArrayEquals(data, file.readBytes())
-            assertFalse(remote.downloadCbz("/漫画", "missing.cbz", uniFile))
+            assertFalse(remote.downloadArchive("/漫画", "missing.cbz", uniFile))
             assertArrayEquals(data, file.readBytes())
         }
     }

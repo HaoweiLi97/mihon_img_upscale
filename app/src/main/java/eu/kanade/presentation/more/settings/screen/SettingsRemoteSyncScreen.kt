@@ -44,7 +44,6 @@ import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.download.service.CloudSyncStorage
-import tachiyomi.domain.download.service.ChapterArchiveFormat
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -62,9 +61,8 @@ object SettingsRemoteSyncScreen : SearchableSettings {
         val graph = LocalContext.current.appGraph
         val categories by graph.getCategories.subscribe().collectAsState(initial = emptyList())
         val participatingIds by graph.downloadPreferences.remoteSyncCategories().collectAsState()
-        val archiveFormat by graph.downloadPreferences.chapterArchiveFormat().collectAsState()
         return listOf(
-            getCloudSyncGroup(graph.downloadPreferences, archiveFormat == ChapterArchiveFormat.CBZ, categories, participatingIds),
+            getCloudSyncGroup(graph.downloadPreferences, categories, participatingIds),
             getCategorySyncGroup(categories.filter { it.id.toString() in participatingIds }),
         )
     }
@@ -155,7 +153,6 @@ object SettingsRemoteSyncScreen : SearchableSettings {
     @Composable
     private fun getCloudSyncGroup(
         downloadPreferences: DownloadPreferences,
-        saveChaptersAsCBZ: Boolean,
         categories: List<Category>,
         participatingIds: Set<String>,
     ): Preference.PreferenceGroup {
@@ -248,14 +245,13 @@ object SettingsRemoteSyncScreen : SearchableSettings {
             )
         }
 
-        val cloudSettingsAvailable = saveChaptersAsCBZ
         val connected = when (storage) {
             CloudSyncStorage.WebDav ->
                 cloudSyncEnabled &&
                     WebDavConfig(cloudSyncUrl, cloudSyncUsername, cloudSyncPassword).isValid
             CloudSyncStorage.OneDrive -> oneDriveConnected
         }
-        val destinationAvailable = cloudSettingsAvailable && connected
+        val destinationAvailable = connected
         val autoSyncAvailable = destinationAvailable && cloudSyncDestination.isNotBlank()
         val libraryCloudSync = graph.libraryCloudSync
         val categoryEntries = categories.associate { it.id.toString() to it.visualName }
@@ -279,7 +275,6 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                     CloudSyncTextPreference(
                         title = connectionTitle,
                         subtitle = when {
-                            !saveChaptersAsCBZ -> stringResource(MR.strings.cloud_sync_requires_cbz)
                             connected && storage == CloudSyncStorage.WebDav ->
                                 stringResource(MR.strings.cloud_sync_connected, cloudSyncUsername)
                             connected -> stringResource(MR.strings.cloud_sync_connection_success)
@@ -288,7 +283,7 @@ object SettingsRemoteSyncScreen : SearchableSettings {
                             )
                             else -> stringResource(MR.strings.cloud_sync_not_configured)
                         },
-                        enabled = cloudSettingsAvailable && !testingConnection,
+                        enabled = !testingConnection,
                         onClick = {
                             if (storage == CloudSyncStorage.OneDrive && !oneDriveConnected) {
                                 signInToOneDrive()

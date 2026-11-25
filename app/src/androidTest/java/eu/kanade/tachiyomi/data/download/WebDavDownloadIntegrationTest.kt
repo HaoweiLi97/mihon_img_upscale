@@ -582,6 +582,54 @@ class WebDavDownloadIntegrationTest {
     }
 
     @Test
+    fun cstrSyncPreservesExistingCbzAndRestoresBothFormats() = runBlocking {
+        downloads.cloudSyncUrl().set(server.url)
+        downloads.cloudSyncUsername().set("user")
+        downloads.cloudSyncPassword().set("pass")
+        downloads.cloudSyncDestination().set("/target")
+        downloads.cloudSyncEnabled().set(true)
+        val target = checkNotNull(downloads.cloudSyncTargetId())
+        val fixture = createDownloader()
+        val downloader = fixture.downloader
+        val (first, second) = chapters
+
+        suspend fun download(chapter: Chapter) {
+            downloader.queueChapters(manga, listOf(chapter), autoStart = false)
+            assertTrue(downloader.start())
+            await { downloader.queueState.value.isEmpty() && !downloader.isRunning }
+        }
+
+        download(first)
+        downloader.runCloudUploads(networkAllowed = { true })
+        await { downloads.isChapterUploadedToCloud(first.id, target) && downloader.uploadQueueState.value.isEmpty() }
+        val (oldPath, oldBytes) = server.files.entries.single { it.key.endsWith(".cbz") }
+        val oldUpload = downloads.cloudChapterUploads(manga.id, target).getValue(first.id)
+
+        downloads.chapterArchiveFormat().set(ChapterArchiveFormat.CSTR)
+        assertEquals(target, downloads.activeCloudSyncTarget()?.id)
+        download(second)
+        downloader.runCloudUploads(networkAllowed = { true })
+        await { downloads.isChapterUploadedToCloud(second.id, target) && downloader.uploadQueueState.value.isEmpty() }
+        val (_, newBytes) = server.files.entries.single { it.key.endsWith(".cstr") }
+        assertEquals("CSTR", newBytes.decodeToString(0, 4))
+        assertArrayEquals(oldBytes, server.files[oldPath])
+        assertEquals(oldUpload, downloads.cloudChapterUploads(manga.id, target).getValue(first.id))
+
+        fixture.manager.deleteChapters(chapters, manga, source)
+        server.rejectImages = true
+        download(first)
+        assertArrayEquals(oldBytes, root.walkTopDown().single { it.name == "Chapter 1.cbz" }.readBytes())
+        assertEquals(2, server.images.get())
+
+        downloads.chapterArchiveFormat().set(ChapterArchiveFormat.NONE)
+        assertEquals(target, downloads.activeCloudSyncTarget()?.id)
+        download(second)
+        assertTrue(root.walkTopDown().any { it.name == "001.webp" && it.parentFile?.name == "Chapter 2" })
+        assertFalse(root.walkTopDown().any { it.extension == "cstr" })
+        assertArrayEquals(oldBytes, server.files[oldPath])
+    }
+
+    @Test
     fun downloadsUsingTheSelectedArchiveFormat() = runBlocking {
         val fixture = createDownloader()
         val downloader = fixture.downloader

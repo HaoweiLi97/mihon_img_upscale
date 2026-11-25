@@ -42,7 +42,7 @@ class CloudSyncChapterActionTest {
         val action = cloudSyncChapterAction(
             isUploaded = true,
             hasLocalDownload = false,
-            isLocalCbz = false,
+            isLocalArchive = false,
         )
 
         assertEquals(CloudSyncChapterAction.Skip, action)
@@ -53,7 +53,7 @@ class CloudSyncChapterActionTest {
         val action = cloudSyncChapterAction(
             isUploaded = false,
             hasLocalDownload = false,
-            isLocalCbz = false,
+            isLocalArchive = false,
         )
 
         assertEquals(CloudSyncChapterAction.Download, action)
@@ -64,7 +64,7 @@ class CloudSyncChapterActionTest {
         val action = cloudSyncChapterAction(
             isUploaded = false,
             hasLocalDownload = true,
-            isLocalCbz = true,
+            isLocalArchive = true,
         )
 
         assertEquals(CloudSyncChapterAction.Upload, action)
@@ -75,7 +75,7 @@ class CloudSyncChapterActionTest {
         val action = cloudSyncChapterAction(
             isUploaded = false,
             hasLocalDownload = true,
-            isLocalCbz = false,
+            isLocalArchive = false,
         )
 
         assertEquals(CloudSyncChapterAction.UnsupportedLocalDownload, action)

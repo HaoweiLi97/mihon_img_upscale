@@ -1027,7 +1027,6 @@
     <string name="cloud_sync_connection_failed">云盘连接失败</string>
     <string name="cloud_sync_not_configured">未配置</string>
     <string name="cloud_sync_connected">已连接：%s</string>
-    <string name="cloud_sync_requires_cbz">启用 CBZ 存档后即可使用云盘同步</string>
     <string name="cloud_sync_no_destination">尚未选择目标位置</string>
     <string name="cloud_sync_storage">存储服务</string>
     <string name="cloud_sync_webdav_connection">WebDAV 连接</string>

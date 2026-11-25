@@ -961,7 +961,6 @@
     <string name="cloud_sync_connection_failed">雲端空間連線失敗</string>
     <string name="cloud_sync_not_configured">尚未設定</string>
     <string name="cloud_sync_connected">已連線：%s</string>
-    <string name="cloud_sync_requires_cbz">啟用 CBZ 封存後即可使用雲端同步</string>
     <string name="cloud_sync_no_destination">尚未選擇目的地</string>
     <string name="cloud_sync_storage">儲存服務</string>
     <string name="cloud_sync_webdav_connection">WebDAV 連線</string>
